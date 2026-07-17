@@ -1,9 +1,15 @@
 # Three stages, one artifact: the SPA is compiled by Node, baked into the Go binary,
 # and the final image carries neither Node nor a shell. What ships is a single static
 # executable and its CA bundle.
+#
+# Multi-arch without emulation: both build stages pin to $BUILDPLATFORM so they run
+# natively on the runner (never under QEMU), and the Go stage cross-compiles to the
+# target arch. Emulating the arm64 Node+Go toolchains turned a ~1-minute build into a
+# 15-minute one — the SPA output is arch-independent and the CGO-off binary cross-compiles
+# cleanly, so there is nothing to gain from building either arch emulated.
 
-# ── 1. build the SPA ────────────────────────────────────────────────────────────
-FROM node:22-alpine AS web
+# ── 1. build the SPA (once, on the native builder — its output is arch-independent) ──
+FROM --platform=$BUILDPLATFORM node:22-alpine AS web
 WORKDIR /src/web
 
 # Pin pnpm to 9 to match CI (.github/workflows/ci.yml). corepack's floating default
@@ -20,8 +26,8 @@ COPY brand/ /src/brand/
 COPY web/ ./
 RUN pnpm build          # → /src/internal/web/dist
 
-# ── 2. build the binary (with the SPA embedded) ─────────────────────────────────
-FROM golang:1.26-alpine AS build
+# ── 2. build the binary (native builder, cross-compiled to the target arch) ─────────
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS build
 WORKDIR /src
 
 COPY go.mod go.sum ./
@@ -30,10 +36,13 @@ RUN go mod download
 COPY . .
 COPY --from=web /src/internal/web/dist ./internal/web/dist
 
-# CGO off keeps this a static binary — hence the pure-Go SQLite driver.
+# TARGETOS/TARGETARCH are supplied per target platform by buildx. CGO off (pure-Go SQLite
+# driver) is what lets GOARCH cross-compilation produce a static binary with no C toolchain
+# and no emulation.
+ARG TARGETOS TARGETARCH
 ENV CGO_ENABLED=0
 ARG VERSION=dev
-RUN go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /out/daffa ./cmd/daffa
+RUN GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /out/daffa ./cmd/daffa
 
 # ── 3. ship ─────────────────────────────────────────────────────────────────────
 FROM gcr.io/distroless/static-debian12:nonroot
