@@ -3,55 +3,89 @@ name: Release
 # Manual only. A release cuts a tag, builds the multi-arch image, pushes it to GHCR, and
 # opens a GitHub Release. Nothing here fires on push — a tag exists because someone chose
 # to ship, not because a commit landed.
+#
+# The operator picks a bump type; the next version is derived from the latest tag, so there
+# is no hand-typed version to fat-finger. This cuts stable releases only — there is no
+# pre-release path here by design (add a tag by hand if you ever need an rc).
 on:
   workflow_dispatch:
     inputs:
-      version:
-        description: "Release version, e.g. v1.2.3"
+      bump:
+        description: "Which part of the version to bump"
         required: true
-        type: string
-      latest:
-        description: "Also tag the image :latest"
-        required: false
-        type: boolean
-        default: true
+        type: choice
+        default: minor
+        options:
+          - major
+          - minor
+          - patch
 
 # contents: write cuts the tag and the Release; packages: write pushes to GHCR.
 permissions:
   contents: write
   packages: write
 
+# Serialise releases. The version is derived from the latest tag at run time, so two
+# concurrent runs would otherwise compute the same next version and race to push it.
 concurrency:
-  group: release-${{ github.event.inputs.version }}
+  group: release
   cancel-in-progress: false
 
 jobs:
   release:
-    name: Cut ${{ github.event.inputs.version }}
+    name: Cut ${{ github.event.inputs.bump }} release
     runs-on: ubuntu-latest
     steps:
+      # fetch-depth: 0 brings the full tag history the version math reads below.
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
-      # Fail early on a typo'd version rather than after building an image no one can find.
-      - name: Validate version
+      # Derive the next version from the highest existing STABLE tag (vX.Y.Z) plus the
+      # chosen bump. Pre-release tags are ignored as the base — this workflow only cuts
+      # stable versions, and git's version sort orders "-rc" suffixes inconsistently, so
+      # filtering to the plain triple sidesteps that trap. First release starts from v0.0.0
+      # (→ v0.1.0 for the default minor bump).
+      - name: Compute next version
+        id: version
         run: |
-          version='${{ github.event.inputs.version }}'
-          if ! printf '%s' "$version" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
-            echo "::error::Version must look like v1.2.3 (optionally v1.2.3-rc.1); got '$version'"
+          bump='${{ github.event.inputs.bump }}'
+          latest="$(git tag --list 'v*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n1)"
+          if [ -z "$latest" ]; then
+            latest="v0.0.0"
+            echo "No stable tags yet — starting from $latest"
+          fi
+
+          core="${latest#v}"
+          major="${core%%.*}"
+          rest="${core#*.}"
+          minor="${rest%%.*}"
+          patch="${rest##*.}"
+
+          case "$bump" in
+            major) major=$((major + 1)); minor=0; patch=0 ;;
+            minor) minor=$((minor + 1)); patch=0 ;;
+            patch) patch=$((patch + 1)) ;;
+            *) echo "::error::unknown bump type '$bump'"; exit 1 ;;
+          esac
+          next="v${major}.${minor}.${patch}"
+
+          # A guard, not an expectation: by construction the computed tag is newer than the
+          # base, but a tag created out of band could still collide.
+          if git rev-parse -q --verify "refs/tags/$next" >/dev/null; then
+            echo "::error::Computed tag $next already exists (latest stable was $latest). Aborting."
             exit 1
           fi
-          if git rev-parse -q --verify "refs/tags/$version" >/dev/null; then
-            echo "::error::Tag $version already exists"
-            exit 1
-          fi
+
+          echo "Bumping $latest -> $next ($bump)"
+          echo "version=$next" >> "$GITHUB_OUTPUT"
+          echo "### Releasing $next (\`$bump\` bump from $latest)" >> "$GITHUB_STEP_SUMMARY"
 
       # Tag the exact commit this workflow ran against. Tags pushed with GITHUB_TOKEN do
       # not retrigger workflows, so there is no risk of a release loop.
       - name: Create and push tag
         run: |
-          version='${{ github.event.inputs.version }}'
+          version='${{ steps.version.outputs.version }}'
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git tag -a "$version" -m "Daffa $version"
@@ -69,7 +103,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       # metadata-action lowercases the owner (GHCR rejects uppercase) and expands the tag
-      # set. :latest is opt-out via the workflow input for pre-releases.
+      # set. Every release here is stable, so :latest always moves.
       #
       # The raw tag below pushes the git tag verbatim (e.g. v1.2.3) as an image tag, in
       # addition to the semver-normalised 1.2.3 / 1.2. deploy/install.sh reads the git tag
@@ -81,10 +115,10 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
-            type=raw,value=${{ github.event.inputs.version }}
-            type=semver,pattern={{version}},value=${{ github.event.inputs.version }}
-            type=semver,pattern={{major}}.{{minor}},value=${{ github.event.inputs.version }}
-            type=raw,value=latest,enable=${{ github.event.inputs.latest }}
+            type=raw,value=${{ steps.version.outputs.version }}
+            type=semver,pattern={{version}},value=${{ steps.version.outputs.version }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ steps.version.outputs.version }}
+            type=raw,value=latest
 
       # The static, CGO-off binary cross-compiles cleanly, so both arches build from the
       # one Dockerfile. VERSION lands in the binary via -X main.version.
@@ -97,20 +131,16 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
-            VERSION=${{ github.event.inputs.version }}
+            VERSION=${{ steps.version.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # --generate-notes diffs against the previous tag on its own. A version with a
-      # pre-release suffix (v1.2.3-rc.1) is flagged so it does not become "latest release".
+      # --generate-notes diffs against the previous tag on its own.
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          version='${{ github.event.inputs.version }}'
-          prerelease=""
-          case "$version" in *-*) prerelease="--prerelease";; esac
+          version='${{ steps.version.outputs.version }}'
           gh release create "$version" \
             --title "Daffa $version" \
-            --generate-notes \
-            $prerelease
+            --generate-notes

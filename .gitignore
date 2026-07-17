@@ -3,6 +3,9 @@ bin/
 .ai/
 node_modules/
 
+# Ignore daffa binary
+daffa
+
 # The compiled SPA is a build artifact, but the directory itself must survive a fresh
 # clone: //go:embed fails on a missing dir, so `go build` would break before `make web`
 # ever ran. The placeholder is tracked; everything Vite emits beside it is not.
