@@ -7,15 +7,15 @@ import "testing"
 // keyscan at the wrong name and pins nothing, so the guided path silently does not help.
 func TestNormalizeHost(t *testing.T) {
 	ok := map[string]string{
-		"github.com":                    "github.com",
-		"GitHub.com":                    "github.com",
-		"  gitlab.com  ":                "gitlab.com",
-		"git@github.com":                "github.com",
-		"git@github.com:acme/repo.git":  "github.com",
-		"https://github.com/acme/repo":  "github.com",
+		"github.com":                     "github.com",
+		"GitHub.com":                     "github.com",
+		"  gitlab.com  ":                 "gitlab.com",
+		"git@github.com":                 "github.com",
+		"git@github.com:acme/repo.git":   "github.com",
+		"https://github.com/acme/repo":   "github.com",
 		"ssh://git@git.example.com:22/x": "git.example.com",
-		"git.example.com:22":            "git.example.com",
-		"bitbucket.org/acme":            "bitbucket.org",
+		"git.example.com:22":             "git.example.com",
+		"bitbucket.org/acme":             "bitbucket.org",
 	}
 	for in, want := range ok {
 		got, err := normalizeHost(in)

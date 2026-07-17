@@ -18,13 +18,13 @@ import (
 
 // Destination is where a snapshot goes.
 type Destination struct {
-	Endpoint  string
-	Region    string
-	Bucket    string
-	Prefix    string
-	KeyID     string
-	Secret    string
-	Encrypt   bool
+	Endpoint   string
+	Region     string
+	Bucket     string
+	Prefix     string
+	KeyID      string
+	Secret     string
+	Encrypt    bool
 	Recipients string // age PUBLIC keys, space separated
 }
 

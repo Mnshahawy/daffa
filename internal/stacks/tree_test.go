@@ -199,8 +199,8 @@ func TestTreeFilesFileCountCeiling(t *testing.T) {
 
 func TestTreeFilesWarnsOnPrivateKeyMaterial(t *testing.T) {
 	c := commitFixture(t, map[string]fixtureFile{
-		"cfg/ok.yml":    {data: "fine"},
-		"cfg/leaked":    {data: "AGE-SECRET-KEY-1QQQQQQQQ"},
+		"cfg/ok.yml":     {data: "fine"},
+		"cfg/leaked":     {data: "AGE-SECRET-KEY-1QQQQQQQQ"},
 		"cfg/leaked.pem": {data: "-----BEGIN EC PRIVATE KEY-----\nMHc...\n-----END EC PRIVATE KEY-----\n"},
 	})
 

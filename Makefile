@@ -1,4 +1,4 @@
-.PHONY: help dev build web test test-pg lint clean docker user docs
+.PHONY: help dev build web test test-pg lint clean docker user docs hooks
 
 VERSION ?= dev
 # 8080 is a crowded port on a developer's machine (it is also the default for half the
@@ -14,8 +14,15 @@ help:
 	@echo "make lint           go vet + vue-tsc"
 	@echo "make docker         build the container image"
 	@echo "make docs           run the documentation site (VitePress) with hot reload"
+	@echo "make hooks          install the git pre-commit hook (mirrors CI locally)"
 	@echo
 	@echo "Override the port with: make dev PORT=9000"
+
+# Point git at the tracked .githooks/ dir. One command, no symlinks, and the hook is
+# version-controlled so it stays in sync with the CI it mirrors. Opt-in per clone.
+hooks:
+	git config core.hooksPath .githooks
+	@echo "→ pre-commit hook installed (bypass any run with: git commit --no-verify)"
 
 web:
 	cd web && pnpm install && pnpm build

@@ -1,0 +1,56 @@
+#!/bin/sh
+# Mirrors the CI `go` and `web` jobs (.github/workflows/ci.yml) so a red X is caught here
+# instead of a round-trip through GitHub. Checks run against the WORKING TREE, not the
+# staged snapshot — the same tree `go build`/`gofmt` see — and are scoped to what changed:
+# Go checks only fire when a .go file is staged, the web build only when web/ or brand/ is.
+#
+# Install once:   make hooks        (points core.hooksPath here)
+# Bypass once:    git commit --no-verify
+#
+# Postgres and Docker are intentionally NOT here — they need a running daemon and belong in
+# `make test-pg` / `make docker`, not on every commit.
+
+cd "$(git rev-parse --show-toplevel)" || exit 1
+
+staged=$(git diff --cached --name-only --diff-filter=ACM)
+go_changed=$(printf '%s\n' "$staged" | grep -E '\.go$')
+web_changed=$(printf '%s\n' "$staged" | grep -E '^(web/|brand/)')
+
+fail() {
+	printf '\n\033[31m✗ pre-commit: %s\033[0m\n' "$1" >&2
+	printf '  (bypass with: git commit --no-verify)\n' >&2
+	exit 1
+}
+
+if [ -n "$go_changed" ]; then
+	# gofmt: same check as CI — the whole tree must already be formatted.
+	unformatted=$(gofmt -l .)
+	[ -z "$unformatted" ] || fail "these files need gofmt (run: gofmt -w .):
+$unformatted"
+
+	go vet ./... || fail "go vet failed"
+
+	# Generated files must be in sync with their Go source of truth. Regenerate, then check
+	# the outputs are unchanged — a diff means someone edited the registry/routes without
+	# running `go generate`. Never hand-edit caps.ts / api.ts / openapi.json.
+	go generate ./internal/caps ./internal/api >/dev/null || fail "go generate failed"
+	stale=$(git diff --name-only -- web/src/lib/caps.ts web/src/lib/api.ts internal/api/openapi.json)
+	[ -z "$stale" ] || fail "generated files are stale — review and 'git add' them:
+$stale"
+
+	go build ./... || fail "go build failed"
+	go test ./... || fail "go test failed"
+fi
+
+if [ -n "$web_changed" ]; then
+	# `pnpm build` is vue-tsc --noEmit (typecheck) then vite build, exactly as CI runs it.
+	# Skip rather than block if the JS toolchain isn't installed — a Go-only contributor
+	# shouldn't be forced to set up node to commit; CI still gates it.
+	if [ -d web/node_modules ]; then
+		( cd web && pnpm build ) || fail "web build failed (vue-tsc / vite)"
+	else
+		printf '\033[33m⚠ web/ changed but web/node_modules is missing — skipping web build (run: make web)\033[0m\n'
+	fi
+fi
+
+printf '\033[32m✓ pre-commit checks passed\033[0m\n'

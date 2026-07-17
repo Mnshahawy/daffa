@@ -17,23 +17,23 @@ type fixtureNested struct {
 }
 
 type fixture struct {
-	Name      string            `json:"name"`
-	Count     int               `json:"count"`
-	Ratio     float64           `json:"ratio"`
-	Enabled   bool              `json:"enabled"`
-	When      time.Time         `json:"when"`
-	MaybeAt   *time.Time        `json:"maybe_at"`
-	Tags      []string          `json:"tags,omitempty"`
-	Opts      map[string]string `json:"opts"`
-	Blob      []byte            `json:"blob"`
-	Loose     map[string]any    `json:"loose"`
-	Anything  any               `json:"anything"`
-	Nested    fixtureNested     `json:"nested"`
-	MaybeSub  *fixtureNested    `json:"maybe_sub"`
-	AsString  int               `json:"as_string,string"`
-	Hidden    string            `json:"-"`
-	unexp     string            //nolint:unused
-	Anon      struct {
+	Name     string            `json:"name"`
+	Count    int               `json:"count"`
+	Ratio    float64           `json:"ratio"`
+	Enabled  bool              `json:"enabled"`
+	When     time.Time         `json:"when"`
+	MaybeAt  *time.Time        `json:"maybe_at"`
+	Tags     []string          `json:"tags,omitempty"`
+	Opts     map[string]string `json:"opts"`
+	Blob     []byte            `json:"blob"`
+	Loose    map[string]any    `json:"loose"`
+	Anything any               `json:"anything"`
+	Nested   fixtureNested     `json:"nested"`
+	MaybeSub *fixtureNested    `json:"maybe_sub"`
+	AsString int               `json:"as_string,string"`
+	Hidden   string            `json:"-"`
+	unexp    string            //nolint:unused
+	Anon     struct {
 		X int `json:"x"`
 	} `json:"anon"`
 }

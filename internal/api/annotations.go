@@ -24,9 +24,9 @@ type RouteDoc struct {
 	Description string // the prose lines, joined
 	Deprecated  string // reason; "" = not deprecated
 
-	Status      int             // //oapi:status; 0 = default 200
-	Produces    string          // //oapi:produces — a non-JSON success content type
-	NoReq       bool            // //oapi:noreq — this POST/PUT genuinely takes no body
+	Status      int    // //oapi:status; 0 = default 200
+	Produces    string // //oapi:produces — a non-JSON success content type
+	NoReq       bool   // //oapi:noreq — this POST/PUT genuinely takes no body
 	ReqExample  json.RawMessage
 	RespExample json.RawMessage
 

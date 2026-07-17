@@ -12,10 +12,10 @@ func TestKeyUnderPrefix(t *testing.T) {
 	}{
 		// Under the job's prefix: allowed.
 		{"prod/2026-07-16/postgres-20260716T030000Z.age", "prod", true},
-		{"prod/x.age", "prod/", true},          // trailing slash normalised away
-		{"prod/x.age", "/prod/", true},         // leading slash too
-		{"a/b/c/x.age", "a/b/c", true},         // nested prefix
-		{"anything/at/all.age", "", true},      // empty prefix ⇒ the whole bucket is this job's
+		{"prod/x.age", "prod/", true},     // trailing slash normalised away
+		{"prod/x.age", "/prod/", true},    // leading slash too
+		{"a/b/c/x.age", "a/b/c", true},    // nested prefix
+		{"anything/at/all.age", "", true}, // empty prefix ⇒ the whole bucket is this job's
 		{"top.age", "", true},
 
 		// A sibling prefix in the same bucket: refused. This is the cross-job case.
