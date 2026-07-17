@@ -66,4 +66,6 @@ docker:
 	docker build -t daffa:$(VERSION) .
 
 clean:
-	rm -rf bin .data internal/web/dist
+	# Remove the SPA build output but keep internal/web/dist/.gitkeep, so //go:embed still
+	# compiles after a clean without needing `make web` first.
+	rm -rf bin .data internal/web/dist/app

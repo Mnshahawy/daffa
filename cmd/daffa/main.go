@@ -445,17 +445,18 @@ func stackConfigCmd(args []string) error {
 	return nil
 }
 
-// dynamicConfigExample is a valid-but-inert dynamic config file: a comment plus an empty
-// http block, so Traefik loads it without complaint and the operator has a template.
+// dynamicConfigExample is a comments-only dynamic config file: a template the operator can
+// uncomment. It deliberately has NO top-level `http:` key — Traefik's file provider rejects
+// an empty `http: {}` ("http cannot be a standalone element") and logs the error on every
+// reload. A file of only comments is valid and inert, which is what we want as a seed.
 const dynamicConfigExample = `# Traefik dynamic configuration — edit in Daffa (Volume sources).
 # Add middlewares, routers or TLS options here; changes hot-reload, no restart.
-# Example:
+# Uncomment and adapt:
 #   http:
 #     middlewares:
 #       secure-headers:
 #         headers:
 #           stsSeconds: 31536000
-http: {}
 `
 
 // parseEnvFile reads KEY=VALUE lines (skipping blanks and # comments) into env vars,

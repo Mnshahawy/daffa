@@ -6,11 +6,11 @@ node_modules/
 # Ignore daffa binary
 daffa
 
-# The compiled SPA is a build artifact, but the directory itself must survive a fresh
-# clone: //go:embed fails on a missing dir, so `go build` would break before `make web`
-# ever ran. The placeholder is tracked; everything Vite emits beside it is not.
-internal/web/dist/*
-!internal/web/dist/.gitkeep
+# The compiled SPA is a build artifact, but internal/web/dist itself must survive a fresh
+# clone: //go:embed fails on a missing dir, so `go build` would break before `make web` ever
+# ran. Vite writes into the dist/app subdir (wiped on every build); the tracked dist/.gitkeep
+# sits one level up, out of that path, so a build never deletes it.
+internal/web/dist/app/
 *.db
 *.db-wal
 *.db-shm

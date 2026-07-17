@@ -44,10 +44,20 @@ ENV CGO_ENABLED=0
 ARG VERSION=dev
 RUN GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /out/daffa ./cmd/daffa
 
+# Stage an empty data dir to copy into the final image with nonroot ownership. Distroless
+# has no shell to mkdir/chown in place, so the directory is built here and copied below.
+RUN mkdir -p /out/state/var/lib/daffa
+
 # ── 3. ship ─────────────────────────────────────────────────────────────────────
 FROM gcr.io/distroless/static-debian12:nonroot
 
 COPY --from=build /out/daffa /usr/local/bin/daffa
+
+# Ship /var/lib/daffa already owned by nonroot. A fresh Docker named volume inherits the
+# ownership of its mountpoint in the image; if VOLUME created the directory itself it would
+# be root-owned, and the nonroot process below could not write master.key — a boot crash
+# loop ("writing master key: permission denied") on every first install.
+COPY --from=build --chown=nonroot:nonroot /out/state/var/lib/daffa /var/lib/daffa
 
 # Daffa needs to read the Docker socket, which is root-owned; the compose file grants
 # that with group_add rather than by running this as root.

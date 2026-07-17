@@ -365,8 +365,12 @@ compose pull
 if [ "$USE_TRAEFIK" = 1 ]; then
   say "seeding the Traefik config volume"
   docker volume create daffa-traefik-config >/dev/null
+  # Also create the dynamic-certs directory INSIDE the config volume. Compose mounts the
+  # config volume read-only at /etc/traefik, then mounts daffa-edge-certs at the nested
+  # /etc/traefik/dynamic-certs — and Docker cannot create that mountpoint under a read-only
+  # parent, so Traefik fails to start unless the directory already exists here.
   docker run --rm -v daffa-traefik-config:/dst -v "$INSTALL_DIR":/src:ro busybox \
-    sh -c 'cp /src/traefik.yml /dst/traefik.yml' \
+    sh -c 'cp /src/traefik.yml /dst/traefik.yml && mkdir -p /dst/dynamic-certs' \
     || die "could not seed the Traefik config volume — check that Docker can pull busybox"
 fi
 

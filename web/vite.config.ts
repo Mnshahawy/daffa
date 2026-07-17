@@ -3,15 +3,20 @@ import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import tailwindcss from '@tailwindcss/vite'
 
-// The build lands in ../internal/web/dist, where Go embeds it into the binary.
+// The build lands in ../internal/web/dist/app, where Go embeds it into the binary.
 // There is no Node process in production — this output IS the frontend.
+//
+// Output goes to the app/ SUBDIRECTORY, not dist/ itself, on purpose: emptyOutDir wipes the
+// output dir on every build, and the tracked dist/.gitkeep — the placeholder that keeps the
+// //go:embed directive valid on a fresh checkout — must not be in the thing that gets wiped.
+// So vite owns dist/app/ (volatile, gitignored) and dist/ stays a stable committed directory.
 export default defineConfig({
   plugins: [vue(), tailwindcss()],
   resolve: {
     alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
   },
   build: {
-    outDir: '../internal/web/dist',
+    outDir: '../internal/web/dist/app',
     emptyOutDir: true,
     // The threshold guards the INITIAL payload — the one chunk a first paint has to wait on.
     // Every route, and the terminal, splits into its own on-demand chunk, so what actually loads

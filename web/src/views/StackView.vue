@@ -33,7 +33,7 @@ const busy = ref(false)
 // Tabs, because this page had become one long scroll: actions, log, services, metrics, variables,
 // auto-deploy and history stacked on top of each other, and the thing you came for was always
 // somewhere below the fold.
-type Tab = 'overview' | 'containers' | 'deployments' | 'environment' | 'secrets' | 'settings'
+type Tab = 'overview' | 'containers' | 'deployments' | 'compose' | 'environment' | 'secrets' | 'settings'
 const tab = ref<Tab>('overview')
 // The Containers tab embeds ContainerPanel, which reads container inspect/logs/stats — a
 // DIFFERENT capability (containers.view) from the stacks.view that opens this page. The server
@@ -45,8 +45,13 @@ const tabs = computed<{ id: Tab; label: string }[]>(() => {
   if (session.can(Cap.ContainersView, stack.value?.env_id)) {
     list.push({ id: 'containers', label: 'Containers' })
   }
+  list.push({ id: 'deployments', label: 'Deployments' })
+  // Inline stacks store their compose in Daffa, so it is editable here. Git-backed stacks
+  // edit theirs in the repo, so the tab would be a dead end for them — hide it.
+  if (stack.value?.source_kind === 'inline') {
+    list.push({ id: 'compose', label: 'Compose' })
+  }
   list.push(
-    { id: 'deployments', label: 'Deployments' },
     { id: 'environment', label: 'Environment' },
     { id: 'secrets', label: 'Secrets' },
     { id: 'settings', label: 'Settings' },
@@ -316,6 +321,61 @@ async function saveSecrets(secrets: StackSecretItem[]) {
   await daffa.setStackSecrets(id.value, secrets)
   await qc.invalidateQueries({ queryKey: ['stack'] })
   await qc.invalidateQueries({ queryKey: ['stacksecrets'] })
+}
+
+// ── Compose (inline stacks) ──────────────────────────────────────────────────────
+// A git-backed stack edits its compose in the repo; an inline stack has no repo, so its
+// compose lives in Daffa and is edited here. Without this, an inline stack's YAML could only
+// be changed by re-running `daffa stack adopt` or hitting the API directly — the console
+// could edit env vars and secrets but not the file itself.
+const composeDraft = ref('')
+const composeBusy = ref(false)
+const composeError = ref('')
+const composeSaved = ref(false)
+// The last body the server handed us. We reseed the editor from a background refetch only when
+// the user has not typed away from it, so a poll mid-edit never stomps unsaved work.
+let composeSeeded: string | undefined
+watch(
+  () => stack.value?.inline_yaml,
+  (yaml) => {
+    if (yaml === undefined) return
+    if (composeSeeded === undefined || composeDraft.value === composeSeeded) {
+      composeDraft.value = yaml
+    }
+    composeSeeded = yaml
+  },
+  { immediate: true },
+)
+const composeDirty = computed(
+  () => stack.value?.source_kind === 'inline' && composeDraft.value !== (stack.value?.inline_yaml ?? ''),
+)
+
+async function saveCompose() {
+  if (!stack.value) return
+  composeBusy.value = true
+  composeError.value = ''
+  composeSaved.value = false
+  try {
+    // Preserve every other source field; the update handler rewrites them all from the body,
+    // so omitting one would blank it. Engine is left out on purpose — it is immutable and the
+    // server rejects any attempt to change it. inline_yaml is the only thing we mean to change.
+    await daffa.updateStack(id.value, {
+      group_name: stack.value.group_name,
+      source_kind: stack.value.source_kind,
+      git_url: stack.value.git_url,
+      git_ref: stack.value.git_ref,
+      git_path: stack.value.git_path,
+      git_credential_id: stack.value.git_credential_id,
+      registry_id: stack.value.registry_id,
+      inline_yaml: composeDraft.value,
+    })
+    await qc.invalidateQueries({ queryKey: ['stack'] })
+    composeSaved.value = true
+  } catch (err) {
+    composeError.value = (err as ApiError)?.message ?? 'Could not save the compose file.'
+  } finally {
+    composeBusy.value = false
+  }
 }
 
 const stateLabel: Record<string, string> = {
@@ -657,6 +717,58 @@ function triggeredBy(d: { trigger_kind: string; started_by_name?: string }): str
             </tr>
           </tbody>
         </table>
+      </div>
+    </template>
+
+    <!-- ── Compose (inline stacks) ─────────────────────────────────────────────── -->
+    <template v-else-if="tab === 'compose'">
+      <div class="surface rounded-[var(--radius-card)] p-5">
+        <div class="flex items-start justify-between gap-3">
+          <div>
+            <h2 class="text-sm font-medium">Compose file</h2>
+            <p class="muted mt-1 text-xs">
+              This stack has no git repo — its compose is stored in Daffa. Saving updates the
+              stored file; it takes effect on the next deploy.
+            </p>
+          </div>
+          <span
+            v-if="composeDirty"
+            class="shrink-0 rounded px-2 py-0.5 text-xs"
+            :style="{ background: 'var(--warn-soft)', color: 'var(--warn)' }"
+          >
+            Unsaved
+          </span>
+        </div>
+
+        <textarea
+          v-model="composeDraft"
+          rows="24"
+          spellcheck="false"
+          :readonly="!session.can(Cap.StacksEdit, stack.env_id)"
+          class="field mt-4 w-full font-mono text-xs"
+          data-cursor="text"
+        />
+
+        <p v-if="composeError" class="mt-3 text-sm" :style="{ color: 'var(--danger)' }">
+          {{ composeError }}
+        </p>
+        <p v-else-if="composeSaved && !composeDirty" class="muted mt-3 text-xs">
+          Saved. Deploy the stack to apply the change.
+        </p>
+
+        <div v-if="session.can(Cap.StacksEdit, stack.env_id)" class="mt-4 flex gap-2">
+          <BaseButton intent="primary" :loading="composeBusy" :disabled="!composeDirty" @click="saveCompose">
+            Save
+          </BaseButton>
+          <BaseButton
+            v-if="composeDirty"
+            intent="ghost"
+            :disabled="composeBusy"
+            @click="composeDraft = stack.inline_yaml ?? ''"
+          >
+            Revert
+          </BaseButton>
+        </div>
       </div>
     </template>
 

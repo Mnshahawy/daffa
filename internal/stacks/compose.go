@@ -98,6 +98,17 @@ func loadProject(ctx context.Context, yaml, projectName string, env []EnvVar) (*
 		// compose file is going to run on another machine, and inheriting Daffa's own
 		// env would be both wrong and a leak.
 		o.SkipResolveEnvironment = true
+		// Activate compose profiles from COMPOSE_PROFILES — the same variable `docker compose`
+		// reads. compose-go always runs WithProfiles at load, so without setting these, every
+		// service gated behind `profiles:` (e.g. the Traefik proxy in the deploy template) is
+		// moved to DisabledServices and drops out of the parsed service list. The status view
+		// would then show neither the service nor a "missing" row, even though a deploy — real
+		// `docker compose`, which honours the env — brings it up. Split on comma, as compose does.
+		for _, name := range strings.Split(envMap["COMPOSE_PROFILES"], ",") {
+			if name = strings.TrimSpace(name); name != "" {
+				o.Profiles = append(o.Profiles, name)
+			}
+		}
 	})
 	if err != nil {
 		return nil, fmt.Errorf("stacks: %w", composeError(err))

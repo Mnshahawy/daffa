@@ -12,9 +12,11 @@ import (
 	"strings"
 )
 
-// dist is populated by `pnpm build` in web/ before `go build`. The placeholder file
-// keeps the embed directive valid on a fresh checkout where the SPA has not been
-// built yet — without it the Go build fails on a missing directory.
+// dist/app is populated by `pnpm build` in web/ before `go build`. dist/ itself holds a
+// tracked .gitkeep so the embed directive stays valid on a fresh checkout where the SPA has
+// not been built yet — without a file to match, the Go build fails. The .gitkeep lives in
+// dist/, NOT in dist/app/, because vite wipes its output dir on every build (emptyOutDir):
+// keeping the placeholder one level up is what stops each build from deleting it.
 //
 //go:embed all:dist
 var dist embed.FS
@@ -22,7 +24,7 @@ var dist embed.FS
 // Handler serves the SPA: real files as themselves, everything else as index.html so
 // that client-side routes survive a page refresh.
 func Handler() http.Handler {
-	sub, err := fs.Sub(dist, "dist")
+	sub, err := fs.Sub(dist, "dist/app")
 	if err != nil {
 		panic("web: embedded dist is malformed: " + err.Error())
 	}

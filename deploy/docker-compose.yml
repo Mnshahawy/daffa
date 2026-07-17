@@ -114,7 +114,12 @@ services:
     networks: [internal, edge]
 
   traefik:
-    image: traefik:v3.1
+    # v3.6.7, not an older v3: Docker Engine 29 raised its minimum API version to 1.40, and
+    # Traefik's Docker provider (which forces API-version negotiation and ignores
+    # DOCKER_API_VERSION) probes with a stale default on older builds — the provider then
+    # never loads, so no router is created and the console is unreachable behind a default
+    # cert. v3.6.7 negotiates correctly against Docker 29. Do not downgrade.
+    image: traefik:v3.6.7
     # Only present when COMPOSE_PROFILES=traefik. In direct mode this service is
     # never created.
     profiles: [traefik]
@@ -145,16 +150,27 @@ services:
     networks: [edge]
 
 volumes:
+  # Explicit names on every volume: without them Compose prefixes the project name
+  # (daffa_daffa-data, …), which would NOT match the plain names install.sh writes into
+  # DAFFA_SYSTEM_VOLUMES — so Daffa's "system, cannot delete" protection would silently
+  # cover nothing for the data and database volumes. The names here are the contract.
   daffa-data:
+    name: daffa-data
   daffa-pg:
+    name: daffa-pg
   traefik-acme:
+    name: traefik-acme
   # Daffa delivers the edge certificate + Traefik file-provider fragment here. Named
   # explicitly so `daffa edge init --volume daffa-edge-certs` and the mount above agree.
   edge-certs:
     name: daffa-edge-certs
-  # Traefik's static config (traefik.yml), delivered and managed by Daffa. Named explicitly
-  # so the installer's seed and `daffa stack config` target the same volume.
+  # Traefik's static config (traefik.yml). external: true because install.sh creates and
+  # seeds this volume (with traefik.yml AND the dynamic-certs mountpoint) BEFORE Traefik's
+  # first start — Traefik reads its static config once at boot, so Compose must not try to
+  # own or recreate it. Marking it external also silences the "already exists but was not
+  # created by Docker Compose" warning on every deploy.
   traefik-config:
+    external: true
     name: daffa-traefik-config
 
 networks:
