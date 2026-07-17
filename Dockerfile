@@ -6,10 +6,17 @@
 FROM node:22-alpine AS web
 WORKDIR /src/web
 
-RUN corepack enable
+# Pin pnpm to 9 to match CI (.github/workflows/ci.yml). corepack's floating default
+# moved to pnpm 10, whose ignored-builds gate exits non-zero on esbuild/vue-demi —
+# unpinned, the image build breaks while CI stays green on 9.
+RUN corepack enable && corepack prepare pnpm@9 --activate
 COPY web/package.json web/pnpm-lock.yaml* ./
 RUN pnpm install --frozen-lockfile || pnpm install
 
+# The SPA's style.css imports the design tokens from the repo-root brand/ dir
+# (`@import '../../brand/tokens.css'`), which resolves to /src/brand at build time;
+# without this copy the CSS build can't resolve them.
+COPY brand/ /src/brand/
 COPY web/ ./
 RUN pnpm build          # → /src/internal/web/dist
 
