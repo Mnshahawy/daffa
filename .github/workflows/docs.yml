@@ -1,0 +1,72 @@
+name: Docs
+
+# Builds the VitePress docs site and deploys it to GitHub Pages. The API reference is
+# generated from internal/api/openapi.json at build time (site/scripts/prebuild.mjs copies
+# it in), so a route change that regenerates the spec ships to the docs on the next run.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'site/**'
+      - 'brand/**'
+      - 'internal/api/openapi.json'
+      - 'web/public/mark.svg'
+      - '.github/workflows/docs.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deploy at a time; let an in-progress run finish rather than cancelling a publish.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: site
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: site/pnpm-lock.yaml
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # GitHub project Pages serve under /<repo>/. If you move the docs to a custom domain
+      # or an org root site, drop this to '/'.
+      - name: Build
+        run: pnpm build
+        env:
+          DOCS_BASE: /daffa/
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site/.vitepress/dist
+
+  deploy:
+    name: Deploy
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

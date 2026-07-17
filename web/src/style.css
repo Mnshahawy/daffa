@@ -1,0 +1,439 @@
+@import 'tailwindcss';
+/* The colour system + radii live in one shared file so the console and the public docs
+   site cannot drift. See brand/tokens.css. Font faces stay below: each surface resolves
+   them differently (node_modules here, bundled files on the site). */
+@import '../../brand/tokens.css';
+
+/* IBM Plex: a technical grotesque with real character, and its matching mono. Bundled, not
+   fetched — there is no Node in production and an air-gapped install cannot call a CDN.
+
+   Sans carries prose. Mono carries every piece of machine data (ids, digests, image tags,
+   counts, timings) and every structural label. That split IS the typography: if the string
+   came from Docker, it is set in mono.
+
+   The faces are declared by hand rather than by importing the packages' index, because those
+   pull in Cyrillic, Greek and Vietnamese — forty woff2 files, all of which Vite would emit and
+   Go would then EMBED, in a binary whose entire pitch is that it is one lean static file.
+   Latin and Latin-Ext only: five files, ~130KB.
+
+   Not Arabic — and the دفّة on the sign-in page is deliberately left to the system font. It is
+   one word, on one screen, and bundling a whole Arabic face for it would cost more than the
+   rest of the typography put together. */
+@font-face {
+  font-family: 'IBM Plex Sans Variable';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 700;
+  src: url('@fontsource-variable/ibm-plex-sans/files/ibm-plex-sans-latin-wght-normal.woff2')
+    format('woff2-variations');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304,
+    U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'IBM Plex Sans Variable';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 700;
+  src: url('@fontsource-variable/ibm-plex-sans/files/ibm-plex-sans-latin-ext-wght-normal.woff2')
+    format('woff2-variations');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308,
+    U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113,
+    U+2C60-2C7F, U+A720-A7FF;
+}
+
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400;
+  src: url('@fontsource/ibm-plex-mono/files/ibm-plex-mono-latin-400-normal.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 500;
+  src: url('@fontsource/ibm-plex-mono/files/ibm-plex-mono-latin-500-normal.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 600;
+  src: url('@fontsource/ibm-plex-mono/files/ibm-plex-mono-latin-600-normal.woff2') format('woff2');
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Daffa — دفّة, the helm.
+
+   A dense operations console, read at 2am on a second monitor. Information first,
+   quiet chrome, and colour that always means something.
+
+   The rule this file exists to enforce:
+
+     GREEN, AMBER and RED are STATE. Never decoration, never brand. If a thing is
+     green it is running; if it is red it has failed or it will destroy something.
+
+   That leaves brand colour nowhere to live but the cool band — which is exactly why
+   every Docker tool on earth is blue. So Daffa is not blue: it is INDIGO (hue 285).
+   Far enough from Docker's cyan to be its own thing, far enough from green, amber and
+   red to never be mistaken for a status.
+   ───────────────────────────────────────────────────────────────────────────── */
+
+@theme {
+  /* Only the font families remain here: the `font-sans`/`font-mono` utilities are
+     generated from them. Every colour token is a plain custom property in
+     brand/tokens.css — the console has no `bg-accent-*`-style utilities to generate. */
+  --font-sans:
+    'IBM Plex Sans Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', 'Cascadia Code', monospace;
+}
+
+/* ── Base ────────────────────────────────────────────────────────────────────── */
+
+@layer base {
+  body {
+    background: var(--surface);
+    color: var(--text);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Tailwind v4's preflight sets `button { cursor: default }` — technically what the HTML
+     spec says, and practically what makes an app feel dead. There are ~93 buttons in this
+     codebase and the pointer never changed over a single one of them.
+
+     Say it once, here, for everything that is genuinely clickable, rather than dusting
+     `cursor-pointer` across every call site and missing a third of them. */
+  button:not(:disabled),
+  [role='button']:not([aria-disabled='true']),
+  [role='option'],
+  [role='radio'],
+  [role='tab'],
+  a[href],
+  summary,
+  /* Both ways of associating a label with its control. `label[for]` alone misses the very
+     common form where the label WRAPS the input — which is most of the checkboxes in this app,
+     and which is how two of them ended up hand-patching `cursor-pointer` back on. */
+  label[for],
+  label:has(input:not(:disabled)),
+  select:not(:disabled),
+  input[type='checkbox']:not(:disabled),
+  input[type='radio']:not(:disabled),
+  input[type='range']:not(:disabled),
+  input[type='file']:not(:disabled)::file-selector-button {
+    cursor: pointer;
+  }
+
+  /* A control that cannot be used should say so under the cursor, rather than look clickable
+     and then do nothing. */
+  button:disabled,
+  select:disabled,
+  input:disabled,
+  textarea:disabled,
+  [aria-disabled='true'] {
+    cursor: not-allowed;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 2px;
+    border-radius: 3px;
+  }
+
+  /* The ring is the affordance. The browser's default inner outline on top of it is noise. */
+  :focus:not(:focus-visible) {
+    outline: none;
+  }
+
+  ::selection {
+    background: var(--accent-soft);
+  }
+
+  /* Numbers in a console are compared down a column, not read as prose. */
+  th,
+  td,
+  time,
+  [data-numeric] {
+    font-variant-numeric: tabular-nums;
+  }
+
+  input,
+  textarea,
+  select {
+    font-family: inherit;
+  }
+
+  /* Chrome should be quiet. */
+  * {
+    scrollbar-color: var(--border-strong) transparent;
+    scrollbar-width: thin;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ── Utilities ───────────────────────────────────────────────────────────────── */
+
+@utility surface {
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+}
+
+@utility muted {
+  color: var(--text-muted);
+}
+
+@utility subtle {
+  color: var(--text-subtle);
+}
+
+/* The structural label: mono, small, wide, quiet. Every column header, section eyebrow and
+   metadata key in the app is one of these. That consistency is what makes the sans/mono split
+   read as a system rather than as two fonts that happen to be on the same page. */
+@utility eyebrow {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-subtle);
+}
+
+/* A field, written once, so that thirty forms cannot drift into thirty different inputs —
+   which is exactly how Portainer ended up with a hardcoded #337ab7 checkbox that ignores all
+   three of its themes. */
+@utility field {
+  width: 100%;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+  color: var(--text);
+  transition:
+    border-color 0.12s,
+    box-shadow 0.12s;
+
+  &::placeholder {
+    color: var(--text-subtle);
+  }
+
+  &:hover:not(:disabled):not(:focus) {
+    border-color: var(--border-strong);
+  }
+
+  &:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+  }
+
+  &:disabled {
+    opacity: 0.55;
+  }
+}
+
+/* The in-flight signal.
+
+   Portainer pulses a dot when an Edge agent has a live heartbeat, and it is the one animation
+   in that product that MEANS something. Dokploy has none at all — so a build in progress is a
+   static yellow dot, indistinguishable from a build that has been wedged for an hour.
+
+   Here: if it breathes, something is actually happening right now. */
+@utility pulse-ring {
+  position: relative;
+
+  &::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 9999px;
+    background: currentColor;
+    animation: daffa-pulse 1.8s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+}
+
+@keyframes daffa-pulse {
+  0% {
+    opacity: 0.6;
+    transform: scale(1);
+  }
+  70%,
+  100% {
+    opacity: 0;
+    transform: scale(2.4);
+  }
+}
+
+@keyframes daffa-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Streaming log lines and freshly-arrived rows, so a feed that is moving looks like it is
+   moving rather than silently replacing itself under you. */
+@utility appear {
+  animation: daffa-fade-in 0.18s ease-out;
+}
+
+/* ── The action grammar ───────────────────────────────────────────────────────
+   A button's colour states what KIND of thing it does. This is the whole system,
+   and there are exactly six answers:
+
+     primary    solid indigo   The thing this screen is for. One per screen.
+     secondary  outlined       A safe alternative. Cancel, Edit, Manage.
+     ghost      bare           An affordance inside a row or a toolbar.
+     caution    amber          Disruptive but recoverable. Stop, Restart, Pause, Down.
+                               The service goes away and comes back.
+     danger     tinted red     Destroys something. Remove, Delete, Prune.
+     danger-solid  solid red   The same, at the moment of confirming it.
+
+   Two tiers of destructive, because `docker stop` and `docker rm` are not the same
+   act and a console that paints them the same colour is lying. Portainer paints
+   Start and Kill in identical grey, side by side. Dokploy paints Deploy solid black
+   and Kill Process in 10%-opacity red — so the irreversible action carries LESS
+   visual weight than the safe one. Both are the same mistake from opposite ends.
+
+   The loudest thing on screen is `danger-solid`, and it exists in exactly one place:
+   the confirm dialog, at the moment you are about to lose data. */
+
+@layer components {
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.375rem;
+    border: 1px solid transparent;
+    border-radius: var(--radius-control);
+    font-weight: 500;
+    white-space: nowrap;
+    transition:
+      background-color 0.12s,
+      border-color 0.12s,
+      color 0.12s,
+      opacity 0.12s;
+  }
+
+  /* Presses in. Cheap, and it makes a click feel answered. */
+  .btn:active:not(:disabled) {
+    transform: translateY(0.5px);
+  }
+
+  .btn:disabled {
+    opacity: 0.45;
+  }
+
+  .btn-primary {
+    background: var(--accent);
+    color: var(--accent-contrast);
+  }
+  .btn-primary:hover:not(:disabled) {
+    background: var(--accent-hover);
+  }
+
+  .btn-secondary {
+    background: var(--surface-raised);
+    border-color: var(--border);
+    color: var(--text);
+  }
+  .btn-secondary:hover:not(:disabled) {
+    background: var(--surface-sunken);
+    border-color: var(--border-strong);
+  }
+
+  .btn-ghost {
+    background: transparent;
+    color: var(--text-muted);
+  }
+  .btn-ghost:hover:not(:disabled) {
+    background: var(--surface-sunken);
+    color: var(--text);
+  }
+
+  .btn-caution {
+    background: var(--warn-soft);
+    color: var(--warn);
+  }
+  .btn-caution:hover:not(:disabled) {
+    background: color-mix(in oklch, var(--warn) 26%, transparent);
+  }
+
+  .btn-danger {
+    background: var(--danger-soft);
+    color: var(--danger);
+  }
+  .btn-danger:hover:not(:disabled) {
+    background: color-mix(in oklch, var(--danger) 26%, transparent);
+  }
+
+  .btn-danger-solid {
+    background: var(--danger);
+    color: var(--danger-contrast);
+  }
+  .btn-danger-solid:hover:not(:disabled) {
+    background: var(--danger-hover);
+  }
+
+  .btn-link {
+    background: transparent;
+    color: var(--accent-text);
+    padding: 0;
+    height: auto;
+    text-underline-offset: 3px;
+  }
+  .btn-link:hover:not(:disabled) {
+    text-decoration: underline;
+  }
+
+  /* Sizes. `xs` is for actions that live inside a table row, where the row height is the
+     budget and there is none to spare. */
+  .btn-xs {
+    height: 1.625rem;
+    padding-inline: 0.5rem;
+    font-size: 0.75rem;
+  }
+  .btn-sm {
+    height: 2rem;
+    padding-inline: 0.75rem;
+    font-size: 0.8125rem;
+  }
+  .btn-md {
+    height: 2.375rem;
+    padding-inline: 1rem;
+    font-size: 0.875rem;
+  }
+
+  /* Square, for an icon on its own. */
+  .btn-icon.btn-xs {
+    width: 1.625rem;
+    padding-inline: 0;
+  }
+  .btn-icon.btn-sm {
+    width: 2rem;
+    padding-inline: 0;
+  }
+  .btn-icon.btn-md {
+    width: 2.375rem;
+    padding-inline: 0;
+  }
+}

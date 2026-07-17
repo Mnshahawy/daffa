@@ -1,0 +1,58 @@
+name: Bug report
+description: Something in Daffa behaves incorrectly
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Daffa manages the box it runs on, so environment details
+        (storage backend, single-host vs. agent) are often load-bearing — please fill them in.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you observe, and what did you expect instead?
+      placeholder: I clicked X and got Y; I expected Z.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Daffa version
+      description: From the footer, or `daffa --version`.
+    validations:
+      required: true
+  - type: dropdown
+    id: store
+    attributes:
+      label: Storage backend
+      options:
+        - SQLite (default)
+        - Postgres
+    validations:
+      required: true
+  - type: dropdown
+    id: topology
+    attributes:
+      label: Topology
+      options:
+        - Single host (local Docker socket)
+        - Multi-host (agents)
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Server logs around the failure. Redact secrets.
+      render: text

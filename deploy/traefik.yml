@@ -1,0 +1,56 @@
+# Traefik static configuration for the Daffa edge.
+#
+# This proxy is NOT Daffa-only — other sites on this host route through it too — so its TLS
+# strategy is per-router, never global. Nothing here forces one kind of certificate on every
+# site:
+#
+#   • a public site's router asks for a resolver (traefik.http.routers.X.tls.certresolver=le)
+#     and Traefik gets it a Let's Encrypt certificate;
+#   • an internal site's router just asks for tls=true and is served a certificate delivered
+#     into the file provider below — this is how Daffa's own console works in --internal mode,
+#     and how any site can work when it isn't reachable by a public ACME challenge.
+#
+# Both coexist on this one Traefik. There is deliberately no entrypoint-default resolver: a
+# default would force ACME on every router, which is exactly what breaks a mixed host.
+#
+# install.sh appends the ACME `le` resolver (see the commented block at the bottom) whenever
+# an email is available — always in a public install, and in an internal install if you pass
+# --acme-email so you can host public sites alongside the internal console. Without it,
+# routers that ask for certresolver=le simply have no resolver until you add one.
+
+global:
+  checkNewVersion: false
+  sendAnonymousUsage: false
+
+entryPoints:
+  web:
+    address: ":80"
+    # Everything on :80 is bounced to https.
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+  websecure:
+    address: ":443"
+
+providers:
+  docker:
+    # Only route to containers that opt in with traefik.enable=true.
+    exposedByDefault: false
+  file:
+    # Where Daffa delivers certificates (its own edge cert, plus any it manages for other
+    # sites) and the tls.yml file-provider fragment. Watched, so a renewal hot-reloads.
+    directory: /etc/traefik/dynamic-certs
+    watch: true
+
+# ── ACME (Let's Encrypt) ─────────────────────────────────────────────────────────
+# install.sh appends this with your email when one is available. To enable public certs by
+# hand, uncomment and set the address:
+#
+# certificatesResolvers:
+#   le:
+#     acme:
+#       email: "you@example.com"
+#       storage: /acme/acme.json
+#       tlsChallenge: {}

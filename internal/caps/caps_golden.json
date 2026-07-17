@@ -1,0 +1,237 @@
+{
+  "audit.view": {
+    "ns": "observe",
+    "bit": 2,
+    "scope": "env"
+  },
+  "backups.download": {
+    "ns": "data",
+    "bit": 3,
+    "scope": "env"
+  },
+  "backups.edit": {
+    "ns": "data",
+    "bit": 1,
+    "scope": "env"
+  },
+  "backups.restore": {
+    "ns": "data",
+    "bit": 2,
+    "scope": "env"
+  },
+  "backups.view": {
+    "ns": "data",
+    "bit": 0,
+    "scope": "env"
+  },
+  "certs.edit": {
+    "ns": "certs",
+    "bit": 1,
+    "scope": "global"
+  },
+  "certs.view": {
+    "ns": "certs",
+    "bit": 0,
+    "scope": "env"
+  },
+  "containers.edit": {
+    "ns": "docker",
+    "bit": 1,
+    "scope": "env"
+  },
+  "containers.exec": {
+    "ns": "docker",
+    "bit": 2,
+    "scope": "env"
+  },
+  "containers.view": {
+    "ns": "docker",
+    "bit": 0,
+    "scope": "env"
+  },
+  "gitcreds.edit": {
+    "ns": "deploy",
+    "bit": 5,
+    "scope": "global"
+  },
+  "gitcreds.view": {
+    "ns": "deploy",
+    "bit": 4,
+    "scope": "env"
+  },
+  "hosts.edit": {
+    "ns": "admin",
+    "bit": 7,
+    "scope": "global"
+  },
+  "hosts.view": {
+    "ns": "admin",
+    "bit": 6,
+    "scope": "env"
+  },
+  "images.edit": {
+    "ns": "docker",
+    "bit": 4,
+    "scope": "env"
+  },
+  "images.view": {
+    "ns": "docker",
+    "bit": 3,
+    "scope": "env"
+  },
+  "keyrings.edit": {
+    "ns": "keyrings",
+    "bit": 1,
+    "scope": "global"
+  },
+  "keyrings.view": {
+    "ns": "keyrings",
+    "bit": 0,
+    "scope": "env"
+  },
+  "keys.edit": {
+    "ns": "certs",
+    "bit": 3,
+    "scope": "global"
+  },
+  "keys.view": {
+    "ns": "certs",
+    "bit": 2,
+    "scope": "env"
+  },
+  "logging.edit": {
+    "ns": "admin",
+    "bit": 9,
+    "scope": "env"
+  },
+  "logging.view": {
+    "ns": "admin",
+    "bit": 8,
+    "scope": "env"
+  },
+  "monitors.edit": {
+    "ns": "observe",
+    "bit": 1,
+    "scope": "env"
+  },
+  "monitors.view": {
+    "ns": "observe",
+    "bit": 0,
+    "scope": "env"
+  },
+  "networks.edit": {
+    "ns": "docker",
+    "bit": 6,
+    "scope": "env"
+  },
+  "networks.view": {
+    "ns": "docker",
+    "bit": 5,
+    "scope": "env"
+  },
+  "nodes.edit": {
+    "ns": "swarm",
+    "bit": 2,
+    "scope": "env"
+  },
+  "registries.edit": {
+    "ns": "deploy",
+    "bit": 3,
+    "scope": "global"
+  },
+  "registries.view": {
+    "ns": "deploy",
+    "bit": 2,
+    "scope": "env"
+  },
+  "roles.edit": {
+    "ns": "admin",
+    "bit": 3,
+    "scope": "global"
+  },
+  "roles.view": {
+    "ns": "admin",
+    "bit": 2,
+    "scope": "global"
+  },
+  "services.edit": {
+    "ns": "swarm",
+    "bit": 1,
+    "scope": "env"
+  },
+  "services.view": {
+    "ns": "swarm",
+    "bit": 0,
+    "scope": "env"
+  },
+  "settings.edit": {
+    "ns": "admin",
+    "bit": 5,
+    "scope": "global"
+  },
+  "settings.view": {
+    "ns": "admin",
+    "bit": 4,
+    "scope": "global"
+  },
+  "stacks.edit": {
+    "ns": "deploy",
+    "bit": 1,
+    "scope": "env"
+  },
+  "stacks.view": {
+    "ns": "deploy",
+    "bit": 0,
+    "scope": "env"
+  },
+  "storage.edit": {
+    "ns": "data",
+    "bit": 5,
+    "scope": "global"
+  },
+  "storage.view": {
+    "ns": "data",
+    "bit": 4,
+    "scope": "env"
+  },
+  "swarm.edit": {
+    "ns": "swarm",
+    "bit": 3,
+    "scope": "env"
+  },
+  "system.prune": {
+    "ns": "docker",
+    "bit": 9,
+    "scope": "env"
+  },
+  "users.edit": {
+    "ns": "admin",
+    "bit": 1,
+    "scope": "global"
+  },
+  "users.view": {
+    "ns": "admin",
+    "bit": 0,
+    "scope": "global"
+  },
+  "volsources.edit": {
+    "ns": "deploy",
+    "bit": 7,
+    "scope": "env"
+  },
+  "volsources.view": {
+    "ns": "deploy",
+    "bit": 6,
+    "scope": "env"
+  },
+  "volumes.edit": {
+    "ns": "docker",
+    "bit": 8,
+    "scope": "env"
+  },
+  "volumes.view": {
+    "ns": "docker",
+    "bit": 7,
+    "scope": "env"
+  }
+}

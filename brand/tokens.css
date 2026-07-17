@@ -1,0 +1,172 @@
+/* ─────────────────────────────────────────────────────────────────────────────
+   Daffa design tokens — the ONE source of truth for the colour system.
+
+   Consumed by two surfaces, so it lives outside both:
+     • the console  — web/src/style.css does `@import '../../brand/tokens.css'`
+     • the docs site — site/src/*.html link the built copy of this file
+
+   It is deliberately plain CSS: no `@theme`, no `@font-face`. Tailwind's `@theme` is not
+   valid in a browser-served stylesheet, and the console consumes this ramp only through
+   `var(--color-*)` (there are zero `bg-accent-*`-style utilities), so nothing here needs
+   Tailwind to process it. Font faces differ per surface (the console resolves them from
+   node_modules, the site from bundled files), so they stay with each surface.
+
+   The load-bearing rule, same as the app: GREEN / AMBER / RED are STATE, never brand.
+   Brand is INDIGO (hue 285) — far from Docker's cyan, far from every status colour.
+   Marine (hue 198) is the informational second hue, and is never a status either.
+   ───────────────────────────────────────────────────────────────────────────── */
+
+:root {
+  /* Brand ramp — indigo. */
+  --color-accent-50: oklch(0.97 0.018 285);
+  --color-accent-100: oklch(0.94 0.038 285);
+  --color-accent-200: oklch(0.88 0.075 285);
+  --color-accent-300: oklch(0.8 0.115 285);
+  --color-accent-400: oklch(0.71 0.165 285);
+  --color-accent-500: oklch(0.63 0.195 285);
+  --color-accent-600: oklch(0.56 0.205 285);
+  --color-accent-700: oklch(0.48 0.185 285);
+  --color-accent-800: oklch(0.4 0.155 285);
+  --color-accent-900: oklch(0.33 0.115 285);
+  --color-accent-950: oklch(0.23 0.075 285);
+
+  /* Marine — charts, the shallow end of the logo gradient, anything informational. */
+  --color-marine-300: oklch(0.84 0.09 198);
+  --color-marine-400: oklch(0.78 0.115 198);
+  --color-marine-500: oklch(0.72 0.13 198);
+  --color-marine-600: oklch(0.63 0.12 198);
+  --color-marine-700: oklch(0.53 0.1 198);
+
+  --radius-card: 0.75rem;
+  --radius-control: 0.5rem;
+}
+
+/* Light (default) and explicit-light. */
+:root,
+:root[data-theme='light'] {
+  color-scheme: light;
+
+  --surface: oklch(0.985 0.003 265);
+  --surface-raised: oklch(1 0 0);
+  --surface-sunken: oklch(0.955 0.005 265);
+  --surface-overlay: oklch(1 0 0);
+
+  /* The rail is the one piece of chrome always on screen, so it carries the brand tint. */
+  --rail: oklch(0.965 0.008 275);
+  --rail-hover: oklch(0.93 0.012 275);
+
+  --border: oklch(0.9 0.006 265);
+  --border-strong: oklch(0.83 0.01 265);
+
+  --text: oklch(0.24 0.014 265);
+  --text-muted: oklch(0.53 0.014 265);
+  --text-subtle: oklch(0.66 0.012 265);
+
+  --accent: var(--color-accent-600);
+  --accent-hover: var(--color-accent-700);
+  --accent-text: var(--color-accent-700);
+  --accent-soft: color-mix(in oklch, var(--color-accent-500) 12%, transparent);
+  --accent-contrast: oklch(1 0 0);
+
+  --success: oklch(0.58 0.15 155);
+  --success-soft: color-mix(in oklch, var(--success) 14%, transparent);
+  --warn: oklch(0.63 0.15 65);
+  --warn-soft: color-mix(in oklch, var(--warn) 15%, transparent);
+  --danger: oklch(0.56 0.21 27);
+  --danger-hover: oklch(0.49 0.19 27);
+  --danger-soft: color-mix(in oklch, var(--danger) 12%, transparent);
+  --danger-contrast: oklch(1 0 0);
+  --info: var(--color-marine-600);
+  --info-soft: color-mix(in oklch, var(--info) 14%, transparent);
+
+  --shadow-raised: 0 1px 2px oklch(0.2 0.02 265 / 0.06), 0 1px 1px oklch(0.2 0.02 265 / 0.04);
+  --shadow-overlay:
+    0 12px 32px -8px oklch(0.2 0.02 265 / 0.18), 0 2px 8px -2px oklch(0.2 0.02 265 / 0.08);
+
+  --focus: var(--accent);
+}
+
+/* Dark: the OS preference is the default and an explicit choice overrides it, so the token
+   block must win in BOTH directions — hence the media query guarded by :not([light]) AND
+   the explicit [data-theme='dark'] block after it. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    color-scheme: dark;
+
+    --surface: oklch(0.175 0.012 265);
+    --surface-raised: oklch(0.215 0.014 265);
+    --surface-sunken: oklch(0.14 0.012 265);
+    --surface-overlay: oklch(0.245 0.016 265);
+
+    --rail: oklch(0.145 0.016 275);
+    --rail-hover: oklch(0.225 0.018 275);
+
+    --border: oklch(0.3 0.014 265);
+    --border-strong: oklch(0.4 0.016 265);
+
+    --text: oklch(0.94 0.005 265);
+    --text-muted: oklch(0.68 0.012 265);
+    --text-subtle: oklch(0.55 0.012 265);
+
+    --accent: var(--color-accent-500);
+    --accent-hover: var(--color-accent-400);
+    --accent-text: var(--color-accent-300);
+    --accent-soft: color-mix(in oklch, var(--color-accent-400) 18%, transparent);
+    --accent-contrast: oklch(1 0 0);
+
+    --success: oklch(0.72 0.16 155);
+    --success-soft: color-mix(in oklch, var(--success) 18%, transparent);
+    --warn: oklch(0.78 0.15 72);
+    --warn-soft: color-mix(in oklch, var(--warn) 18%, transparent);
+    --danger: oklch(0.64 0.2 25);
+    --danger-hover: oklch(0.7 0.19 25);
+    --danger-soft: color-mix(in oklch, var(--danger) 18%, transparent);
+    --danger-contrast: oklch(1 0 0);
+    --info: var(--color-marine-400);
+    --info-soft: color-mix(in oklch, var(--info) 18%, transparent);
+
+    --shadow-raised: 0 1px 2px oklch(0 0 0 / 0.3);
+    --shadow-overlay: 0 16px 40px -8px oklch(0 0 0 / 0.55), 0 2px 8px -2px oklch(0 0 0 / 0.35);
+  }
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  --surface: oklch(0.175 0.012 265);
+  --surface-raised: oklch(0.215 0.014 265);
+  --surface-sunken: oklch(0.14 0.012 265);
+  --surface-overlay: oklch(0.245 0.016 265);
+
+  --rail: oklch(0.145 0.016 275);
+  --rail-hover: oklch(0.225 0.018 275);
+
+  --border: oklch(0.3 0.014 265);
+  --border-strong: oklch(0.4 0.016 265);
+
+  --text: oklch(0.94 0.005 265);
+  --text-muted: oklch(0.68 0.012 265);
+  --text-subtle: oklch(0.55 0.012 265);
+
+  --accent: var(--color-accent-500);
+  --accent-hover: var(--color-accent-400);
+  --accent-text: var(--color-accent-300);
+  --accent-soft: color-mix(in oklch, var(--color-accent-400) 18%, transparent);
+  --accent-contrast: oklch(1 0 0);
+
+  --success: oklch(0.72 0.16 155);
+  --success-soft: color-mix(in oklch, var(--success) 18%, transparent);
+  --warn: oklch(0.78 0.15 72);
+  --warn-soft: color-mix(in oklch, var(--warn) 18%, transparent);
+  --danger: oklch(0.64 0.2 25);
+  --danger-hover: oklch(0.7 0.19 25);
+  --danger-soft: color-mix(in oklch, var(--danger) 18%, transparent);
+  --danger-contrast: oklch(1 0 0);
+  --info: var(--color-marine-400);
+  --info-soft: color-mix(in oklch, var(--info) 18%, transparent);
+
+  --shadow-raised: 0 1px 2px oklch(0 0 0 / 0.3);
+  --shadow-overlay: 0 16px 40px -8px oklch(0 0 0 / 0.55), 0 2px 8px -2px oklch(0 0 0 / 0.35);
+
+  --focus: var(--accent);
+}

@@ -1,0 +1,3 @@
+GET /api/openapi.json
+GET /api/environments/{env}/containers/{id}/exec
+POST /api/backups/{id}/restore

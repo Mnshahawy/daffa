@@ -1,0 +1,15 @@
+{
+  "name": "daffa-docs",
+  "private": true,
+  "type": "module",
+  "description": "Public documentation site for Daffa, built with VitePress.",
+  "scripts": {
+    "prebuild-assets": "node scripts/prebuild.mjs",
+    "dev": "node scripts/prebuild.mjs && vitepress dev",
+    "build": "node scripts/prebuild.mjs && vitepress build",
+    "preview": "vitepress preview"
+  },
+  "devDependencies": {
+    "vitepress": "^1.6.3"
+  }
+}

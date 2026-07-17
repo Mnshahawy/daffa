@@ -1,0 +1,135 @@
+name: CI
+
+# Guards main and every PR targeting it. The four jobs mirror the four ways the tree
+# can break: Go behaviour, the Postgres dialect, the embedded SPA, and the container
+# image. They run in parallel — a red X names which layer regressed.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# A second push to a branch cancels the first still-running CI for it. main is exempt
+# (each commit on main gets its own definitive result).
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    name: Go tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # ubuntu-latest ships node, so the caps.ts-under-node check in internal/caps runs
+      # for real here instead of skipping.
+      - name: go vet
+        run: go vet ./...
+
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "These files need gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Generated files are up to date
+        run: |
+          go generate ./internal/caps ./internal/api
+          if ! git diff --exit-code; then
+            echo "::error::Generated files are stale. Run 'go generate ./internal/caps ./internal/api' and commit the result."
+            exit 1
+          fi
+
+      - name: go build
+        run: go build ./...
+
+      - name: go test
+        run: go test ./...
+
+  postgres:
+    name: Postgres tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: daffa
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # The dual-dialect promise is only worth anything if both are actually exercised;
+      # the env var flips the Postgres paths on for the whole suite.
+      - name: go test (Postgres)
+        env:
+          DAFFA_TEST_PG_URL: postgres://postgres:test@localhost:5432/daffa?sslmode=disable
+        run: go test ./...
+
+  web:
+    name: Web build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # `pnpm build` is vue-tsc --noEmit (typecheck) followed by vite build — both must pass.
+      - name: Build
+        run: pnpm build
+
+  docker:
+    name: Docker image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Build only (no push): proves the multi-stage Dockerfile still assembles the SPA,
+      # the binary, and the distroless image. Pushing happens only in release.yml.
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          build-args: |
+            VERSION=ci-${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

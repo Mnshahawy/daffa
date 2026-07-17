@@ -1,0 +1,5 @@
+node_modules/
+.vitepress/dist/
+.vitepress/cache/
+# Reproduced on every build by scripts/prebuild.mjs from the canonical sources.
+public/

@@ -1,0 +1,8 @@
+# Daffa is a private operations console. Nothing here is for a search engine.
+#
+# This asks a crawler not to fetch. The X-Robots-Tag header on every response (see
+# noIndex in internal/api/server.go) tells it not to index what it fetched anyway.
+# Neither is a security control — the session cookie is. Both exist so that a
+# self-hosted install on a real hostname does not turn up in a search result.
+User-agent: *
+Disallow: /

@@ -1,0 +1,166 @@
+# Daffa — self-hosted Docker operations console.
+#
+# This template runs Daffa with a bundled PostgreSQL and, optionally, a Traefik
+# reverse proxy that terminates TLS with an automatic Let's Encrypt certificate.
+#
+# It is driven entirely by the neighbouring .env file (copy .env.example → .env).
+# The install.sh script writes that .env for you and brings this up; you can also
+# edit it by hand and run `docker compose up -d` yourself.
+#
+# Two modes, selected by whether COMPOSE_PROFILES includes `traefik`:
+#
+#   • traefik  — Daffa sits behind Traefik on :443, Secure cookies on, real TLS.
+#                Requires DAFFA_DOMAIN (a DNS name pointing at this host) and
+#                ACME_EMAIL. This is the production shape.
+#   • direct   — no proxy; Daffa is published on 127.0.0.1 in plain http with
+#                Secure cookies off. Only safe for a local machine or behind a
+#                proxy you run yourself. Put a TLS terminator in front before
+#                exposing it to a network.
+#
+# Note on the database: Daffa's own default is SQLite, and it never provisions a
+# database on its own. This template bundles PostgreSQL because an install that
+# ships its own datastore is what most people expect from a one-command setup —
+# but nothing here is load-bearing for Daffa. Point DAFFA_DB_URL at an existing
+# cluster (or drop to sqlite://) and the postgres service below becomes dead weight
+# you can delete.
+
+name: daffa
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: daffa
+      POSTGRES_DB: daffa
+      # The compose file refuses to start if this is unset, rather than silently
+      # bringing up a database with an empty password.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required — see .env}
+    volumes:
+      - daffa-pg:/var/lib/postgresql/data
+    healthcheck:
+      # Daffa depends on this being healthy, so `up` waits for Postgres to accept
+      # connections instead of racing it and logging a connection error on boot.
+      test: ["CMD-SHELL", "pg_isready -U daffa -d daffa"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+    # Only on the internal network — the database is never reachable from the edge
+    # where the proxy lives.
+    networks: [internal]
+
+  daffa:
+    image: ${DAFFA_IMAGE:-ghcr.io/mnshahawy/daffa:latest}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # sslmode=disable is correct here: the connection never leaves the compose
+      # network, so there is nothing on the wire to intercept.
+      DAFFA_DB_URL: postgres://daffa:${POSTGRES_PASSWORD}@postgres:5432/daffa?sslmode=disable
+      # On behind Traefik (TLS), off for plain-http direct mode — the browser drops
+      # a Secure cookie over http and you would never stay signed in.
+      DAFFA_SECURE_COOKIE: ${DAFFA_SECURE_COOKIE:-true}
+      # Only believe X-Forwarded-For when a proxy we run is actually in front.
+      DAFFA_TRUST_PROXY: ${DAFFA_TRUST_PROXY:-true}
+      # The stack's own networks and volumes, marked `system` so they cannot be removed
+      # from the console — deleting the console's own plumbing is not a click we allow.
+      DAFFA_SYSTEM_NETWORKS: ${DAFFA_SYSTEM_NETWORKS:-}
+      DAFFA_SYSTEM_VOLUMES: ${DAFFA_SYSTEM_VOLUMES:-}
+    volumes:
+      # State: the SQLite file (unused here) and, crucially, master.key — the seal
+      # for every secret Daffa stores. Back this volume up; losing it means
+      # re-entering every registry password and IdP client secret.
+      - daffa-data:/var/lib/daffa
+      # Daffa operates the daemon on this box through its socket.
+      - /var/run/docker.sock:/var/run/docker.sock
+      # The deployment directory, read-only: `daffa stack adopt` reads this compose file
+      # and .env from here to register itself as an editable stack. Absolute host path so a
+      # redeploy through Daffa's runner resolves it the same way (a relative path would
+      # resolve inside the runner). See docs — relative bind mounts and the runner.
+      - ${DAFFA_CONFIG_DIR:-/opt/daffa}:/etc/daffa:ro
+    # The image runs as a non-root user; joining the host's docker group is what
+    # lets it read the root-owned socket without running as root. install.sh fills
+    # DOCKER_GID in from `getent group docker`.
+    group_add:
+      - ${DOCKER_GID:-999}
+    # Always published on loopback so the installer (and you) can reach /healthz
+    # and the API locally. In traefik mode this stays on 127.0.0.1 — it is a local
+    # convenience, not a way around TLS. Set DAFFA_BIND=0.0.0.0 only in direct mode
+    # and only when you have your own TLS in front.
+    ports:
+      - "${DAFFA_BIND:-127.0.0.1}:${DAFFA_PORT:-8080}:8080"
+    labels:
+      # Inert unless the traefik service is running (the `traefik` profile). Daffa
+      # in direct mode carries these harmlessly.
+      #
+      # Per-router TLS, so this proxy can serve public and internal sites side by side.
+      # DAFFA_CERTRESOLVER is `le` for a public console (Traefik gets a Let's Encrypt cert)
+      # and empty for an internal one (Daffa delivers the cert into the file provider, and
+      # Traefik serves it by SNI / as the default). Only THIS router's strategy is tied to
+      # Daffa's install mode — other sites choose their own.
+      - "traefik.enable=true"
+      - "traefik.http.routers.daffa.rule=Host(`${DAFFA_DOMAIN:-daffa.local}`)"
+      - "traefik.http.routers.daffa.entrypoints=websecure"
+      - "traefik.http.routers.daffa.tls=true"
+      - "traefik.http.routers.daffa.tls.certresolver=${DAFFA_CERTRESOLVER:-}"
+      - "traefik.http.services.daffa.loadbalancer.server.port=8080"
+      # Daffa is on two networks; tell Traefik which one to reach it on, or it may
+      # pick the container's internal-network IP that Traefik can't route to.
+      - "traefik.docker.network=daffa-edge"
+    restart: unless-stopped
+    # The only service on both networks: it talks to Postgres on `internal` and is
+    # proxied from `edge`.
+    networks: [internal, edge]
+
+  traefik:
+    image: traefik:v3.1
+    # Only present when COMPOSE_PROFILES=traefik. In direct mode this service is
+    # never created.
+    profiles: [traefik]
+    # The static config is a mounted file, not command flags, so that the ONE thing that
+    # differs between a public (ACME) and an internal (Daffa-issued) install is which
+    # traefik.yml sits next to this compose file — the compose itself stays identical.
+    # traefik reads /etc/traefik/traefik.yml on its own; no command needed.
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      # Read-only: Traefik only needs to watch for container labels, never to act
+      # on the daemon.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Static config (traefik.yml), in a Daffa-managed volume rather than a host file, so
+      # it is editable in the console (an inline volume source delivers it). The installer
+      # seeds it before Traefik's first start; edits apply on the next stack redeploy, since
+      # Traefik reads its static config once at startup.
+      - traefik-config:/etc/traefik:ro
+      # Dynamic config the file provider watches: delivered certificates AND any middlewares
+      # you add — both Daffa-managed, coexisting in one directory (each writer touches only
+      # its own files). The mount path is the convention Daffa's cert fragment assumes.
+      - edge-certs:/etc/traefik/dynamic-certs:ro
+      # ACME account + issued certs (public-domain mode). Empty and unused in internal mode.
+      - traefik-acme:/acme
+    restart: unless-stopped
+    # Edge only — the proxy has no path to the database network.
+    networks: [edge]
+
+volumes:
+  daffa-data:
+  daffa-pg:
+  traefik-acme:
+  # Daffa delivers the edge certificate + Traefik file-provider fragment here. Named
+  # explicitly so `daffa edge init --volume daffa-edge-certs` and the mount above agree.
+  edge-certs:
+    name: daffa-edge-certs
+  # Traefik's static config (traefik.yml), delivered and managed by Daffa. Named explicitly
+  # so the installer's seed and `daffa stack config` target the same volume.
+  traefik-config:
+    name: daffa-traefik-config
+
+networks:
+  # daffa <-> postgres. No proxy here.
+  internal:
+    name: daffa-internal
+  # traefik <-> daffa. No database here.
+  edge:
+    name: daffa-edge

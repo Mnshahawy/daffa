@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+
+    <!-- The starting value only. Every route sets its own from lib/title.ts, most-specific part
+         first, because a browser truncates a tab from the right. -->
+    <title>Daffa</title>
+    <meta
+      name="description"
+      content="The helm — a self-hosted console for operating Docker containers and deploying Compose stacks."
+    />
+
+    <!-- Belt and braces with robots.txt and the X-Robots-Tag header the server sets on every
+         response. This tag alone would cover only the pages a crawler actually parses as HTML —
+         and since the SPA answers ANY unknown path with this same shell, that is a lot of doors
+         into one room. None of these three is a security control; the session cookie is. They
+         exist so a self-hosted install on a real hostname stays out of search results. -->
+    <meta name="robots" content="noindex, nofollow, noarchive, nosnippet, noimageindex" />
+    <meta name="googlebot" content="noindex, nofollow" />
+
+    <!-- SVG first: browsers that take it get a mark that stays sharp at any density. The .ico
+         is the fallback, and it is also what anything asking blindly for /favicon.ico gets. -->
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="/favicon.ico" sizes="48x48" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/site.webmanifest" />
+
+    <!-- The tab strip and the mobile browser chrome, matched to the app's own surfaces so the
+         window does not have a bright seam at the top in dark mode. -->
+    <meta name="theme-color" content="#f7f7f9" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0e1016" media="(prefers-color-scheme: dark)" />
+
+    <!-- Paint the first frame in the right colour. Vue has not mounted yet at this point, and
+         a white flash before a dark app is the single most visible thing a console can get
+         wrong — you see it on every navigation to /login. This mirrors initTheme() in main.ts;
+         it runs earlier, and it is inline because an external script would be a round trip. -->
+    <script>
+      ;(function () {
+        try {
+          var t = localStorage.getItem('daffa.theme')
+          if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t)
+        } catch (e) {
+          /* private mode: fall through to the OS preference, which is the right default anyway */
+        }
+      })()
+    </script>
+    <style>
+      :root {
+        background: #f7f7f9;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root:not([data-theme='light']) {
+          background: #0e1016;
+        }
+      }
+      :root[data-theme='dark'] {
+        background: #0e1016;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

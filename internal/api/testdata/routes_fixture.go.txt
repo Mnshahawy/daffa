@@ -1,0 +1,32 @@
+package api
+
+func (s *Server) apiRoutes() []route {
+	return []route{
+		// ── widgets ────────────────────────────────────────────────────────────────
+		// Widgets are the fixture's stand-in for a real section. This prose belongs to
+		// the FIRST route only.
+		//
+		// Second paragraph, still prose.
+		//oapi:summary List the widgets
+		//oapi:example resp [{"name": "a"}]
+		{pattern: "GET /api/widgets", cap: caps.WidgetsView, scope: scopeAny, h: s.handleListWidgets},
+
+		//oapi:summary Create a widget
+		//oapi:status 201
+		//oapi:enum WidgetRequest.kind round|square
+		//oapi:required WidgetRequest.name WidgetRequest.kind
+		//oapi:example req {
+		//  "name": "a",
+		//  "kind": "round"
+		//}
+		{pattern: "POST /api/widgets", cap: caps.WidgetsEdit, scope: scopeGlobal, h: s.handleCreateWidget},
+
+		// ── gadgets ────────────────────────────────────────────────────────────────
+		{pattern: "GET /api/gadgets/{id}/logs", cap: caps.GadgetsView, scope: scopeEnv, h: s.handleGadgetLogs},
+
+		//oapi:path action enum=start|stop what to do to the gadget
+		//oapi:query force boolean skip the safety check
+		//oapi:deprecated superseded by POST /api/gadgets/{id}/ops
+		{pattern: "POST /api/gadgets/{id}/{action}", cap: caps.GadgetsEdit, scope: scopeEnv, h: s.handleGadgetAction},
+	}
+}
