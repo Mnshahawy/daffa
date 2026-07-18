@@ -3,13 +3,20 @@ import { computed, ref } from 'vue'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import { ApiError, daffa, type GitCredential } from '@/lib/api'
 import { confirm } from '@/lib/confirm'
+import { useSession } from '@/stores/session'
+import { Cap } from '@/lib/caps'
 import AppIcon from '@/components/ui/AppIcon.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 
 const qc = useQueryClient()
+const session = useSession()
 const error = ref('')
 const adding = ref(false)
+
+// Reachable with deploy.git_creds.view; adding and deleting is deploy.git_creds.edit. Gate
+// the buttons so a view-only operator does not see a control the route would refuse.
+const canEdit = computed(() => session.can(Cap.GitCredsEdit))
 
 const { data: creds, isLoading } = useQuery({
   queryKey: ['gitcreds'],
@@ -148,7 +155,7 @@ async function onRemove(c: GitCredential) {
         </p>
       </div>
 
-      <div class="ml-auto">
+      <div v-if="canEdit" class="ml-auto">
         <BaseButton :intent="adding ? 'secondary' : 'primary'" @click="adding = !adding">
           <AppIcon v-if="!adding" name="plus" class="size-4" />
           {{ adding ? 'Cancel' : 'Add credential' }}
@@ -377,7 +384,7 @@ async function onRemove(c: GitCredential) {
       title="No git credentials yet"
       body="A credential is how Daffa reaches a private repository — an access token over https, or an SSH deploy key. Public repositories need none."
     >
-      <template #action>
+      <template v-if="canEdit" #action>
         <BaseButton intent="primary" size="md" @click="adding = true">
           <AppIcon name="plus" class="size-4" />
           Add credential
@@ -418,6 +425,7 @@ async function onRemove(c: GitCredential) {
 
             <td class="py-3 pr-4 text-right">
               <BaseButton
+                v-if="canEdit"
                 intent="danger"
                 size="xs"
                 :disabled="remove.isPending.value"

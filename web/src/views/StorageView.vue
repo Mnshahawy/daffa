@@ -1,15 +1,23 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import { ApiError, daffa, type StorageTarget } from '@/lib/api'
 import { confirm } from '@/lib/confirm'
+import { useSession } from '@/stores/session'
+import { Cap } from '@/lib/caps'
 import AppIcon from '@/components/ui/AppIcon.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 
 const qc = useQueryClient()
+const session = useSession()
 const error = ref('')
 const adding = ref(false)
+
+// The page is reachable with storage.view alone; creating and deleting targets is
+// storage.edit. Gate the buttons so a view-only operator sees the list, not a control
+// the route behind it would refuse. StorageEdit is global-only, so can() needs no env.
+const canEdit = computed(() => session.can(Cap.StorageEdit))
 
 const { data: targets, isLoading } = useQuery({
   queryKey: ['storage'],
@@ -70,7 +78,7 @@ async function onRemove(t: StorageTarget) {
         </p>
       </div>
 
-      <div class="ml-auto">
+      <div v-if="canEdit" class="ml-auto">
         <BaseButton :intent="adding ? 'secondary' : 'primary'" @click="adding = !adding">
           <AppIcon v-if="!adding" name="plus" class="size-4" />
           {{ adding ? 'Cancel' : 'Add target' }}
@@ -162,7 +170,7 @@ async function onRemove(t: StorageTarget) {
       title="No storage targets yet"
       body="A storage target is an S3-compatible bucket — R2, B2, MinIO, S3. It is where backups go: a backup job streams the dump straight into one, so a job cannot be created until there is at least one here."
     >
-      <template #action>
+      <template v-if="canEdit" #action>
         <BaseButton intent="primary" size="md" @click="adding = true">
           <AppIcon name="plus" class="size-4" />
           Add target
@@ -200,6 +208,7 @@ async function onRemove(t: StorageTarget) {
 
             <td class="py-3 pr-4 text-right">
               <BaseButton
+                v-if="canEdit"
                 intent="danger"
                 size="xs"
                 :disabled="remove.isPending.value"
