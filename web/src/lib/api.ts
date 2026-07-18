@@ -415,7 +415,6 @@ export interface Stack {
   git_path?: string
   git_credential_id?: string
   inline_yaml?: string
-  registry_id?: string
   deployed_at?: string
   deployed_commit?: string
   last_deploy_status?: string
@@ -504,7 +503,6 @@ export interface StackRequest {
   git_path?: string
   git_credential_id?: string
   inline_yaml?: string
-  registry_id?: string
 }
 
 export interface SetEnvRequest {

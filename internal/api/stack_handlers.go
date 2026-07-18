@@ -44,7 +44,6 @@ type stackView struct {
 	GitPath         string     `json:"git_path,omitempty"`
 	GitCredentialID string     `json:"git_credential_id,omitempty"`
 	InlineYAML      string     `json:"inline_yaml,omitempty"`
-	RegistryID      string     `json:"registry_id,omitempty"`
 	DeployedAt      *time.Time `json:"deployed_at,omitempty"`
 	// DeployedCommit is what is actually live. A hash says "the source moved"; only this says
 	// which commit is running, which is the question people ask.
@@ -67,8 +66,8 @@ func viewStack(s *store.Stack) stackView {
 		ID: s.ID, EnvID: s.EnvID, Name: s.Name, GroupName: s.GroupName,
 		SourceKind: s.SourceKind,
 		GitURL:     s.GitURL, GitRef: s.GitRef, GitPath: s.GitPath,
-		GitCredentialID: s.GitCredentialID, // the credential's id; never its secret
-		InlineYAML:      s.InlineYAML, RegistryID: s.RegistryID,
+		GitCredentialID:  s.GitCredentialID, // the credential's id; never its secret
+		InlineYAML:       s.InlineYAML,
 		AutoDeploy:       s.AutoDeploy,
 		WatchPaths:       s.WatchPaths,
 		HasSecret:        s.WebhookSecretEnc != "",
@@ -127,7 +126,6 @@ type stackRequest struct {
 	GitPath         string `json:"git_path"`
 	GitCredentialID string `json:"git_credential_id"`
 	InlineYAML      string `json:"inline_yaml"`
-	RegistryID      string `json:"registry_id"`
 }
 
 // engineFrom validates a requested engine, defaulting to compose.
@@ -271,7 +269,7 @@ func (s *Server) handleCreateStack(w http.ResponseWriter, r *http.Request) {
 		SourceKind: req.SourceKind,
 		GitURL:     req.GitURL, GitRef: req.GitRef, GitPath: req.GitPath,
 		GitCredentialID: req.GitCredentialID,
-		InlineYAML:      req.InlineYAML, RegistryID: req.RegistryID,
+		InlineYAML:      req.InlineYAML,
 	}
 	if u, ok := auth.UserFrom(r.Context()); ok {
 		stack.CreatedBy = u.ID
@@ -320,12 +318,49 @@ func (s *Server) handleUpdateStack(w http.ResponseWriter, r *http.Request) {
 				"remove this one.")
 		return
 	}
+
+	// Switching the source kind is a deliberate, validated transition — not the silent field
+	// rewrite the rest of this handler performs. Only inline → git is offered.
+	if req.SourceKind != stack.SourceKind {
+		// A git-backed stack's compose lives in the repo, which is the source of truth; there is
+		// nothing to import back into an inline_yaml, and snapshotting the last resolved file would
+		// silently fork the stack from its repo. Refuse rather than half-do it.
+		if stack.SourceKind != "inline" || req.SourceKind != "git" {
+			httpx.BadRequest(w, r,
+				"Only an inline stack can be switched to git. A git-backed stack keeps its "+
+					"compose in the repository, so there is nothing to convert back to inline.")
+			return
+		}
+		req.GitURL = strings.TrimSpace(req.GitURL)
+		if req.GitURL == "" {
+			httpx.BadRequest(w, r, "A repository URL is required to switch this stack to git.")
+			return
+		}
+
+		// Pre-flight: prove the new source is actually deployable before we commit the switch —
+		// clone the repo, find the compose file at the given ref/path, and parse it (env
+		// interpolation included). resolveSource does all three; ls-remote alone would miss a
+		// reachable repo that lacks the compose file at that path. A failure here is the operator's
+		// mistake, so it is a 400 with the friendly git reason, not a 500.
+		probe := *stack
+		probe.SourceKind = "git"
+		probe.GitURL, probe.GitRef, probe.GitPath = req.GitURL, req.GitRef, req.GitPath
+		probe.GitCredentialID = req.GitCredentialID
+		if _, _, err := s.resolveSource(r.Context(), &probe); err != nil {
+			httpx.Fail(w, r, http.StatusBadRequest, "git_unreachable", err.Error())
+			return
+		}
+
+		// The inline YAML is now stale and would be dead data on a git row. Clear it so the stack
+		// has exactly one source of truth.
+		req.InlineYAML = ""
+	}
+
 	stack.GroupName = strings.TrimSpace(req.GroupName)
 	stack.SourceKind = req.SourceKind
 	stack.GitURL, stack.GitRef, stack.GitPath = req.GitURL, req.GitRef, req.GitPath
 	stack.GitCredentialID = req.GitCredentialID
 	stack.InlineYAML = req.InlineYAML
-	stack.RegistryID = req.RegistryID
 
 	if err := s.store.UpdateStackSource(r.Context(), stack); err != nil {
 		httpx.Error(w, r, err)
@@ -918,6 +953,15 @@ func (s *Server) handleCreateRegistry(w http.ResponseWriter, r *http.Request) {
 		httpx.BadRequest(w, r, "A name and a URL are required.")
 		return
 	}
+	// Store the bare, normalised host — no scheme, no path, lowercased — so matching a stack's
+	// image hosts against stored credentials at deploy time is a plain string compare. The probe
+	// below still uses exactly what the operator typed, so an http:// prefix on a plain-HTTP
+	// registry is honoured there even though it is not part of what we keep.
+	host := dockerx.RegistryHost(req.URL)
+	if host == "" {
+		httpx.BadRequest(w, r, "That does not look like a registry host.")
+		return
+	}
 	// A registry credential with no secret authenticates nothing — anonymous pulls need no entry
 	// at all. Requiring the password also keeps the pre-save check honest: it has a credential to
 	// actually try.
@@ -953,7 +997,7 @@ func (s *Server) handleCreateRegistry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	reg := &store.Registry{Name: req.Name, URL: req.URL, Username: req.Username, PasswordEnc: sealed}
+	reg := &store.Registry{Name: req.Name, URL: host, Username: req.Username, PasswordEnc: sealed}
 	if err := s.store.CreateRegistry(r.Context(), reg); err != nil {
 		httpx.Fail(w, r, http.StatusConflict, "name_taken", "A registry with that name already exists.")
 		return

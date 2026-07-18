@@ -363,7 +363,7 @@ func (s *Server) buildBundle(ctx context.Context, stack *store.Stack, resolved *
 	if err := checkSecretRefs(ctx, resolved.YAML, stack.Name, env, secrets); err != nil {
 		return nil, nil, err
 	}
-	auth, err := s.registryAuth(ctx, stack.RegistryID)
+	auths, err := s.registryAuths(ctx, resolved.YAML, stack.Name, env)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -391,7 +391,7 @@ func (s *Server) buildBundle(ctx context.Context, stack *store.Stack, resolved *
 			return nil, nil, err
 		}
 	}
-	bundle, err := stacks.BuildPlanned(resolved.YAML, plan, env, secrets, auth)
+	bundle, err := stacks.BuildPlanned(resolved.YAML, plan, env, secrets, auths)
 	return bundle, plan, err
 }
 
@@ -462,24 +462,62 @@ func (s *Server) stackEnvPlain(ctx context.Context, stackID string) ([]stacks.En
 	return out, nil
 }
 
-func (s *Server) registryAuth(ctx context.Context, registryID string) (*stacks.RegistryAuth, error) {
-	if registryID == "" {
-		return nil, nil
-	}
-
-	reg, err := s.store.RegistryByID(ctx, registryID)
-	if errors.Is(err, store.ErrNotFound) {
-		return nil, nil // the registry was deleted; deploy without credentials
-	}
+// registryAuths returns credentials for exactly the registries whose host appears among the
+// compose file's images — the deploy analog of registryAuthForHost, but for every image at once.
+// A stack pulling from several private registries authenticates to all of them; one pulling only
+// public images gets no entries (and so no config.json), which is correct — anonymous pulls need
+// no credential. A stored credential the compose never references is never handed to the runner.
+func (s *Server) registryAuths(ctx context.Context, yaml, project string, env []stacks.EnvVar) ([]*stacks.RegistryAuth, error) {
+	services, err := stacks.Parse(ctx, yaml, project, env)
 	if err != nil {
 		return nil, err
 	}
 
-	pw, err := s.sealer.Open(reg.PasswordEnc)
-	if err != nil {
-		return nil, fmt.Errorf("could not decrypt the credential for %s", reg.Name)
+	// The distinct registry hosts this deploy actually pulls from. An image whose ref cannot be
+	// parsed (an unresolved ${VAR}, or a build-only service) authenticates nothing, so skip it.
+	want := map[string]bool{}
+	for _, svc := range services {
+		ref, err := dockerx.ParseImageRef(svc.Image)
+		if err != nil {
+			continue
+		}
+		want[dockerx.RegistryHost(ref.Host)] = true
 	}
-	return &stacks.RegistryAuth{URL: reg.URL, Username: reg.Username, Password: pw}, nil
+	if len(want) == 0 {
+		return nil, nil
+	}
+
+	regs, err := s.store.ListRegistries(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var out []*stacks.RegistryAuth
+	for _, reg := range regs {
+		if !want[dockerx.RegistryHost(reg.URL)] {
+			continue
+		}
+		pw, err := s.sealer.Open(reg.PasswordEnc)
+		if err != nil {
+			return nil, fmt.Errorf("could not decrypt the credential for %s", reg.Name)
+		}
+		out = append(out, &stacks.RegistryAuth{
+			URL: registryConfigKey(reg.URL), Username: reg.Username, Password: pw,
+		})
+	}
+	return out, nil
+}
+
+// registryConfigKey is the key a credential is stored under in the runner's config.json, so the
+// docker CLI finds it when it pulls. It is the registry HOST, not the raw stored URL (scheme and
+// path stripped, all Docker Hub spellings collapsed) — with one exception: Hub credentials must
+// live under the legacy `https://index.docker.io/v1/` key the engine looks them up by, not
+// `docker.io`.
+func registryConfigKey(url string) string {
+	host := dockerx.RegistryHost(url)
+	if host == "docker.io" {
+		return "https://index.docker.io/v1/"
+	}
+	return host
 }
 
 // ReapOrphanedRuns reattaches to runners that were still going when the server stopped.

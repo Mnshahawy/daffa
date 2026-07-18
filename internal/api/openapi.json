@@ -12683,9 +12683,6 @@
           "inline_yaml": {
             "type": "string"
           },
-          "registry_id": {
-            "type": "string"
-          },
           "deployed_at": {
             "type": "string",
             "format": "date-time"
@@ -12995,9 +12992,6 @@
             "type": "string"
           },
           "inline_yaml": {
-            "type": "string"
-          },
-          "registry_id": {
             "type": "string"
           }
         },

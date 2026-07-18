@@ -94,8 +94,8 @@ func DaffaSecretRef(file string) (string, bool) {
 // changed variable is a changed deployment even when the YAML is identical — that is
 // exactly the case where "nothing changed, why did it redeploy?" would otherwise be a
 // lie in the other direction.
-func Build(yaml string, env []EnvVar, auth *RegistryAuth) (*Bundle, error) {
-	return BuildPlanned(yaml, &HookPlan{DeployYAML: yaml}, env, nil, auth)
+func Build(yaml string, env []EnvVar, auths []*RegistryAuth) (*Bundle, error) {
+	return BuildPlanned(yaml, &HookPlan{DeployYAML: yaml}, env, nil, auths)
 }
 
 // BuildPlanned assembles a bundle from a hook plan: the engine gets plan.DeployYAML as
@@ -106,7 +106,7 @@ func Build(yaml string, env []EnvVar, auth *RegistryAuth) (*Bundle, error) {
 // version deriving it slightly differently must not make every hooked stack in the fleet
 // read as "source changed". Bundle.YAML is the original too, for the same reason: it is
 // what the user wrote, shown back to them.
-func BuildPlanned(yaml string, plan *HookPlan, env []EnvVar, secrets []Secret, auth *RegistryAuth) (*Bundle, error) {
+func BuildPlanned(yaml string, plan *HookPlan, env []EnvVar, secrets []Secret, auths []*RegistryAuth) (*Bundle, error) {
 	if strings.TrimSpace(yaml) == "" {
 		return nil, fmt.Errorf("stacks: the compose file is empty")
 	}
@@ -166,8 +166,8 @@ func BuildPlanned(yaml string, plan *HookPlan, env []EnvVar, secrets []Secret, a
 			mode int64
 		}{hooksPath, plan.HooksYAML, 0o644})
 	}
-	if auth != nil {
-		cfg, err := dockerConfig(auth)
+	if len(auths) > 0 {
+		cfg, err := dockerConfig(auths)
 		if err != nil {
 			return nil, err
 		}
@@ -225,18 +225,30 @@ func quoteEnv(v string) string {
 	return `"` + r.Replace(v) + `"`
 }
 
-// dockerConfig renders the auth file the docker CLI reads. It lives only inside the
-// runner container, which is removed after the run.
-func dockerConfig(a *RegistryAuth) (string, error) {
+// dockerConfig renders the auth file the docker CLI reads — one `auths` entry per registry this
+// deploy pulls from. It lives only inside the runner container, which is removed after the run.
+//
+// A credential WITH a username is HTTP Basic (base64(user:pass)); the docker CLI uses it directly
+// and also to drive the Bearer token exchange, so it covers both basic and bearer registries.
+//
+// A credential with NO username is a bare token, and there it matters: base64(":token") is a
+// malformed Basic header (there is no user half), which every registry rejects — the exact auth
+// failure this used to produce. Docker's `registrytoken` field is this case: the value is sent as
+// `Authorization: Bearer <token>`. So a username-less credential goes there instead of `auth`.
+func dockerConfig(auths []*RegistryAuth) (string, error) {
 	type authEntry struct {
-		Auth string `json:"auth"`
+		Auth          string `json:"auth,omitempty"`
+		RegistryToken string `json:"registrytoken,omitempty"`
 	}
-	cfg := map[string]any{
-		"auths": map[string]authEntry{
-			a.URL: {Auth: base64.StdEncoding.EncodeToString([]byte(a.Username + ":" + a.Password))},
-		},
+	entries := make(map[string]authEntry, len(auths))
+	for _, a := range auths {
+		if a.Username == "" {
+			entries[a.URL] = authEntry{RegistryToken: a.Password}
+			continue
+		}
+		entries[a.URL] = authEntry{Auth: base64.StdEncoding.EncodeToString([]byte(a.Username + ":" + a.Password))}
 	}
-	b, err := json.Marshal(cfg)
+	b, err := json.Marshal(map[string]any{"auths": entries})
 	if err != nil {
 		return "", fmt.Errorf("stacks: rendering docker config: %w", err)
 	}

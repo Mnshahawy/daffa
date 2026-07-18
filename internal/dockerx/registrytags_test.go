@@ -44,6 +44,9 @@ func TestRegistryHostNormalises(t *testing.T) {
 		"registry-1.docker.io":        "docker.io",
 		"ghcr.io":                     "ghcr.io",
 		"https://quay.io/":            "quay.io",
+		// Case-insensitive, scheme/path stripped: what the create form normalises to for storage.
+		"HTTP://Registry.Example.COM/team": "registry.example.com",
+		"Registry.Example.com:5000":        "registry.example.com:5000",
 	} {
 		if got := RegistryHost(in); got != want {
 			t.Errorf("RegistryHost(%q) = %q, want %q", in, got, want)

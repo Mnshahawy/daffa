@@ -24,7 +24,8 @@ var manifestAccept = strings.Join([]string{
 // a single comparable host, collapsing Docker Hub's several spellings to "docker.io". It is how
 // an image's host is matched against a stored registry credential's URL.
 func RegistryHost(s string) string {
-	s = strings.TrimSpace(s)
+	// Hostnames are case-insensitive, so lowercasing makes the match on both sides insensitive too.
+	s = strings.ToLower(strings.TrimSpace(s))
 	s = strings.TrimPrefix(strings.TrimPrefix(s, "https://"), "http://")
 	s = strings.TrimSuffix(s, "/")
 	if i := strings.IndexByte(s, '/'); i >= 0 {

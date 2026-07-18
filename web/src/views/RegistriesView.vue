@@ -156,7 +156,9 @@ async function onRemove(r: RegistryItem) {
           />
         </div>
         <div>
-          <label for="r-user" class="mb-1.5 block text-sm font-medium">Username</label>
+          <label for="r-user" class="mb-1.5 block text-sm font-medium">
+            Username <span class="subtle font-normal">(optional)</span>
+          </label>
           <input
             id="r-user"
             v-model="form.username"
@@ -164,6 +166,10 @@ async function onRemove(r: RegistryItem) {
             class="field"
             data-cursor="text"
           />
+          <p class="subtle mt-1 text-xs">
+            Leave empty if the credential is a bearer token — it is then sent as a token rather than
+            a username/password pair.
+          </p>
         </div>
         <div>
           <label for="r-pass" class="mb-1.5 block text-sm font-medium">Password or token</label>

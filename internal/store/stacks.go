@@ -100,7 +100,6 @@ type Stack struct {
 	// GitCredentialID is empty for a public repository.
 	GitCredentialID string
 	InlineYAML      string
-	RegistryID      string
 
 	// What is live, as of the last SUCCESSFUL deploy.
 	DeployedHash   string
@@ -121,8 +120,10 @@ type Stack struct {
 	LastDeployStatus string
 }
 
+// The registry_id column is retained in the schema (migrate.go) but no longer read or written:
+// registry credentials are matched to a stack's images at deploy time, not pinned per stack.
 const stackCols = `id, env_id, node_id, name, engine, group_name, source_kind, git_url, git_ref, git_path,
-    git_credential_id, inline_yaml, registry_id, deployed_hash, deployed_commit, deployed_at,
+    git_credential_id, inline_yaml, deployed_hash, deployed_commit, deployed_at,
     auto_deploy, webhook_secret_enc, watch_paths, created_at, created_by`
 
 // stackReadCols adds the outcome of the most recent DEPLOY — and only a deploy: `up` and
@@ -140,11 +141,11 @@ const stackReadCols = stackCols + `,
 
 func scanStack(sc interface{ Scan(...any) error }) (*Stack, error) {
 	var s Stack
-	var credID, registryID, deployedAt, createdBy, lastDeploy sql.NullString
+	var credID, deployedAt, createdBy, lastDeploy sql.NullString
 	var createdAt string
 	var autoDeploy int
 	err := sc.Scan(&s.ID, &s.EnvID, &s.NodeID, &s.Name, &s.Engine, &s.GroupName, &s.SourceKind, &s.GitURL,
-		&s.GitRef, &s.GitPath, &credID, &s.InlineYAML, &registryID, &s.DeployedHash,
+		&s.GitRef, &s.GitPath, &credID, &s.InlineYAML, &s.DeployedHash,
 		&s.DeployedCommit, &deployedAt, &autoDeploy, &s.WebhookSecretEnc, &s.WatchPaths,
 		&createdAt, &createdBy, &lastDeploy)
 	if err != nil {
@@ -152,7 +153,7 @@ func scanStack(sc interface{ Scan(...any) error }) (*Stack, error) {
 	}
 	s.LastDeployStatus = lastDeploy.String
 	s.GitCredentialID = credID.String
-	s.RegistryID, s.CreatedBy = registryID.String, createdBy.String
+	s.CreatedBy = createdBy.String
 	s.AutoDeploy = autoDeploy != 0
 	s.CreatedAt = parseTS(createdAt)
 	if deployedAt.Valid {
@@ -167,9 +168,9 @@ func (s *Store) CreateStack(ctx context.Context, st *Stack) error {
 	}
 	st.CreatedAt = now()
 	_, err := s.exec(ctx, `INSERT INTO stacks (`+stackCols+`)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', NULL, 0, '', '', ?, ?)`,
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', NULL, 0, '', '', ?, ?)`,
 		st.ID, st.EnvID, st.NodeID, st.Name, st.Engine, st.GroupName, st.SourceKind, st.GitURL, st.GitRef,
-		st.GitPath, nullStr(st.GitCredentialID), st.InlineYAML, nullStr(st.RegistryID),
+		st.GitPath, nullStr(st.GitCredentialID), st.InlineYAML,
 		ts(st.CreatedAt), nullStr(st.CreatedBy))
 	if err != nil {
 		return fmt.Errorf("store: creating stack: %w", err)
@@ -193,10 +194,10 @@ func (s *Store) SetStackWebhookSecret(ctx context.Context, stackID, sealed strin
 
 func (s *Store) UpdateStackSource(ctx context.Context, st *Stack) error {
 	_, err := s.exec(ctx, `UPDATE stacks SET engine = ?, group_name = ?, source_kind = ?,
-        git_url = ?, git_ref = ?, git_path = ?, git_credential_id = ?, inline_yaml = ?,
-        registry_id = ? WHERE id = ?`,
+        git_url = ?, git_ref = ?, git_path = ?, git_credential_id = ?, inline_yaml = ?
+        WHERE id = ?`,
 		st.Engine, st.GroupName, st.SourceKind, st.GitURL, st.GitRef, st.GitPath,
-		nullStr(st.GitCredentialID), st.InlineYAML, nullStr(st.RegistryID), st.ID)
+		nullStr(st.GitCredentialID), st.InlineYAML, st.ID)
 	return err
 }
 

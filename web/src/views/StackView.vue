@@ -366,7 +366,6 @@ async function saveCompose() {
       git_ref: stack.value.git_ref,
       git_path: stack.value.git_path,
       git_credential_id: stack.value.git_credential_id,
-      registry_id: stack.value.registry_id,
       inline_yaml: composeDraft.value,
     })
     await qc.invalidateQueries({ queryKey: ['stack'] })
@@ -375,6 +374,75 @@ async function saveCompose() {
     composeError.value = (err as ApiError)?.message ?? 'Could not save the compose file.'
   } finally {
     composeBusy.value = false
+  }
+}
+
+// ── Switch an inline stack to git ────────────────────────────────────────────────────
+// An inline stack keeps its compose in Daffa; pointing it at a repo makes the repo the source
+// of truth from the next deploy on, without losing env vars, secrets or history. Only inline →
+// git is offered — the server refuses the reverse — and the server probes the repo (clone, find
+// the compose file, parse it) before committing the switch, so a bad URL/ref/credential is
+// rejected here rather than at the next deploy.
+const canSeeGitCreds = computed(() => session.can(Cap.GitCredsView))
+const { data: gitCreds } = useQuery({
+  queryKey: ['gitcreds'],
+  queryFn: daffa.gitCredentials,
+  enabled: canSeeGitCreds,
+})
+const switchGit = ref({ git_url: '', git_ref: 'main', git_path: 'docker-compose.yml', git_credential_id: '' })
+const switchBusy = ref(false)
+const switchError = ref('')
+
+function isSSHUrl(url: string): boolean {
+  return url.startsWith('git@') || url.startsWith('ssh://')
+}
+
+// The most common way to get this wrong is to paste an SSH URL and pick a token (or the
+// reverse). The server refuses either way; saying so up front is cheaper than a failed probe.
+const switchMismatch = computed(() => {
+  const url = switchGit.value.git_url.trim()
+  if (!url) return ''
+  const cred = gitCreds.value?.find((c) => c.id === switchGit.value.git_credential_id)
+  const ssh = isSSHUrl(url)
+  if (ssh && !cred) return 'This is an SSH URL, so it needs an SSH credential.'
+  if (ssh && cred?.kind === 'token')
+    return 'That credential is an access token, but this is an SSH URL. Tokens work over https:// only.'
+  if (!ssh && cred?.kind === 'ssh')
+    return 'That credential is an SSH key, but this is not an SSH URL. Use the repository’s SSH URL (git@host:org/repo.git).'
+  return ''
+})
+
+async function switchToGit() {
+  if (!stack.value || !switchGit.value.git_url.trim()) return
+  const res = await confirm({
+    title: 'Switch this stack to git?',
+    body:
+      'The inline compose currently stored in Daffa will be discarded; the repository becomes ' +
+      'the source of truth. Environment variables, secrets and deployment history are kept.',
+    confirmLabel: 'Switch to git',
+    intent: 'caution',
+  })
+  if (!res) return
+
+  switchBusy.value = true
+  switchError.value = ''
+  try {
+    await daffa.updateStack(id.value, {
+      group_name: stack.value.group_name,
+      source_kind: 'git',
+      git_url: switchGit.value.git_url.trim(),
+      git_ref: switchGit.value.git_ref.trim(),
+      git_path: switchGit.value.git_path.trim(),
+      git_credential_id: switchGit.value.git_credential_id || undefined,
+      inline_yaml: '',
+    })
+    // The refetch flips source_kind to git: the Compose tab disappears and the auto-deploy
+    // panel takes over, both driven off stack.source_kind.
+    await qc.invalidateQueries({ queryKey: ['stack'] })
+  } catch (err) {
+    switchError.value = (err as ApiError)?.message ?? 'Could not switch this stack to git.'
+  } finally {
+    switchBusy.value = false
   }
 }
 
@@ -798,6 +866,88 @@ function triggeredBy(d: { trigger_kind: string; started_by_name?: string }): str
         :stack="stack"
         :can-write="session.can(Cap.StacksEdit, stack.env_id)"
       />
+
+      <!-- ── Switch an inline stack to git ─────────────────────────────────────────── -->
+      <form
+        v-if="stack.source_kind === 'inline' && session.can(Cap.StacksEdit, stack.env_id)"
+        class="surface rounded-[var(--radius-card)] p-5"
+        @submit.prevent="switchToGit"
+      >
+        <h2 class="text-sm font-medium">Switch to git</h2>
+        <p class="muted mt-1 text-xs">
+          Point this stack at a repository. The compose stored in Daffa is discarded and the repo
+          becomes the source of truth from the next deploy on; environment variables, secrets and
+          deployment history are kept.
+        </p>
+
+        <div class="mt-4 grid gap-4 sm:grid-cols-3">
+          <div class="sm:col-span-2">
+            <label for="sw-url" class="mb-1.5 block text-sm font-medium">Repository URL</label>
+            <input
+              id="sw-url"
+              v-model="switchGit.git_url"
+              required
+              placeholder="https://git.example.com/team/app.git"
+              class="field font-mono text-xs"
+            />
+          </div>
+          <div>
+            <label for="sw-ref" class="mb-1.5 block text-sm font-medium">Branch or tag</label>
+            <input id="sw-ref" v-model="switchGit.git_ref" class="field font-mono text-xs" />
+          </div>
+        </div>
+
+        <div class="mt-4 grid gap-4 sm:grid-cols-2">
+          <div>
+            <label for="sw-path" class="mb-1.5 block text-sm font-medium">Compose file path</label>
+            <input id="sw-path" v-model="switchGit.git_path" class="field font-mono text-xs" />
+          </div>
+          <div>
+            <label for="sw-cred" class="mb-1.5 block text-sm font-medium">Credential</label>
+            <select id="sw-cred" v-model="switchGit.git_credential_id" class="field">
+              <option value="">None — public repository</option>
+              <option v-for="c in gitCreds" :key="c.id" :value="c.id">
+                {{ c.name }} ({{ c.kind === 'ssh' ? 'SSH' : 'token' }})
+              </option>
+            </select>
+            <p class="subtle mt-1 text-xs">
+              <RouterLink
+                v-if="canSeeGitCreds"
+                :to="{ name: 'settings-git' }"
+                class="transition hover:text-[var(--accent-text)]"
+              >
+                Manage credentials in Settings → Git
+              </RouterLink>
+              <span v-else>Ask an admin to add one under Settings → Git.</span>
+            </p>
+          </div>
+        </div>
+
+        <p
+          v-if="switchMismatch"
+          class="mt-4 rounded-[var(--radius-control)] px-3 py-2 text-xs"
+          :style="{
+            background: 'var(--warn-soft)',
+            border: '1px solid color-mix(in oklch, var(--warn) 30%, transparent)',
+          }"
+        >
+          {{ switchMismatch }}
+        </p>
+
+        <p v-if="switchError" class="mt-3 text-sm" :style="{ color: 'var(--danger)' }">
+          {{ switchError }}
+        </p>
+
+        <BaseButton
+          type="submit"
+          intent="primary"
+          class="mt-4"
+          :loading="switchBusy"
+          :disabled="!switchGit.git_url.trim()"
+        >
+          Switch to git
+        </BaseButton>
+      </form>
 
       <div
         v-if="session.can(Cap.StacksEdit, stack.env_id)"
