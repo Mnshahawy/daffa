@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"path"
 	"strings"
 	"time"
 
@@ -28,6 +29,7 @@ type jobView struct {
 
 	Volume         string `json:"volume,omitempty"`
 	StopContainers string `json:"stop_containers,omitempty"`
+	ExcludePaths   string `json:"exclude_paths,omitempty"` // newline-separated; volume engine only
 
 	StorageID   string `json:"storage_id"`
 	StorageName string `json:"storage_name"` // resolved, so the list needs no second call
@@ -83,7 +85,7 @@ func (s *Server) handleListBackupJobs(w http.ResponseWriter, r *http.Request) {
 		v := jobView{
 			ID: j.ID, EnvID: j.EnvID, Name: j.Name, Container: j.Container, Engine: j.Engine,
 			Databases: j.Databases, DBUser: j.DBUser, Schedule: j.Schedule,
-			Volume: j.Volume, StopContainers: j.StopContainers,
+			Volume: j.Volume, StopContainers: j.StopContainers, ExcludePaths: j.ExcludePaths,
 			StorageID: j.StorageID, Prefix: j.Prefix,
 			Encryption: j.Encryption, KeyIDs: j.KeyIDs, Enabled: j.Enabled,
 		}
@@ -116,12 +118,35 @@ type jobRequest struct {
 	// The volume engine's fields; unused (and cleared) for a database engine.
 	Volume         string `json:"volume"`
 	StopContainers string `json:"stop_containers"`
+	ExcludePaths   string `json:"exclude_paths"` // newline-separated paths dropped from the snapshot
 
 	StorageID string `json:"storage_id"`
 	Prefix    string `json:"prefix"`
 
 	Encryption string   `json:"encryption"`
 	KeyIDs     []string `json:"key_ids"`
+}
+
+// sanitizeExcludePaths normalizes the newline-separated exclude list into its stored
+// form and refuses any pattern that escapes the volume. An escaping pattern (absolute,
+// "..", or a "../" prefix after cleaning) can only match nothing — but a "backup" that
+// silently ignored what an operator typed is worse than one that refuses and says why,
+// so it is a 400 naming the offender rather than a quiet drop. Returns the cleaned list
+// (blanks removed, one path per line) and, if a pattern was illegal, the raw pattern.
+func sanitizeExcludePaths(list string) (cleaned, bad string) {
+	var out []string
+	for _, raw := range strings.Split(list, "\n") {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+		p := path.Clean(strings.TrimPrefix(raw, "./"))
+		if p == "." || p == ".." || strings.HasPrefix(p, "../") || strings.HasPrefix(p, "/") {
+			return "", raw
+		}
+		out = append(out, p)
+	}
+	return strings.Join(out, "\n"), ""
 }
 
 func (s *Server) handleCreateBackupJob(w http.ResponseWriter, r *http.Request) {
@@ -153,12 +178,18 @@ func (s *Server) handleCreateBackupJob(w http.ResponseWriter, r *http.Request) {
 		}
 		req.Container, req.Databases, req.DBUser, req.DBPassword = "", "", "", ""
 		req.StopContainers = strings.TrimSpace(req.StopContainers)
+		cleaned, badPath := sanitizeExcludePaths(req.ExcludePaths)
+		if badPath != "" {
+			httpx.BadRequest(w, r, "Exclude path "+badPath+" must stay inside the volume — use a path relative to the volume root, like \"cache\" or \"tmp/sessions\", not an absolute path or \"..\".")
+			return
+		}
+		req.ExcludePaths = cleaned
 	case backups.ValidEngine(backups.Engine(req.Engine)):
 		if req.Container == "" {
 			httpx.BadRequest(w, r, "A container is required.")
 			return
 		}
-		req.Volume, req.StopContainers = "", ""
+		req.Volume, req.StopContainers, req.ExcludePaths = "", "", ""
 	default:
 		httpx.BadRequest(w, r, "The engine must be postgres, mysql, mongodb, or volume.")
 		return
@@ -213,7 +244,7 @@ func (s *Server) handleCreateBackupJob(w http.ResponseWriter, r *http.Request) {
 		EnvID: req.EnvID, Name: req.Name, Container: req.Container, Engine: req.Engine,
 		Databases: req.Databases, DBUser: req.DBUser, DBPasswordEnc: dbPass,
 		Schedule: req.Schedule,
-		Volume:   req.Volume, StopContainers: req.StopContainers,
+		Volume:   req.Volume, StopContainers: req.StopContainers, ExcludePaths: req.ExcludePaths,
 		StorageID: req.StorageID, Prefix: strings.Trim(strings.TrimSpace(req.Prefix), "/"),
 		Encryption: req.Encryption, KeyIDs: req.KeyIDs,
 		Enabled: true,

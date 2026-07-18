@@ -45,7 +45,14 @@ func (s *Server) performVolumeBackup(ctx context.Context, job *store.BackupJob) 
 			return nil, err
 		}
 		defer snap.Close()
-		return backups.RunVolume(ctx, snap, job.Volume, dst, time.Now())
+
+		// Drop excluded paths from the daemon's tar before it hits the pipe. FilterTar
+		// reads snap without closing it (snap.Close above still owns the helper), and its
+		// own Close unblocks the rewrite goroutine if RunVolume bails early — so it must
+		// be deferred BELOW snap.Close, to run first.
+		src := volumes.FilterTar(snap, splitExcludes(job.ExcludePaths))
+		defer src.Close()
+		return backups.RunVolume(ctx, src, job.Volume, dst, time.Now())
 	}()
 
 	if err := restart(); err != nil {
@@ -97,6 +104,24 @@ func (s *Server) volumeNode(ctx context.Context, envID, volumeName string, forRe
 		return nil, fmt.Errorf("a volume named %q exists on %d nodes (%s) — those are different data sets, and backing up whichever one answered would quietly be the wrong one. Remove the strays, or name the volumes per node",
 			volumeName, len(holders), strings.Join(names, ", "))
 	}
+}
+
+// splitExcludes turns the job's newline-separated exclude list into the slice FilterTar
+// wants. FilterTar cleans and drops blanks itself, so this only has to split — but it
+// trims each line so a stray space or a trailing CR from a pasted list doesn't become
+// part of a path.
+func splitExcludes(list string) []string {
+	if list == "" {
+		return nil
+	}
+	lines := strings.Split(list, "\n")
+	out := make([]string, 0, len(lines))
+	for _, l := range lines {
+		if l = strings.TrimSpace(l); l != "" {
+			out = append(out, l)
+		}
+	}
+	return out
 }
 
 // stopForSnapshot stops the listed containers and returns the restart. A stop that fails

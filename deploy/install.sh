@@ -416,8 +416,10 @@ fi
 EDGE_BUNDLE=""
 if [ "$INTERNAL" = 1 ]; then
   say "issuing the internal edge certificate for ${DOMAIN}"
+  # </dev/null so this exec does not drain the piped script under `curl | bash` (see the note
+  # on the stack-adopt call below).
   if compose exec -T daffa /usr/local/bin/daffa edge init \
-        --domain "$DOMAIN" --volume daffa-edge-certs > "$INSTALL_DIR/ca-bundle.crt" 2>/tmp/daffa-edge.err; then
+        --domain "$DOMAIN" --volume daffa-edge-certs </dev/null > "$INSTALL_DIR/ca-bundle.crt" 2>/tmp/daffa-edge.err; then
     chmod 644 "$INSTALL_DIR/ca-bundle.crt"
     EDGE_BUNDLE="$INSTALL_DIR/ca-bundle.crt"
     ok "issued edge certificate; CA trust bundle saved to $EDGE_BUNDLE"
@@ -437,7 +439,11 @@ fi
 # it as root. No new exposure — the container already holds the DB password (DAFFA_DB_URL)
 # and the Docker socket. adopt writes only to the database, nothing to the data volume.
 say "registering the deployment as a Daffa stack"
-if compose exec -u 0 -T daffa /usr/local/bin/daffa stack adopt --name daffa >/dev/null 2>/tmp/daffa-adopt.err; then
+# </dev/null is load-bearing: `docker compose exec -T` reads its stdin, and when the installer
+# runs as `curl … | sudo bash`, that stdin IS the script the shell is still reading. Without
+# this redirect the exec drains the rest of the pipe — every step below it (stack config, the
+# summary with the generated admin password) silently never runs, yet the script exits 0.
+if compose exec -u 0 -T daffa /usr/local/bin/daffa stack adopt --name daffa </dev/null >/dev/null 2>/tmp/daffa-adopt.err; then
   ok "registered stack 'daffa' (edit the domain in the console, then redeploy)"
 else
   warn "could not register the stack automatically:"
@@ -451,7 +457,7 @@ rm -f /tmp/daffa-adopt.err
 # from the mounted install dir (644, so no -u 0 needed).
 if [ "$USE_TRAEFIK" = 1 ]; then
   say "placing Traefik config under Daffa management"
-  if compose exec -T daffa /usr/local/bin/daffa stack config >/dev/null 2>/tmp/daffa-cfg.err; then
+  if compose exec -T daffa /usr/local/bin/daffa stack config </dev/null >/dev/null 2>/tmp/daffa-cfg.err; then
     ok "traefik.yml and the dynamic config are now editable in the console (Volume sources)"
   else
     warn "could not place Traefik config under management:"

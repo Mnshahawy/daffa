@@ -24,6 +24,10 @@ type BackupJob struct {
 	// downtime traded for consistency, per job, in writing. See docs/volumes.md.
 	Volume         string
 	StopContainers string // space-separated; empty = snapshot live
+	// ExcludePaths are paths (relative to the volume root) dropped from the snapshot —
+	// regenerable junk not worth backing up. Newline-separated; empty = snapshot everything.
+	// A directory pattern drops its whole subtree. See docs/volumes.md.
+	ExcludePaths string
 
 	// Where the snapshots go. The bucket and its credentials live on the storage target
 	// (shared between jobs); only the path within it belongs to this job.
@@ -46,7 +50,7 @@ type BackupJob struct {
 func (j *BackupJob) Encrypted() bool { return j.Encryption == "age" }
 
 const jobCols = `id, env_id, name, container, engine, databases, db_user, db_password_enc,
-    schedule, volume, stop_containers, storage_id, prefix, encryption, enabled, created_at, created_by`
+    schedule, volume, stop_containers, exclude_paths, storage_id, prefix, encryption, enabled, created_at, created_by`
 
 func scanJob(sc interface{ Scan(...any) error }) (*BackupJob, error) {
 	var j BackupJob
@@ -54,7 +58,7 @@ func scanJob(sc interface{ Scan(...any) error }) (*BackupJob, error) {
 	var createdAt string
 	var enabled int
 	err := sc.Scan(&j.ID, &j.EnvID, &j.Name, &j.Container, &j.Engine, &j.Databases, &j.DBUser,
-		&j.DBPasswordEnc, &j.Schedule, &j.Volume, &j.StopContainers, &j.StorageID, &j.Prefix, &j.Encryption,
+		&j.DBPasswordEnc, &j.Schedule, &j.Volume, &j.StopContainers, &j.ExcludePaths, &j.StorageID, &j.Prefix, &j.Encryption,
 		&enabled, &createdAt, &createdBy)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
@@ -85,9 +89,9 @@ func (s *Store) CreateBackupJob(ctx context.Context, j *BackupJob) error {
 	defer func() { _ = tx.Rollback() }()
 
 	if _, err := tx.ExecContext(ctx, s.rebind(`INSERT INTO backup_jobs (`+jobCols+`)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
 		j.ID, j.EnvID, j.Name, j.Container, j.Engine, j.Databases, j.DBUser, j.DBPasswordEnc,
-		j.Schedule, j.Volume, j.StopContainers, j.StorageID, j.Prefix, j.Encryption,
+		j.Schedule, j.Volume, j.StopContainers, j.ExcludePaths, j.StorageID, j.Prefix, j.Encryption,
 		boolInt(j.Enabled), ts(j.CreatedAt), nullStr(j.CreatedBy)); err != nil {
 		return fmt.Errorf("store: creating backup job: %w", err)
 	}

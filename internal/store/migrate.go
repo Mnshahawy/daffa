@@ -940,6 +940,15 @@ CREATE TABLE volsource_files (
     PRIMARY KEY (source_id, path)
 );
 `},
+
+	// A volume backup job can now drop paths from its snapshot — regenerable junk (caches,
+	// logs, session temp) that bloats every backup for no restore value. The value is a
+	// newline-separated list of paths relative to the volume root; empty (the default for
+	// every existing job) means "snapshot everything", the prior behaviour. Common-subset
+	// ALTER, mirroring the volume/stop_containers columns it sits beside.
+	{name: "0004_backup_exclude_paths", sql: `
+ALTER TABLE backup_jobs ADD COLUMN exclude_paths TEXT NOT NULL DEFAULT '';
+`},
 }
 
 // stopAfter lets a test bring the schema up to a PARTICULAR migration and no further, so

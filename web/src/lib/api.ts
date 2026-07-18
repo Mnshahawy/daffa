@@ -667,6 +667,7 @@ export interface BackupJob {
   schedule?: string
   volume?: string
   stop_containers?: string
+  exclude_paths?: string
   storage_id: string
   storage_name: string
   bucket: string
@@ -706,6 +707,7 @@ export interface JobRequest {
   schedule?: string
   volume?: string
   stop_containers?: string
+  exclude_paths?: string
   storage_id?: string
   prefix?: string
   encryption?: string

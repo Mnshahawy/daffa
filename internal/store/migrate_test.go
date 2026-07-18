@@ -3,10 +3,83 @@ package store
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/Mnshahawy/daffa/internal/caps"
 )
+
+// A backup_jobs row that predates 0004 must survive the migration with exclude_paths defaulted
+// to ” — the whole point of the stopAfter seam is to prove this against a POPULATED older
+// database, not a fresh schema. (Every migration bug that ever shipped passed the fresh-schema
+// tests.) SQLite-only: the seam is a package var, so this test controls the schema version
+// directly and cannot run under a shared connection.
+func TestMigrate0004PreservesOlderBackupJobs(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	url := "sqlite://" + filepath.Join(dir, "test.db")
+
+	// Bring the schema up to 0003 and no further, then open a store on it.
+	stopAfter = "0003_inline_volume_sources"
+	defer func() { stopAfter = "" }()
+
+	s, err := Open(ctx, url)
+	if err != nil {
+		t.Fatalf("open at 0003: %v", err)
+	}
+	defer s.Close()
+
+	// The parents the FK constraints require, written through the store (their tables are
+	// unchanged since 0001, so today's Create* code matches the 0003 schema).
+	env := &Environment{Name: "prod"}
+	if err := s.CreateEnvironment(ctx, env); err != nil {
+		t.Fatal(err)
+	}
+	target := &StorageTarget{Name: "r2", Endpoint: "https://r2.example.com", Bucket: "backups",
+		KeyID: "k", SecretEnc: "sealed"}
+	if err := s.CreateStorageTarget(ctx, target); err != nil {
+		t.Fatal(err)
+	}
+
+	// A raw insert with the 0003-era column set — no exclude_paths, because at 0003 that column
+	// does not exist yet. This is the row an operator would already have.
+	if _, err := s.db.ExecContext(ctx, s.rebind(`INSERT INTO backup_jobs
+        (id, env_id, name, container, engine, databases, db_user, db_password_enc, schedule,
+         storage_id, prefix, encryption, volume, stop_containers, enabled, created_at, created_by)
+        VALUES (?, ?, ?, '', 'volume', '', '', '', '', ?, '', 'none', 'legacy-data', '', 1, ?, NULL)`),
+		"job_legacy", env.ID, "legacy", target.ID, ts(now())); err != nil {
+		t.Fatalf("insert 0003-era row: %v", err)
+	}
+
+	// Now finish the migrations for real — 0004 adds exclude_paths to the populated table.
+	stopAfter = ""
+	if err := s.migrate(ctx); err != nil {
+		t.Fatalf("migrating to 0004: %v", err)
+	}
+
+	// The pre-existing row reads back through the store (scanJob now expects the new column) and
+	// carries the '' default.
+	got, err := s.BackupJobByID(ctx, "job_legacy")
+	if err != nil {
+		t.Fatalf("reading migrated row: %v", err)
+	}
+	if got.ExcludePaths != "" {
+		t.Errorf("migrated row ExcludePaths = %q; want empty", got.ExcludePaths)
+	}
+	if got.Volume != "legacy-data" {
+		t.Errorf("migrated row lost its volume: got %q", got.Volume)
+	}
+
+	// And a job created after the migration round-trips a real value.
+	fresh := &BackupJob{EnvID: env.ID, Name: "fresh", Engine: "volume", Volume: "d",
+		StorageID: target.ID, Encryption: "none", ExcludePaths: "cache\nlogs"}
+	if err := s.CreateBackupJob(ctx, fresh); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.BackupJobByID(ctx, fresh.ID); err != nil || got.ExcludePaths != "cache\nlogs" {
+		t.Fatalf("fresh job ExcludePaths = %q, err %v; want %q", got.ExcludePaths, err, "cache\nlogs")
+	}
+}
 
 // A capability mask must be able to hold a HIGH BIT on Postgres, and this test is Postgres-only
 // because that is the entire point.

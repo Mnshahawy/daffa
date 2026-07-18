@@ -5,6 +5,51 @@ import (
 	"testing"
 )
 
+// A volume job carries its exclude list through the store unchanged — it is stored on the row
+// (like stop_containers), not in a side table, so this is a plain column round-trip. The empty
+// case matters as much as the set one: the default is "snapshot everything".
+func TestVolumeBackupJobRoundTripsExcludePaths(t *testing.T) {
+	eachDialect(t, func(t *testing.T, s *Store) {
+		ctx := context.Background()
+
+		env := &Environment{Name: "prod"}
+		if err := s.CreateEnvironment(ctx, env); err != nil {
+			t.Fatal(err)
+		}
+		target := &StorageTarget{Name: "r2", Endpoint: "https://r2.example.com", Bucket: "backups",
+			KeyID: "k", SecretEnc: "sealed"}
+		if err := s.CreateStorageTarget(ctx, target); err != nil {
+			t.Fatal(err)
+		}
+
+		withExcludes := &BackupJob{EnvID: env.ID, Name: "with excludes", Engine: "volume",
+			Volume: "forgejo-data", StorageID: target.ID, Encryption: "none",
+			ExcludePaths: "cache\ntmp/sessions"}
+		none := &BackupJob{EnvID: env.ID, Name: "no excludes", Engine: "volume",
+			Volume: "other-data", StorageID: target.ID, Encryption: "none"}
+		for _, j := range []*BackupJob{withExcludes, none} {
+			if err := s.CreateBackupJob(ctx, j); err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		got, err := s.BackupJobByID(ctx, withExcludes.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.ExcludePaths != "cache\ntmp/sessions" {
+			t.Errorf("ExcludePaths = %q; want %q", got.ExcludePaths, "cache\ntmp/sessions")
+		}
+		gotNone, err := s.BackupJobByID(ctx, none.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if gotNone.ExcludePaths != "" {
+			t.Errorf("ExcludePaths on a job without excludes = %q; want empty", gotNone.ExcludePaths)
+		}
+	})
+}
+
 // A backup job encrypts to NAMED keys, resolved to age recipients at run time — the seam that
 // keeps the backup pipeline ignorant of key management. This covers that resolution, the
 // deduplication of a recipient shared by two jobs, and the InUse count the delete handler leans

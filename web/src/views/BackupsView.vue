@@ -53,6 +53,7 @@ const form = ref({
   db_password: '',
   volume: '',
   stop_containers: '',
+  exclude_paths: '',
   schedule: '0 3 * * *',
   storage_id: '',
   prefix: '',
@@ -296,6 +297,24 @@ function runStatus(j: BackupJob): Status {
           />
           <p class="subtle mt-1 text-xs">Cron, in UTC. Empty = manual only.</p>
         </div>
+      </div>
+
+      <div v-if="isVolume">
+        <label for="b-exclude" class="mb-1.5 block text-sm font-medium">
+          Exclude paths <span class="subtle font-normal">(optional)</span>
+        </label>
+        <textarea
+          id="b-exclude"
+          v-model="form.exclude_paths"
+          rows="3"
+          placeholder="cache&#10;tmp/sessions&#10;logs"
+          class="field font-mono text-xs"
+          data-cursor="text"
+        />
+        <p class="subtle mt-1 text-xs">
+          One path per line, relative to the volume root — dropped from the snapshot. A directory
+          drops its whole subtree. For regenerable junk (caches, logs) that need not be backed up.
+        </p>
       </div>
 
       <div>
