@@ -2,6 +2,7 @@ package dockerx
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -33,11 +34,11 @@ type tagCacheEntry struct {
 // "-alpine", and a dotted-numeric core) and ranks above it — or "" when there is nothing higher,
 // nothing comparable, or the current tag itself is not a version (latest, a date, a sha). The
 // boolean-free contract is deliberate: callers treat "" as "no hint".
-func LatestHint(ctx context.Context, host, repo, currentTag, username, password string) (string, error) {
+func LatestHint(ctx context.Context, host, repo, currentTag, username, password string, roots *x509.CertPool) (string, error) {
 	if _, ok := parseVersionTag(currentTag); !ok {
 		return "", nil // an unversioned current tag has nothing to be "newer" than — skip the fetch
 	}
-	tags, err := listTagsCached(ctx, host, repo, username, password)
+	tags, err := listTagsCached(ctx, host, repo, username, password, roots)
 	if err != nil {
 		return "", err
 	}
@@ -116,7 +117,7 @@ func (a version) greater(b version) bool {
 	return false
 }
 
-func listTagsCached(ctx context.Context, host, repo, username, password string) ([]string, error) {
+func listTagsCached(ctx context.Context, host, repo, username, password string, roots *x509.CertPool) ([]string, error) {
 	key := host + "/" + repo
 
 	tagCacheMu.Lock()
@@ -126,7 +127,7 @@ func listTagsCached(ctx context.Context, host, repo, username, password string) 
 	}
 	tagCacheMu.Unlock()
 
-	tags, err := listTags(ctx, host, repo, username, password)
+	tags, err := listTags(ctx, host, repo, username, password, roots)
 	if err != nil {
 		return nil, err
 	}
@@ -140,11 +141,11 @@ func listTagsCached(ctx context.Context, host, repo, username, password string) 
 // listTags fetches candidate tags cheaply. Docker Hub is special-cased onto its own API, which
 // orders by recency and — crucially — lives off the pull-limit path, so the hint never spends the
 // budget tag validation needs. Every other registry answers a single (capped) v2 tags list.
-func listTags(ctx context.Context, host, repo, username, password string) ([]string, error) {
+func listTags(ctx context.Context, host, repo, username, password string, roots *x509.CertPool) ([]string, error) {
 	if RegistryHost(host) == "docker.io" {
 		return hubTags(ctx, repo)
 	}
-	return registryTagList(ctx, host, repo, username, password)
+	return registryTagList(ctx, host, repo, username, password, roots)
 }
 
 // hubTags reads the most recently pushed tags from hub.docker.com. Anonymous: a private Hub repo
@@ -185,9 +186,9 @@ func hubTags(ctx context.Context, repo string) ([]string, error) {
 
 // registryTagList reads one capped page of /v2/<repo>/tags/list. The v2 API does not order by
 // recency, so this feeds the version heuristic rather than being trusted as "latest" itself.
-func registryTagList(ctx context.Context, host, repo, username, password string) ([]string, error) {
+func registryTagList(ctx context.Context, host, repo, username, password string, roots *x509.CertPool) ([]string, error) {
 	base := registryBaseURL(host)
-	client := &http.Client{Timeout: 12 * time.Second}
+	client := registryClient(roots)
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 

@@ -6052,7 +6052,7 @@
         "tags": [
           "storage, registries, git credentials"
         ],
-        "summary": "Create a registry credential, testing the login first",
+        "summary": "Create a registry credential, testing the login first (advisory — save-anyway on unreachable)",
         "description": "The credential is proved against the registry before it is saved; the password is sealed and never readable again, not even by the admin who typed it.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
         "x-daffa-capability": "registries.edit",
         "x-daffa-scope": "global",
@@ -6079,7 +6079,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RegistryItem"
+                  "$ref": "#/components/schemas/RegistryCreateResponse"
                 }
               }
             }
@@ -6377,6 +6377,94 @@
           },
           "403": {
             "description": "Signed in, but the capability is not held at the required scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something went wrong on the server; the audit log has the details.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/gitcreds/{id}/test": {
+      "post": {
+        "operationId": "testGitCredential",
+        "tags": [
+          "storage, registries, git credentials"
+        ],
+        "summary": "Test a git credential against a repository URL (ls-remote, no clone)",
+        "description": "Reaches out with the sealed credential (ls-remote), so it is GitCredsEdit like create. The result is a diagnostic payload, not an API status: a failed test is still a 200.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "x-daffa-capability": "gitcreds.edit",
+        "x-daffa-scope": "global",
+        "requestBody": {
+          "description": "Request bodies are capped at 1 MiB; unknown fields are refused.",
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GitTestRequest"
+              },
+              "example": {
+                "url": "https://git.example.com/me/repo.git"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GitTestResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is wrong, and the message says how to fix it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No live session or valid token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but the capability is not held at the required scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Nothing lives at that id.",
             "content": {
               "application/json": {
                 "schema": {
@@ -13668,9 +13756,33 @@
           },
           "password": {
             "type": "string"
+          },
+          "verify": {
+            "oneOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "additionalProperties": false
+      },
+      "RegistryCreateResponse": {
+        "type": "object",
+        "properties": {
+          "registry": {
+            "$ref": "#/components/schemas/RegistryItem"
+          },
+          "unreachable": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string"
+          }
+        }
       },
       "GitCredential": {
         "type": "object",
@@ -13747,6 +13859,29 @@
           }
         },
         "additionalProperties": false
+      },
+      "GitTestRequest": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "GitTestResponse": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "error": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "ok"
+        ]
       },
       "CertAuthority": {
         "type": "object",

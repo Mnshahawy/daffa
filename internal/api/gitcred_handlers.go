@@ -73,6 +73,58 @@ func (s *Server) handleDiscoverHostKeys(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+type gitTestRequest struct {
+	URL string `json:"url"` // a repository to test the credential against, e.g. https://git…/me/repo.git
+}
+
+// gitTestResponse is a diagnostic result, not an API outcome: it comes back 200 whether the
+// credential worked or not, so the UI renders pass/fail inline. OK true means ls-remote listed
+// refs; on failure Error carries the friendly reason (bad token, rejected key, unreachable…).
+type gitTestResponse struct {
+	OK    bool   `json:"ok"`
+	Error string `json:"error,omitempty"`
+}
+
+// handleTestGitCredential proves a stored credential can reach a repository the operator names —
+// an ls-remote with the credential (and Daffa's managed-CA trust for an internal https server),
+// the git analog of the registry login test. It reaches out with the sealed secret, which is why
+// it takes GitCredsEdit like create; the result is a payload, never an API error, so a failed test
+// is not a failed request.
+func (s *Server) handleTestGitCredential(w http.ResponseWriter, r *http.Request) {
+	var req gitTestRequest
+	if err := httpx.Decode(w, r, &req); err != nil {
+		httpx.BadRequest(w, r, err.Error())
+		return
+	}
+	req.URL = strings.TrimSpace(req.URL)
+	if req.URL == "" {
+		httpx.BadRequest(w, r, "A repository URL is required to test the credential against.")
+		return
+	}
+
+	c, err := s.store.GitCredentialByID(r.Context(), r.PathValue("id"))
+	if errors.Is(err, store.ErrNotFound) {
+		httpx.Fail(w, r, http.StatusNotFound, "not_found", "That git credential no longer exists.")
+		return
+	}
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	auth, err := s.openGitCred(c)
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+
+	src := stacks.Source{Kind: "git", URL: req.URL, Auth: auth, CABundle: s.managedCABundle(r.Context())}
+	if err := stacks.CheckAccess(r.Context(), src); err != nil {
+		httpx.JSON(w, http.StatusOK, gitTestResponse{OK: false, Error: err.Error()})
+		return
+	}
+	httpx.JSON(w, http.StatusOK, gitTestResponse{OK: true})
+}
+
 type gitCredRequest struct {
 	Name       string `json:"name"`
 	Kind       string `json:"kind"`

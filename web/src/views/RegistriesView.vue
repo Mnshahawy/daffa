@@ -36,7 +36,7 @@ const registryProviders: RegistryProvider[] = [
   { id: 'dockerhub', label: 'Docker Hub', host: 'docker.io', usernameHint: 'your Docker ID', tokenUrl: 'https://app.docker.com/settings/personal-access-tokens', tokenHint: 'Account settings → Personal access tokens. Read-only access is enough for pulls; your account password also works, but a token can be revoked on its own.' },
   { id: 'ghcr', label: 'GHCR', host: 'ghcr.io', usernameHint: 'your GitHub username', tokenUrl: 'https://github.com/settings/tokens', tokenHint: 'A classic personal access token with the `read:packages` scope — fine-grained tokens do not work against ghcr.io.' },
   { id: 'gitlab', label: 'GitLab', host: 'registry.gitlab.com', usernameHint: 'username or token name', tokenUrl: 'https://gitlab.com/-/user_settings/personal_access_tokens', tokenHint: 'A personal access token with `read_registry` — or a project deploy token, in which case the username is the deploy token’s own name.' },
-  { id: 'selfhosted', label: 'Self-hosted', host: '', usernameHint: '', tokenUrl: '', tokenHint: 'Harbor, a Forgejo/Gitea registry, or a plain registry:2 — whatever `docker login` takes there works here.' },
+  { id: 'selfhosted', label: 'Self-hosted', host: '', usernameHint: '', tokenUrl: '', tokenHint: 'Harbor, a Forgejo/Gitea registry, or a plain registry:2 — whatever `docker login` takes there works here. Type the bare host; add an http:// prefix only for a plain-HTTP registry. A registry fronted by a certificate from a CA Daffa manages is trusted automatically.' },
 ]
 
 const chosenProvider = ref<RegistryProvider | null>(null)
@@ -50,8 +50,20 @@ function pickProvider(p: RegistryProvider) {
 }
 
 const create = useMutation({
-  mutationFn: () => daffa.createRegistry(form.value),
-  onSuccess: () => {
+  // verify:true probes the registry first; verify:false stores the credential without probing —
+  // used for "save anyway" after an advisory unreachable, since the deploy pull runs from the host
+  // daemon, not from Daffa.
+  mutationFn: (verify: boolean) => daffa.createRegistry({ ...form.value, verify }),
+  onSuccess: async (resp) => {
+    if (resp.unreachable) {
+      const ok = await confirm({
+        title: 'Daffa could not reach this registry',
+        body: `${resp.reason} — but deploys pull from the host daemon, not from Daffa, so a registry Daffa cannot reach from here may still work at deploy time. Save the credential anyway?`,
+        confirmLabel: 'Save anyway',
+      })
+      if (ok) create.mutate(false)
+      return
+    }
     form.value = { name: '', url: '', username: '', password: '' }
     chosenProvider.value = null
     error.value = ''
@@ -96,7 +108,7 @@ async function onRemove(r: RegistryItem) {
 
     <form
       class="surface mb-6 rounded-[var(--radius-card)] p-5"
-      @submit.prevent="create.mutate()"
+      @submit.prevent="create.mutate(true)"
     >
       <!-- Provider cards. Picking one fills the host — the part people guess wrong — and
            points at the token kind the registry actually accepts. -->
@@ -185,7 +197,8 @@ async function onRemove(r: RegistryItem) {
       </BaseButton>
       <p class="subtle mt-2 text-xs">
         Daffa signs in to the registry before saving, so a wrong password is caught now rather than
-        by a deploy failing to pull a private image.
+        by a deploy failing to pull a private image. If Daffa cannot reach the registry from here,
+        you can still save — the deploy pull runs from the host daemon, not from Daffa.
       </p>
     </form>
 

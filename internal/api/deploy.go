@@ -322,12 +322,13 @@ func (s *Server) resolveSource(ctx context.Context, stack *store.Stack) (*stacks
 	}
 
 	resolved, err := stacks.Resolve(ctx, stacks.Source{
-		Kind: stack.SourceKind,
-		URL:  stack.GitURL,
-		Ref:  stack.GitRef,
-		Path: stack.GitPath,
-		Auth: gitAuth,
-		YAML: stack.InlineYAML,
+		Kind:     stack.SourceKind,
+		URL:      stack.GitURL,
+		Ref:      stack.GitRef,
+		Path:     stack.GitPath,
+		Auth:     gitAuth,
+		YAML:     stack.InlineYAML,
+		CABundle: s.managedCABundle(ctx),
 	})
 	if err != nil {
 		return nil, nil, err

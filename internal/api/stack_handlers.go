@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"crypto/x509"
 	"errors"
 	"net/http"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/Mnshahawy/daffa/internal/auth"
 	"github.com/Mnshahawy/daffa/internal/caps"
+	"github.com/Mnshahawy/daffa/internal/certs"
 	"github.com/Mnshahawy/daffa/internal/dockerx"
 	"github.com/Mnshahawy/daffa/internal/httpx"
 	"github.com/Mnshahawy/daffa/internal/stacks"
@@ -814,6 +816,10 @@ type registryView struct {
 	Username string `json:"username"`
 }
 
+func viewRegistry(reg *store.Registry) *registryView {
+	return &registryView{ID: reg.ID, Name: reg.Name, URL: reg.URL, Username: reg.Username}
+}
+
 func (s *Server) handleListRegistries(w http.ResponseWriter, r *http.Request) {
 	list, err := s.store.ListRegistries(r.Context())
 	if err != nil {
@@ -824,9 +830,60 @@ func (s *Server) handleListRegistries(w http.ResponseWriter, r *http.Request) {
 	// Passwords never leave the server, not even sealed.
 	out := make([]registryView, 0, len(list))
 	for _, reg := range list {
-		out = append(out, registryView{ID: reg.ID, Name: reg.Name, URL: reg.URL, Username: reg.Username})
+		out = append(out, *viewRegistry(reg))
 	}
 	httpx.JSON(w, http.StatusOK, out)
+}
+
+// managedCAPEMs returns the public PEM of every CA Daffa manages. These are what Daffa's own TLS
+// reach-out trusts beyond the system roots — the CAs Daffa itself signed, nothing pasted in and
+// no skip-verify. It is the shared basis for both registry (registryTrust) and git
+// (managedCABundle) trust, so the two never drift.
+func (s *Server) managedCAPEMs(ctx context.Context) []string {
+	cas, _ := s.store.ListCertAuthorities(ctx)
+	pems := make([]string, 0, len(cas))
+	for _, ca := range cas {
+		if ca.CertPEM != "" {
+			pems = append(pems, ca.CertPEM)
+		}
+	}
+	return pems
+}
+
+// registryTrust is the CA pool Daffa's own registry reach-out verifies against: the system roots
+// plus every CA Daffa itself manages. A registry fronted by a Daffa-issued leaf (the common
+// internal case) verifies with zero per-registry config. Returns nil (use the system roots
+// directly) when there are no managed CAs, preserving the exact prior behaviour for Docker Hub /
+// GHCR and friends.
+func (s *Server) registryTrust(ctx context.Context) *x509.CertPool {
+	pems := s.managedCAPEMs(ctx)
+	if len(pems) == 0 {
+		return nil
+	}
+	pool, err := x509.SystemCertPool()
+	if err != nil || pool == nil {
+		pool = x509.NewCertPool()
+	}
+	for _, p := range pems {
+		pool.AppendCertsFromPEM([]byte(p))
+	}
+	return pool
+}
+
+// managedCABundle is the PEM bundle of Daffa's managed CAs, for go-git's CloneOptions.CABundle —
+// which trusts it *in addition to* the system roots, so a self-hosted git server fronted by a
+// Daffa-issued cert verifies while public hosts are unaffected. Empty ⇒ nil (system roots only,
+// the unchanged public path). Same policy as registryTrust: Daffa's own CAs, nothing else.
+func (s *Server) managedCABundle(ctx context.Context) []byte {
+	pems := s.managedCAPEMs(ctx)
+	if len(pems) == 0 {
+		return nil
+	}
+	bundle, err := certs.Bundle(pems...)
+	if err != nil || bundle == "" {
+		return nil
+	}
+	return []byte(bundle)
 }
 
 type registryRequest struct {
@@ -834,6 +891,20 @@ type registryRequest struct {
 	URL      string `json:"url"`
 	Username string `json:"username"`
 	Password string `json:"password"`
+	// Verify defaults to true (nil ⇒ true); when it is on and the probe cannot reach the registry,
+	// the response is a soft "unreachable" and the client re-submits with verify:false to store the
+	// credential anyway — deploy pulls run from the host daemon, so Daffa's own reach is advisory.
+	Verify *bool `json:"verify"`
+}
+
+// registryCreateResponse is the create result. On a saved credential Registry is set. When the
+// pre-save probe could not reach the registry (and verify was on) Registry is nil and Unreachable
+// carries the reason — the client offers "save anyway", which re-POSTs with verify:false. Deploy
+// pulls run from the host daemon, so Daffa's own unreachability is never a reason to refuse a save.
+type registryCreateResponse struct {
+	Registry    *registryView `json:"registry,omitempty"`
+	Unreachable bool          `json:"unreachable,omitempty"`
+	Reason      string        `json:"reason,omitempty"`
 }
 
 func (s *Server) handleCreateRegistry(w http.ResponseWriter, r *http.Request) {
@@ -855,12 +926,25 @@ func (s *Server) handleCreateRegistry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Prove the credential works before saving it, the way a storage target is proved: a wrong
-	// registry password otherwise stays silent until a deploy tries to pull a private image and
-	// fails, which is both far from here and far from now.
-	if err := dockerx.CheckRegistry(r.Context(), req.URL, req.Username, req.Password); err != nil {
-		httpx.Fail(w, r, http.StatusBadRequest, "registry_unreachable", err.Error())
-		return
+	// Prove the credential works before saving it — a wrong password otherwise stays silent until a
+	// deploy tries to pull a private image. But the probe runs from THE DAFFA CONTAINER, and the
+	// actual pull runs from the host daemon; a registry the host can reach may be unresolvable or
+	// untrusted from here (the genie/Tailscale case). So on verify:true the probe is ADVISORY — a
+	// failure returns a soft "couldn't reach it, save anyway?" rather than a refusal. verify:false
+	// skips it entirely. See .ai/registries.md §Design #3.
+	verify := req.Verify == nil || *req.Verify
+	if verify {
+		if err := dockerx.CheckRegistry(r.Context(), req.URL, req.Username, req.Password, s.registryTrust(r.Context())); err != nil {
+			// A wrong username/password is actionable and fails the host daemon too, so it stays a
+			// hard error. Only a registry Daffa cannot reach becomes the soft "save anyway" — the
+			// host may still be able to pull from it.
+			if errors.Is(err, dockerx.ErrBadCredential) {
+				httpx.Fail(w, r, http.StatusBadRequest, "registry_unauthorized", err.Error())
+				return
+			}
+			httpx.JSON(w, http.StatusOK, registryCreateResponse{Unreachable: true, Reason: err.Error()})
+			return
+		}
 	}
 
 	sealed, err := s.sealer.Seal(req.Password)
@@ -878,7 +962,7 @@ func (s *Server) handleCreateRegistry(w http.ResponseWriter, r *http.Request) {
 	s.audit(r.Context(), store.AuditEntry{
 		Action: "registry.create", Target: reg.Name, Outcome: "ok",
 	})
-	httpx.JSON(w, http.StatusOK, registryView{ID: reg.ID, Name: reg.Name, URL: reg.URL, Username: reg.Username})
+	httpx.JSON(w, http.StatusOK, registryCreateResponse{Registry: viewRegistry(reg)})
 }
 
 func (s *Server) handleDeleteRegistry(w http.ResponseWriter, r *http.Request) {

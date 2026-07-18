@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-git/go-billy/v5/memfs"
 	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/go-git/go-git/v5/storage/memory"
@@ -26,6 +27,12 @@ type Source struct {
 
 	// Auth is the resolved credential, or nil for a public repository.
 	Auth *GitAuth
+
+	// CABundle is an optional PEM bundle to trust *in addition to* the system roots when the
+	// git server speaks https — the CAs Daffa manages, so a self-hosted Forgejo/Gitea fronted by
+	// a Daffa-issued cert verifies. Empty means system roots only (the unchanged public path).
+	// It is server-provided trust material, resolved just in time like Auth, never stored here.
+	CABundle []byte
 }
 
 // GitAuth is a credential in plaintext, resolved just in time and never stored this way.
@@ -107,6 +114,9 @@ func cloneCommit(ctx context.Context, src Source) (*object.Commit, error) {
 		Depth:        1,
 		SingleBranch: true,
 		Tags:         git.NoTags,
+		// go-git uses this bundle together with the system cert pool, so an internal-CA git
+		// server verifies while public hosts are unaffected. nil/empty ⇒ system roots only.
+		CABundle: src.CABundle,
 	}
 	if src.Ref != "" && !isCommitSHA(src.Ref) {
 		// A branch or tag can be asked for by name at clone time. A commit SHA cannot
@@ -147,6 +157,29 @@ func cloneCommit(ctx context.Context, src Source) (*object.Commit, error) {
 		return nil, fmt.Errorf("stacks: reading commit: %w", err)
 	}
 	return c, nil
+}
+
+// CheckAccess proves a credential can actually reach a repository — the git analog of a registry
+// login test. It runs ls-remote (list refs, no clone, nothing to disk), so a wrong or expired
+// token, a rejected deploy key, or an unpinned/ mismatched host key fails HERE rather than at the
+// next deploy. URL, Auth, and CABundle all come from src; the same friendly-error mapping the
+// clone path uses is applied so the operator gets "authentication failed…" not a go-git internal.
+func CheckAccess(ctx context.Context, src Source) error {
+	if src.URL == "" {
+		return errors.New("stacks: a git URL is required")
+	}
+	ctx, cancel := context.WithTimeout(ctx, gitTimeout)
+	defer cancel()
+
+	auth, err := transportAuth(src)
+	if err != nil {
+		return err
+	}
+	rem := git.NewRemote(memory.NewStorage(), &config.RemoteConfig{Name: "origin", URLs: []string{src.URL}})
+	if _, err := rem.ListContext(ctx, &git.ListOptions{Auth: auth, CABundle: src.CABundle}); err != nil {
+		return friendlyGitError(err)
+	}
+	return nil
 }
 
 func resolveGit(ctx context.Context, src Source) (*Resolved, error) {

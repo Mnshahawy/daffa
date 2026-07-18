@@ -48,6 +48,7 @@ func (s *Server) syncVolumeSource(ctx context.Context, v *store.VolumeSource) (h
 		if auth, err = s.gitAuth(ctx, v.GitCredentialID); err == nil {
 			rt, err = stacks.ResolveTree(ctx, stacks.Source{
 				Kind: "git", URL: v.GitURL, Ref: v.GitRef, Path: v.GitPath, Auth: auth,
+				CABundle: s.managedCABundle(ctx),
 			})
 		}
 	}

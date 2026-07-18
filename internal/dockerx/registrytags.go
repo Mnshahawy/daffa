@@ -2,6 +2,7 @@ package dockerx
 
 import (
 	"context"
+	"crypto/x509"
 	"fmt"
 	"net/http"
 	"strings"
@@ -88,9 +89,9 @@ func SwapTag(oldRef, newTag string) (string, error) {
 // TagExists reports whether repo:tag resolves to a manifest at host. It follows the same v2 auth
 // dance as CheckRegistry, but with a pull-scoped token so it can actually read the manifest. A
 // 404 is a clean "no such tag", not an error; only transport and auth failures are errors.
-func TagExists(ctx context.Context, host, repo, tag, username, password string) (bool, error) {
+func TagExists(ctx context.Context, host, repo, tag, username, password string, roots *x509.CertPool) (bool, error) {
 	base := registryBaseURL(host)
-	client := &http.Client{Timeout: 12 * time.Second}
+	client := registryClient(roots)
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 

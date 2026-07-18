@@ -2,8 +2,10 @@ package dockerx
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +13,12 @@ import (
 	"strings"
 	"time"
 )
+
+// ErrBadCredential marks a probe that REACHED the registry but was refused for a wrong username
+// or password. It is actionable and host-independent — the same credential fails the host daemon's
+// pull too — so the create handler hard-fails on it, unlike an unreachable registry (which the
+// host may still be able to pull from, hence "save anyway").
+var ErrBadCredential = errors.New("the registry rejected the username or password")
 
 // CheckRegistry proves a registry credential works before it is saved — the same "do not store a
 // configuration that is a future 3am surprise" rule a storage target follows. A wrong registry
@@ -20,9 +28,9 @@ import (
 // Bearer challenge (Docker Hub, GHCR, most hosted registries) follow the challenge to its token
 // endpoint with the credentials; if it answers with a Basic challenge, send the credentials
 // straight to /v2/. A 200 either way means the credentials are good.
-func CheckRegistry(ctx context.Context, host, username, password string) error {
+func CheckRegistry(ctx context.Context, host, username, password string, roots *x509.CertPool) error {
 	base := registryBaseURL(host)
-	client := &http.Client{Timeout: 12 * time.Second}
+	client := registryClient(roots)
 
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
@@ -105,11 +113,11 @@ func bearerToken(ctx context.Context, client *http.Client, challenge, username, 
 		case body.AccessToken != "":
 			return body.AccessToken, nil
 		default:
-			return "", fmt.Errorf("the registry accepted the request but issued no token — the username or password is wrong")
+			return "", fmt.Errorf("%w — it accepted the request but issued no token", ErrBadCredential)
 		}
 	}
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		return "", fmt.Errorf("the registry rejected the username or password")
+		return "", ErrBadCredential
 	}
 	return "", fmt.Errorf("the registry's token endpoint answered %s", resp.Status)
 }
@@ -124,7 +132,7 @@ func checkBasic(ctx context.Context, client *http.Client, base, username, passwo
 		return nil
 	}
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		return fmt.Errorf("the registry rejected the username or password")
+		return ErrBadCredential
 	}
 	return fmt.Errorf("the registry answered %s", resp.Status)
 }
@@ -141,14 +149,24 @@ func registryGet(ctx context.Context, client *http.Client, url, authorization st
 }
 
 // registryBaseURL turns a registry host into the base URL to probe. Docker's shorthand "docker.io"
-// is really registry-1.docker.io; everything else is taken as-is, defaulting to https.
+// is really registry-1.docker.io. The scheme defaults to https, but an EXPLICIT http:// is
+// honoured — an internal registry may only speak plain HTTP on a private network, and forcing
+// https there probes an endpoint that isn't listening. It is never a silent downgrade: only a
+// url the operator deliberately typed with http:// gets it.
 func registryBaseURL(host string) string {
 	host = strings.TrimSpace(host)
-	host = strings.TrimSuffix(strings.TrimPrefix(strings.TrimPrefix(host, "https://"), "http://"), "/")
+	scheme := "https://"
+	switch {
+	case strings.HasPrefix(host, "http://"):
+		scheme, host = "http://", strings.TrimPrefix(host, "http://")
+	case strings.HasPrefix(host, "https://"):
+		host = strings.TrimPrefix(host, "https://")
+	}
+	host = strings.TrimSuffix(host, "/")
 	if host == "docker.io" || host == "index.docker.io" || host == "registry.docker.io" {
 		host = "registry-1.docker.io"
 	}
-	return "https://" + host
+	return scheme + host
 }
 
 func basicAuth(username, password string) string {

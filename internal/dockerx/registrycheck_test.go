@@ -2,9 +2,9 @@ package dockerx
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 )
 
@@ -25,10 +25,12 @@ func TestParseChallengeKeepsCommasInsideQuotes(t *testing.T) {
 
 func TestRegistryBaseURLNormalisesDockerHub(t *testing.T) {
 	for in, want := range map[string]string{
-		"docker.io":       "https://registry-1.docker.io",
-		"ghcr.io":         "https://ghcr.io",
-		"https://quay.io": "https://quay.io",
-		"registry.local/": "https://registry.local",
+		"docker.io":              "https://registry-1.docker.io",
+		"ghcr.io":                "https://ghcr.io",
+		"https://quay.io":        "https://quay.io",
+		"registry.local/":        "https://registry.local",
+		"http://forgejo:3000":    "http://forgejo:3000",   // an explicit http:// is honoured
+		"http://registry.local/": "http://registry.local", // …and the trailing slash still trimmed
 	} {
 		if got := registryBaseURL(in); got != want {
 			t.Errorf("registryBaseURL(%q) = %q, want %q", in, got, want)
@@ -59,18 +61,15 @@ func TestCheckRegistryBearerFlow(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	host := strings.TrimPrefix(srv.URL, "http://")
-
-	// registryBaseURL forces https, which the httptest server does not speak — so exercise the
-	// pieces that do not depend on the scheme by pointing checkBearer at the stub directly.
-	client := srv.Client()
-	if err := checkBearer(context.Background(), client,
-		`Bearer realm="`+srv.URL+`/token",service="reg"`, "good", "pw"); err != nil {
+	// The stub speaks plain HTTP, and registryBaseURL now honours an explicit http:// — so drive
+	// the whole CheckRegistry path (probe → Bearer challenge → token) against srv.URL directly,
+	// with nil roots (the system pool; TLS never enters into an http stub).
+	if err := CheckRegistry(context.Background(), srv.URL, "good", "pw", nil); err != nil {
 		t.Errorf("a valid credential was rejected: %v", err)
 	}
-	if err := checkBearer(context.Background(), client,
-		`Bearer realm="`+srv.URL+`/token",service="reg"`, "bad", "nope"); err == nil {
-		t.Error("a wrong credential was accepted")
+	// A wrong credential must come back as ErrBadCredential — the create handler leans on that to
+	// keep a bad password a hard error rather than an advisory "save anyway".
+	if err := CheckRegistry(context.Background(), srv.URL, "bad", "nope", nil); !errors.Is(err, ErrBadCredential) {
+		t.Errorf("a wrong credential should be ErrBadCredential, got %v", err)
 	}
-	_ = host
 }

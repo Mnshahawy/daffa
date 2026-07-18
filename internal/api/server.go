@@ -853,10 +853,10 @@ func (s *Server) apiRoutes() []route {
 			resp: []registryView(nil), ts: "registries"},
 		// The credential is proved against the registry before it is saved; the password
 		// is sealed and never readable again, not even by the admin who typed it.
-		//oapi:summary Create a registry credential, testing the login first
+		//oapi:summary Create a registry credential, testing the login first (advisory — save-anyway on unreachable)
 		//oapi:example req {"name": "ghcr", "url": "ghcr.io", "username": "octocat", "password": "…"}
 		{pattern: "POST /api/registries", cap: caps.RegistriesEdit, scope: scopeGlobal, h: s.handleCreateRegistry,
-			req: registryRequest{}, resp: registryView{}, ts: "createRegistry"},
+			req: registryRequest{}, resp: registryCreateResponse{}, ts: "createRegistry"},
 		//oapi:summary Delete a registry credential
 		{pattern: "DELETE /api/registries/{id}", cap: caps.RegistriesEdit, scope: scopeGlobal, h: s.handleDeleteRegistry,
 			resp: map[string]string(nil), ts: "deleteRegistry"},
@@ -879,6 +879,12 @@ func (s *Server) apiRoutes() []route {
 		//oapi:example req {"name": "GitHub deploy", "kind": "token", "username": "octocat", "token": "…"}
 		{pattern: "POST /api/gitcreds", cap: caps.GitCredsEdit, scope: scopeGlobal, h: s.handleCreateGitCredential,
 			req: gitCredRequest{}, resp: map[string]string(nil), ts: "createGitCredential"},
+		// Reaches out with the sealed credential (ls-remote), so it is GitCredsEdit like create.
+		// The result is a diagnostic payload, not an API status: a failed test is still a 200.
+		//oapi:summary Test a git credential against a repository URL (ls-remote, no clone)
+		//oapi:example req {"url": "https://git.example.com/me/repo.git"}
+		{pattern: "POST /api/gitcreds/{id}/test", cap: caps.GitCredsEdit, scope: scopeGlobal, h: s.handleTestGitCredential,
+			req: gitTestRequest{}, resp: gitTestResponse{}, ts: "testGitCredential"},
 		// Refused while stacks still use it — a stack whose credential vanished fails at
 		// its next deploy, which is a bad time to find out.
 		//oapi:summary Delete a git credential no stack uses

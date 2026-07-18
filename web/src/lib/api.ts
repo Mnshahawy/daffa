@@ -745,6 +745,13 @@ export interface RegistryRequest {
   url?: string
   username?: string
   password?: string
+  verify?: boolean | null
+}
+
+export interface RegistryCreateResponse {
+  registry?: RegistryItem
+  unreachable?: boolean
+  reason?: string
 }
 
 export interface GitCredential {
@@ -769,6 +776,15 @@ export interface GitCredRequest {
   ssh_key?: string
   passphrase?: string
   host_key?: string
+}
+
+export interface GitTestRequest {
+  url?: string
+}
+
+export interface GitTestResponse {
+  ok: boolean
+  error?: string
 }
 
 export interface CertAuthority {
@@ -1310,11 +1326,14 @@ export const daffa = {
     api.put<Record<string, string>>(`/api/storage/${id}`, body),
   deleteStorage: (id: string) => api.del<Record<string, string>>(`/api/storage/${id}`),
   registries: () => api.get<RegistryItem[]>('/api/registries'),
-  createRegistry: (body: RegistryRequest) => api.post<RegistryItem>('/api/registries', body),
+  createRegistry: (body: RegistryRequest) =>
+    api.post<RegistryCreateResponse>('/api/registries', body),
   deleteRegistry: (id: string) => api.del<Record<string, string>>(`/api/registries/${id}`),
   gitCredentials: () => api.get<GitCredential[]>('/api/gitcreds'),
   createGitCredential: (body: GitCredRequest) =>
     api.post<Record<string, string>>('/api/gitcreds', body),
+  testGitCredential: (id: string, body: GitTestRequest) =>
+    api.post<GitTestResponse>(`/api/gitcreds/${id}/test`, body),
   deleteGitCredential: (id: string) => api.del<Record<string, string>>(`/api/gitcreds/${id}`),
   cas: () => api.get<CertAuthority[]>('/api/certs/cas'),
   createCA: (body: CaRequest) => api.post<CertAuthority>('/api/certs/cas', body),

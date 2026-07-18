@@ -29,6 +29,34 @@ deploy, to a path inside the runner rather than on the host. Use named volumes o
 host paths instead.
 :::
 
+## Private repositories and registries
+
+A stack usually needs two kinds of credential: one to **read the repository** (the compose
+file) and one to **pull private images**. Both live under **Connections**, and a stack picks
+them by name — configure once, point as many stacks as you like at them.
+
+- **Git** — an access token (https) or an SSH deploy key. Daffa stores only the secret and
+  never writes it anywhere but the deploy runner. A credential carries no repository URL, so
+  to check one works press **Test** and give it any repository it should be able to read:
+  Daffa lists the refs with the credential (`ls-remote`, no clone) and reports pass or fail,
+  so an expired token or an unadded deploy key shows up now rather than at the next deploy.
+- **Registries** — a username and token for a private image host. Enter the **bare host**
+  (`ghcr.io`, `git.example.com`) — the owner and image name belong in the compose `image:`
+  line, not here. Daffa signs in before saving, so a wrong password is caught immediately.
+
+### Self-hosted, over an internal CA or plain HTTP
+
+If your git server or registry is fronted by a certificate from a CA **Daffa itself manages**,
+Daffa trusts it automatically — nothing to paste, no verification to switch off. A self-hosted
+Forgejo/Gitea (which serves both git and a container registry) just works once its name
+resolves. A registry that speaks plain **HTTP** on an internal network is reached by prefixing
+its host with `http://` — never a silent downgrade, only when you ask for it.
+
+If Daffa cannot reach a registry while you are saving it — an internal name it does not resolve
+yet, say — it tells you and lets you **save anyway**: the deploy pull runs from the host's
+Docker daemon, not from Daffa, so a credential Daffa cannot reach from here can still be
+exactly what the host needs.
+
 ## Deployments
 
 Every attempt to change what is running is a **deployment**, with a page of its own at

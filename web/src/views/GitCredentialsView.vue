@@ -124,6 +124,29 @@ const remove = useMutation({
   },
 })
 
+// ── test a credential against a repo (ls-remote, no clone) ──────────────────────
+// The credential stores no URL, so testing needs one: the operator names any repo the
+// credential should be able to read, and Daffa lists its refs with the credential.
+const testingId = ref<string | null>(null)
+const testUrl = ref('')
+const testResult = ref<{ ok: boolean; error?: string } | null>(null)
+
+function openTest(c: GitCredential) {
+  testingId.value = testingId.value === c.id ? null : c.id
+  testUrl.value = ''
+  testResult.value = null
+}
+
+const test = useMutation({
+  mutationFn: (id: string) => daffa.testGitCredential(id, { url: testUrl.value.trim() }),
+  onSuccess: (resp) => {
+    testResult.value = resp
+  },
+  onError: (e) => {
+    testResult.value = { ok: false, error: e instanceof ApiError ? e.message : 'Could not run the test.' }
+  },
+})
+
 async function onRemove(c: GitCredential) {
   if (c.in_use > 0) {
     error.value = `${c.name} is used by ${c.in_use} stack${c.in_use === 1 ? '' : 's'}. Point them elsewhere first.`
@@ -403,39 +426,87 @@ async function onRemove(c: GitCredential) {
         </thead>
 
         <tbody>
-          <tr
-            v-for="c in creds"
-            :key="c.id"
-            class="border-b transition last:border-0 hover:bg-[var(--surface-sunken)]"
-            :style="{ borderColor: 'var(--border)' }"
-          >
-            <td class="py-3 pl-4 pr-4">
-              <div class="font-medium">{{ c.name }}</div>
-              <div class="subtle mt-0.5 text-xs">
-                {{ c.kind === 'ssh' ? 'SSH key' : 'Access token' }}
-                <span v-if="c.kind === 'ssh' && !c.pinned" :style="{ color: 'var(--warn)' }">
-                  · host key not pinned
-                </span>
-              </div>
-            </td>
+          <template v-for="c in creds" :key="c.id">
+            <tr
+              class="border-b transition hover:bg-[var(--surface-sunken)]"
+              :class="{ 'last:border-0': testingId !== c.id }"
+              :style="{ borderColor: 'var(--border)' }"
+            >
+              <td class="py-3 pl-4 pr-4">
+                <div class="font-medium">{{ c.name }}</div>
+                <div class="subtle mt-0.5 text-xs">
+                  {{ c.kind === 'ssh' ? 'SSH key' : 'Access token' }}
+                  <span v-if="c.kind === 'ssh' && !c.pinned" :style="{ color: 'var(--warn)' }">
+                    · host key not pinned
+                  </span>
+                </div>
+              </td>
 
-            <td class="subtle py-3 pr-4 text-right font-mono text-xs">
-              {{ c.in_use }} stack{{ c.in_use === 1 ? '' : 's' }}
-            </td>
+              <td class="subtle py-3 pr-4 text-right font-mono text-xs">
+                {{ c.in_use }} stack{{ c.in_use === 1 ? '' : 's' }}
+              </td>
 
-            <td class="py-3 pr-4 text-right">
-              <BaseButton
-                v-if="canEdit"
-                intent="danger"
-                size="xs"
-                :disabled="remove.isPending.value"
-                @click="onRemove(c)"
-              >
-                <AppIcon name="trash" class="size-3.5" />
-                Delete
-              </BaseButton>
-            </td>
-          </tr>
+              <td class="py-3 pr-4 text-right">
+                <div class="flex items-center justify-end gap-1">
+                  <BaseButton
+                    v-if="canEdit"
+                    :intent="testingId === c.id ? 'primary' : 'secondary'"
+                    size="xs"
+                    @click="openTest(c)"
+                  >
+                    Test
+                  </BaseButton>
+                  <BaseButton
+                    v-if="canEdit"
+                    intent="danger"
+                    size="xs"
+                    :disabled="remove.isPending.value"
+                    @click="onRemove(c)"
+                  >
+                    <AppIcon name="trash" class="size-3.5" />
+                    Delete
+                  </BaseButton>
+                </div>
+              </td>
+            </tr>
+
+            <!-- Test panel: the credential carries no URL, so name a repo it should be able
+                 to read; Daffa runs ls-remote (no clone) with it. -->
+            <tr
+              v-if="testingId === c.id"
+              class="border-b last:border-0"
+              :style="{ borderColor: 'var(--border)', background: 'var(--surface-sunken)' }"
+            >
+              <td colspan="3" class="px-4 py-3">
+                <form class="flex flex-wrap items-center gap-2" @submit.prevent="test.mutate(c.id)">
+                  <input
+                    v-model="testUrl"
+                    required
+                    placeholder="https://git.example.com/me/repo.git"
+                    class="field min-w-[18rem] flex-1 font-mono text-xs"
+                    data-cursor="text"
+                  />
+                  <BaseButton type="submit" intent="primary" size="sm" :loading="test.isPending.value">
+                    Test access
+                  </BaseButton>
+                </form>
+                <p
+                  v-if="testResult"
+                  class="mt-2 text-xs"
+                  :style="{ color: testResult.ok ? 'var(--success)' : 'var(--danger)' }"
+                >
+                  <template v-if="testResult.ok">
+                    ✓ Reachable — the credential can read this repository.
+                  </template>
+                  <template v-else>✗ {{ testResult.error }}</template>
+                </p>
+                <p class="subtle mt-1 text-xs">
+                  Runs <code class="font-mono">ls-remote</code> with this credential — no clone. Use
+                  any repository the credential should be able to read.
+                </p>
+              </td>
+            </tr>
+          </template>
         </tbody>
       </table>
     </div>

@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"crypto/x509"
 	"fmt"
 	"net/http"
 	"strings"
@@ -128,12 +129,12 @@ func (s *Server) handleCheckImageTag(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	username, password, err := s.registryAuthForHost(r.Context(), ref.Host)
+	username, password, roots, err := s.registryAuthForHost(r.Context(), ref.Host)
 	if err != nil {
 		httpx.Error(w, r, err)
 		return
 	}
-	exists, err := dockerx.TagExists(r.Context(), ref.Host, ref.Repo, req.Tag, username, password)
+	exists, err := dockerx.TagExists(r.Context(), ref.Host, ref.Repo, req.Tag, username, password, roots)
 	resp := tagCheckResponse{Exists: exists}
 	if err != nil {
 		resp.Error = err.Error()
@@ -170,12 +171,12 @@ func (s *Server) handleLatestImageTag(w http.ResponseWriter, r *http.Request) {
 		httpx.JSON(w, http.StatusOK, latestHintResponse{})
 		return
 	}
-	username, password, err := s.registryAuthForHost(r.Context(), ref.Host)
+	username, password, roots, err := s.registryAuthForHost(r.Context(), ref.Host)
 	if err != nil {
 		httpx.JSON(w, http.StatusOK, latestHintResponse{})
 		return
 	}
-	latest, _ := dockerx.LatestHint(r.Context(), ref.Host, ref.Repo, ref.Tag, username, password)
+	latest, _ := dockerx.LatestHint(r.Context(), ref.Host, ref.Repo, ref.Tag, username, password, roots)
 	httpx.JSON(w, http.StatusOK, latestHintResponse{Latest: latest})
 }
 
@@ -231,12 +232,15 @@ func (s *Server) handleRewriteComposeImages(w http.ResponseWriter, r *http.Reque
 }
 
 // registryAuthForHost finds the stored registry credential whose URL matches an image's host and
-// returns its plaintext (the server already unseals these to build a deploy's pull auth — see
-// deploy.go). No match means anonymous, which is correct for public images.
-func (s *Server) registryAuthForHost(ctx context.Context, host string) (username, password string, err error) {
+// returns its plaintext plus the CA pool to reach it with (the server already unseals these to
+// build a deploy's pull auth — see deploy.go). No match means anonymous, which is correct for
+// public images — the CA pool is the same either way: system roots ∪ Daffa's managed CAs, so an
+// internal registry that allows anonymous pulls yet is fronted by a Daffa-issued cert still
+// verifies.
+func (s *Server) registryAuthForHost(ctx context.Context, host string) (username, password string, roots *x509.CertPool, err error) {
 	regs, err := s.store.ListRegistries(ctx)
 	if err != nil {
-		return "", "", err
+		return "", "", nil, err
 	}
 	want := dockerx.RegistryHost(host)
 	for _, reg := range regs {
@@ -245,9 +249,9 @@ func (s *Server) registryAuthForHost(ctx context.Context, host string) (username
 		}
 		pw, err := s.sealer.Open(reg.PasswordEnc)
 		if err != nil {
-			return "", "", fmt.Errorf("could not decrypt the credential for %s", reg.Name)
+			return "", "", nil, fmt.Errorf("could not decrypt the credential for %s", reg.Name)
 		}
-		return reg.Username, pw, nil
+		return reg.Username, pw, s.registryTrust(ctx), nil
 	}
-	return "", "", nil
+	return "", "", s.registryTrust(ctx), nil
 }
