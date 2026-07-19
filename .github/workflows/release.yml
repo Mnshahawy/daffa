@@ -135,6 +135,36 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # The agent image — the dial-out agent binary only, no SPA/server/DB drivers, ~4×
+      # smaller — published alongside the console under a nested package
+      # (ghcr.io/<owner>/daffa/agent). Same version tags, same multi-arch build; `target:
+      # agent` selects the agent stage in the one Dockerfile. Its own cache scope keeps it
+      # from evicting the console's cache (they share the gobase layers regardless).
+      - name: Agent image metadata
+        id: meta-agent
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/${{ github.repository }}/agent
+          tags: |
+            type=raw,value=${{ steps.version.outputs.version }}
+            type=semver,pattern={{version}},value=${{ steps.version.outputs.version }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ steps.version.outputs.version }}
+            type=raw,value=latest
+
+      - name: Build and push agent
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          target: agent
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta-agent.outputs.tags }}
+          labels: ${{ steps.meta-agent.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.version.outputs.version }}
+          cache-from: type=gha,scope=agent
+          cache-to: type=gha,mode=max,scope=agent
+
       # --generate-notes diffs against the previous tag on its own.
       - name: Create GitHub Release
         env:

@@ -142,20 +142,53 @@ http_get() {
   else die "need curl or wget"; fi
 }
 
+# Distro id from /etc/os-release (e.g. amzn, ubuntu, debian). Empty when unreadable.
+os_id() {
+  [ -r /etc/os-release ] || return 0
+  ( . /etc/os-release && printf '%s' "${ID:-}" )
+}
+
+# Ensure Compose v2 is callable, since the compose() helper depends on it. get.docker.com
+# installs the docker-compose-plugin package on the distros it supports, but Amazon Linux's
+# `docker` package ships without any Compose — so when neither `docker compose` nor the
+# legacy `docker-compose` is present, fetch the plugin binary into the system plugin dir.
+ensure_compose() {
+  docker compose version >/dev/null 2>&1 && return
+  command -v docker-compose >/dev/null 2>&1 && return
+  local dest="/usr/local/lib/docker/cli-plugins"
+  # `uname -m` (aarch64 / x86_64) matches the compose release asset names verbatim.
+  local arch; arch="$(uname -m)"
+  say "installing the Docker Compose plugin (${arch})"
+  mkdir -p "$dest"
+  http_get "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-${arch}" \
+    > "$dest/docker-compose" || die "could not download the Docker Compose plugin for ${arch}"
+  chmod +x "$dest/docker-compose"
+  docker compose version >/dev/null 2>&1 || die "installed the Compose plugin but 'docker compose' still fails"
+}
+
 install_docker() {
   if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
     ok "Docker present ($(docker --version | awk '{print $3}' | tr -d ,))"
-    return
+    ensure_compose; return
   fi
   if command -v docker >/dev/null 2>&1; then
     warn "docker is installed but the daemon isn't reachable — trying to start it"
     systemctl start docker 2>/dev/null || service docker start 2>/dev/null || true
-    docker info >/dev/null 2>&1 && { ok "Docker daemon started"; return; }
+    docker info >/dev/null 2>&1 && { ok "Docker daemon started"; ensure_compose; return; }
   fi
-  say "installing Docker via get.docker.com"
-  curl -fsSL https://get.docker.com | sh || die "Docker install failed"
+  # get.docker.com aborts on Amazon Linux ("Unsupported distribution 'amzn'"), so install
+  # from the distro repo there; every distro the convenience script supports stays on it.
+  if [ "$(os_id)" = amzn ]; then
+    say "installing Docker from the Amazon Linux repositories"
+    dnf install -y docker >/dev/null 2>&1 || yum install -y docker >/dev/null 2>&1 \
+      || die "Docker install failed (dnf/yum install docker)"
+  else
+    say "installing Docker via get.docker.com"
+    curl -fsSL https://get.docker.com | sh || die "Docker install failed"
+  fi
   systemctl enable --now docker 2>/dev/null || service docker start 2>/dev/null || true
   docker info >/dev/null 2>&1 || die "Docker installed but the daemon is not running"
+  ensure_compose   # AL2023's docker package has no Compose plugin; add it before compose() runs
   ok "Docker installed"
 }
 

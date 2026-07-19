@@ -1,4 +1,4 @@
-.PHONY: help dev build web test test-pg lint clean docker user docs hooks
+.PHONY: help dev build agent web test test-pg lint clean docker docker-agent user docs hooks
 
 VERSION ?= dev
 # 8080 is a crowded port on a developer's machine (it is also the default for half the
@@ -7,12 +7,14 @@ PORT ?= 8099
 
 help:
 	@echo "make build          build the SPA, then the binary with it embedded"
+	@echo "make agent          build the agent-only binary (no SPA; bin/daffa-agent)"
 	@echo "make user           create a local admin account (prompts for a password)"
 	@echo "make dev            run the server on :$(PORT) against the local Docker socket"
 	@echo "make test           go test (SQLite only)"
 	@echo "make test-pg        go test against BOTH dialects (spins a throwaway Postgres)"
 	@echo "make lint           go vet + vue-tsc"
 	@echo "make docker         build the container image"
+	@echo "make docker-agent   build the smaller agent-only image (--target agent)"
 	@echo "make docs           run the documentation site (VitePress) with hot reload"
 	@echo "make hooks          install the git pre-commit hook (mirrors CI locally)"
 	@echo
@@ -35,6 +37,12 @@ docs:
 build: web
 	CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=$(VERSION)" -o bin/daffa ./cmd/daffa
 	@echo "→ bin/daffa"
+
+# The agent-only binary. No `web` prerequisite: cmd/daffa-agent imports just internal/agent
+# (→ internal/tunnel), so there is no SPA to embed. This is what the smaller agent image ships.
+agent:
+	CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=$(VERSION)" -o bin/daffa-agent ./cmd/daffa-agent
+	@echo "→ bin/daffa-agent"
 
 # Create the first account. Separate target because `dev` should be re-runnable without
 # tripping over an account that already exists.
@@ -64,6 +72,11 @@ lint:
 
 docker:
 	docker build -t daffa:$(VERSION) .
+
+# The agent-only image (agent binary on distroless, no SPA/server) — the `agent` target in
+# the same Dockerfile. Much smaller; for hosts that only run the dial-out agent.
+docker-agent:
+	docker build --target agent -t daffa-agent:$(VERSION) .
 
 clean:
 	# Remove the SPA build output but keep internal/web/dist/.gitkeep, so //go:embed still
