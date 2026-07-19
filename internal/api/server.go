@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -1366,8 +1367,10 @@ func (s *Server) Handler() http.Handler {
 	// ── SPA ────────────────────────────────────────────────────────────────────
 	mux.Handle("/", web.Handler())
 
-	// CSRF wraps everything: it is a property of the request, not of a route.
-	return auth.CSRF("")(noIndex(logging(mux)))
+	// CSRF wraps everything: it is a property of the request, not of a route. logging is
+	// OUTERMOST so its one line per request captures everything inside it — a CSRF rejection, a
+	// panic in any middleware — not just what reached a handler.
+	return logging(auth.CSRF("")(noIndex(mux)))
 }
 
 // noIndex tells every crawler, on every response, that there is nothing here for it.
@@ -1727,33 +1730,85 @@ func volSourceFrom(ctx context.Context) (*store.VolumeSource, bool) {
 
 // logging emits one structured line per request. Streams (SSE) log at start, since
 // their duration is the user's dwell time, not a latency number worth alerting on.
+// logging writes exactly ONE structured line per request, and it is where the request's whole
+// story lands: the method, path, status and duration always; the failure reason (code, message,
+// and for a 500 the underlying error) when there was one, put there by httpx via the recorder;
+// and a panic's stack, because an unrecovered panic would otherwise be logged only by net/http's
+// default as an unstructured line with no request context — the single hardest thing to debug,
+// logged the least. Mounted OUTERMOST so it sees everything, CSRF rejections and all.
 func logging(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 
-		next.ServeHTTP(rec, r)
+		// Deferred so the line is written even when the handler panics — and so is the 500 the
+		// caller is owed, if nothing has been sent yet.
+		defer func() {
+			if p := recover(); p != nil {
+				slog.Error("panic serving request",
+					"method", r.Method, "path", r.URL.Path, "panic", p,
+					"stack", string(debug.Stack()))
+				if !rec.wrote && !rec.hijacked {
+					httpx.Error(rec, r, fmt.Errorf("panic: %v", p))
+				} else {
+					rec.status = http.StatusInternalServerError
+				}
+			}
 
-		level := slog.LevelInfo
-		if rec.status >= 500 {
-			level = slog.LevelError
-		} else if rec.status >= 400 {
-			level = slog.LevelWarn
-		}
-		slog.Log(r.Context(), level, "http",
-			"method", r.Method, "path", r.URL.Path, "status", rec.status,
-			"ms", time.Since(start).Milliseconds())
+			level := slog.LevelInfo
+			if rec.status >= 500 {
+				level = slog.LevelError
+			} else if rec.status >= 400 {
+				level = slog.LevelWarn
+			}
+
+			attrs := []any{
+				"method", r.Method, "path", r.URL.Path, "status", rec.status,
+				"ms", time.Since(start).Milliseconds(),
+			}
+			// The reason a request failed, from httpx via RecordError. `error` is what the caller
+			// was told; `cause` is the raw server-side error a 500 hid from them.
+			if rec.code != "" {
+				attrs = append(attrs, "error_code", rec.code)
+				if rec.message != "" {
+					attrs = append(attrs, "error", rec.message)
+				}
+			}
+			if rec.err != nil {
+				attrs = append(attrs, "cause", rec.err.Error())
+			}
+			slog.Log(r.Context(), level, "http", attrs...)
+		}()
+
+		next.ServeHTTP(rec, r)
 	})
 }
 
 type statusRecorder struct {
 	http.ResponseWriter
-	status int
+	status   int
+	code     string // the failure code the caller was given, if any
+	message  string // the failure message the caller was given
+	err      error  // the underlying server-side error a 500 hid, for the log only
+	wrote    bool   // a status or body has gone out; a later 500 can no longer be written
+	hijacked bool   // the connection was taken over (WebSocket, exec) — do not touch it
+}
+
+// RecordError implements httpx.ErrorRecorder: httpx.Fail/Error hand the failure reason here so
+// the access-log line can carry it, instead of each failure logging a separate line of its own.
+func (r *statusRecorder) RecordError(code, message string, err error) {
+	r.code, r.message, r.err = code, message, err
 }
 
 func (r *statusRecorder) WriteHeader(code int) {
 	r.status = code
+	r.wrote = true
 	r.ResponseWriter.WriteHeader(code)
+}
+
+func (r *statusRecorder) Write(b []byte) (int, error) {
+	r.wrote = true
+	return r.ResponseWriter.Write(b)
 }
 
 // Wrapping a ResponseWriter hides the optional interfaces the real one implements, and
@@ -1771,6 +1826,7 @@ func (r *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	if !ok {
 		return nil, nil, fmt.Errorf("api: the underlying ResponseWriter does not support hijacking")
 	}
+	r.hijacked = true
 	return h.Hijack()
 }
 

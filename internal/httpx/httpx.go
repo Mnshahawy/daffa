@@ -30,22 +30,41 @@ func JSON(w http.ResponseWriter, status int, v any) {
 	}
 }
 
-// Fail writes a client-visible error.
+// ErrorRecorder is a ResponseWriter that can be told WHY a request failed, so the reason rides
+// on the one access-log line the request already writes rather than every failure logging its
+// own — a 400's "which field was wrong" and a 500's underlying error both land next to the
+// method, path and status instead of nowhere. The api package's request recorder implements it;
+// anything else (a test's httptest recorder, a raw ResponseWriter) does not, and Fail/Error fall
+// back to logging directly so nothing goes dark.
+type ErrorRecorder interface {
+	RecordError(code, message string, err error)
+}
+
+// Fail writes a client-visible error. The reason is handed to the access log (via the recorder)
+// so that a rejected request — a 400, a 403, a 409 — says in the log WHY, not just that it was
+// rejected: debugging "the user got an error" from a bare status code is guesswork.
 func Fail(w http.ResponseWriter, r *http.Request, status int, code, message string) {
-	if status >= 500 {
+	if rec, ok := w.(ErrorRecorder); ok {
+		rec.RecordError(code, message, nil)
+	} else if status >= 500 {
+		// No recorder in the chain (a handler tested in isolation): keep the old direct log for
+		// the server-fault case, which is the one worth never losing.
 		slog.Error("request failed", "method", r.Method, "path", r.URL.Path, "code", code, "message", message)
 	}
 	JSON(w, status, ErrorBody{Code: code, Message: message})
 }
 
 // Error maps an unexpected server-side error to a 500 without leaking its text to
-// the caller. The detail goes to the log, where it belongs.
+// the caller. The detail goes to the log, where it belongs — carried on the access line when a
+// recorder is present, logged directly otherwise.
 func Error(w http.ResponseWriter, r *http.Request, err error) {
-	slog.Error("unhandled error", "method", r.Method, "path", r.URL.Path, "err", err)
-	JSON(w, http.StatusInternalServerError, ErrorBody{
-		Code:    "internal",
-		Message: "Something went wrong on our side.",
-	})
+	const message = "Something went wrong on our side."
+	if rec, ok := w.(ErrorRecorder); ok {
+		rec.RecordError("internal", message, err)
+	} else {
+		slog.Error("unhandled error", "method", r.Method, "path", r.URL.Path, "err", err)
+	}
+	JSON(w, http.StatusInternalServerError, ErrorBody{Code: "internal", Message: message})
 }
 
 // Decode reads a JSON body with a size cap, so a hostile or broken client cannot
