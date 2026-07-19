@@ -75,7 +75,7 @@ async function remove(r: Role) {
     title: `Delete the role “${r.name}”?`,
     body:
       r.members > 0
-        ? `${r.members} ${r.members === 1 ? 'person holds' : 'people hold'} it and will lose everything it grants, on every host, the moment you delete it. Their accounts stay; their access does not.`
+        ? `${r.members} ${r.members === 1 ? 'person holds' : 'people hold'} it and will lose everything it grants, on every cluster, the moment you delete it. Their accounts stay; their access does not.`
         : 'Nobody holds it, so nobody loses access. It cannot be brought back — the capabilities would have to be ticked again from scratch.',
     confirmLabel: 'Delete role',
     intent: 'danger',

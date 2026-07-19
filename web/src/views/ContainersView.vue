@@ -143,7 +143,7 @@ function ports(c: Container): string {
     <EmptyState
       v-else-if="!containers?.length"
       icon="box"
-      title="Nothing is running on this host"
+      title="Nothing is running on this cluster"
       body="Containers show up here the moment they exist, whether Daffa deployed them or not. Deploy a stack, or start something on the host directly."
     />
 

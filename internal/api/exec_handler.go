@@ -47,7 +47,7 @@ func (s *Server) handleExec(w http.ResponseWriter, r *http.Request) {
 	// container is not the same as being trusted with a root shell on the host it runs on.
 	//
 	// Checked at THIS host, not fleet-wide: a shell on staging is not a shell on prod.
-	if !u.Caps.Has(caps.ContainersExec, r.PathValue("env")) {
+	if !u.Caps.Has(caps.ContainersExec, r.PathValue("cluster")) {
 		auth.Deny(w, r, u, caps.ContainersExec, s.recordDenial)
 		return
 	}

@@ -143,7 +143,7 @@ var (
 
 	// ── swarm ───────────────────────────────────────────────────────────────────
 	// There is deliberately no nodes.view. A node is what an environment is MADE OF, and looking
-	// at what an environment is made of is hosts.view, which already exists. A second capability
+	// at what an environment is made of is clusters.view, which already exists. A second capability
 	// for the same page would be a taxonomy built for the database rather than for the person.
 	ServicesView = Cap{NSSwarm, 1 << 0}
 	ServicesEdit = Cap{NSSwarm, 1 << 1}
@@ -167,8 +167,8 @@ var (
 	RolesEdit    = Cap{NSAdmin, 1 << 3}
 	SettingsView = Cap{NSAdmin, 1 << 4}
 	SettingsEdit = Cap{NSAdmin, 1 << 5}
-	HostsView    = Cap{NSAdmin, 1 << 6}
-	HostsEdit    = Cap{NSAdmin, 1 << 7}
+	ClustersView = Cap{NSAdmin, 1 << 6}
+	ClustersEdit = Cap{NSAdmin, 1 << 7}
 	LoggingView  = Cap{NSAdmin, 1 << 8}
 	LoggingEdit  = Cap{NSAdmin, 1 << 9}
 )
@@ -204,7 +204,7 @@ const (
 
 // Scope is the finest granularity at which a capability means anything.
 //
-// ScopeGlobal capabilities administer Daffa itself, and Daffa is not per-host: there is no
+// ScopeGlobal capabilities administer Daffa itself, and Daffa is not per-cluster: there is no
 // coherent reading of "may edit users, on staging". A grant of such a role at env scope is
 // refused rather than silently widened or silently narrowed.
 //
@@ -213,13 +213,13 @@ const (
 // globally — which means "Admin on staging" cannot be expressed, and therefore cannot quietly
 // become admin of the whole fleet.
 //
-// Scope is a property of the CAPABILITY, not of its namespace: hosts.view is env-scopable and
-// hosts.edit is not, and they live in the same area.
+// Scope is a property of the CAPABILITY, not of its namespace: clusters.view is env-scopable and
+// clusters.edit is not, and they live in the same area.
 type Scope string
 
 const (
-	ScopeGlobal Scope = "global" // fleet-wide only; cannot be granted on one host
-	ScopeEnv    Scope = "env"    // may be granted globally, or on one host
+	ScopeGlobal Scope = "global" // fleet-wide only; cannot be granted on one cluster
+	ScopeEnv    Scope = "env"    // may be granted globally, or on one cluster
 )
 
 // Def is one row of the registry. It is what the UI renders its permission matrix from, so
@@ -264,19 +264,19 @@ var All = []Def{
 	// The credential stores have no environment: there is one list of registries, one of git
 	// credentials, one of S3 targets, shared by the whole fleet.
 	//
-	// Their VIEW is nonetheless env-grantable, because an operator scoped to one host still has
+	// Their VIEW is nonetheless env-grantable, because an operator scoped to one cluster still has
 	// to pick a git credential when they create a stack there. A grant at any scope shows the
 	// whole list — which is safe, because the list carries names and kinds and never a secret.
 	// Their EDIT is global-only: those rows hold the secrets.
-	{RegistriesView, "registries.view", "registries", ModeView, ScopeEnv, "See configured registries — never their passwords. The list is shared by every host."},
+	{RegistriesView, "registries.view", "registries", ModeView, ScopeEnv, "See configured registries — never their passwords. The list is shared by every cluster."},
 	{RegistriesEdit, "registries.edit", "registries", ModeEdit, ScopeGlobal, "Add and remove registries, including their passwords. Fleet-wide."},
 
-	{GitCredsView, "gitcreds.view", "gitcreds", ModeView, ScopeEnv, "See which git credentials exist, by name — never their tokens or keys. The list is shared by every host."},
+	{GitCredsView, "gitcreds.view", "gitcreds", ModeView, ScopeEnv, "See which git credentials exist, by name — never their tokens or keys. The list is shared by every cluster."},
 	{GitCredsEdit, "gitcreds.edit", "gitcreds", ModeEdit, ScopeGlobal, "Add and remove git credentials, including tokens and SSH keys. Fleet-wide."},
 
-	// Volume sources deliver PUBLIC repo material to a host's named volumes, so unlike the
-	// credential stores both halves are env-grantable: delivering config to a host you
-	// operate is a host-scoped power, the stacks.edit precedent. The git credential a
+	// Volume sources deliver PUBLIC repo material to a cluster's named volumes, so unlike the
+	// credential stores both halves are env-grantable: delivering config to a cluster you
+	// operate is a cluster-scoped power, the stacks.edit precedent. The git credential a
 	// source uses stays behind gitcreds.*.
 	{VolSourcesView, "volsources.view", "volsources", ModeView, ScopeEnv, "See volume sources — repository, ref, subtree, live commit and sync status."},
 	{VolSourcesEdit, "volsources.edit", "volsources", ModeEdit, ScopeEnv, "Create, edit, sync and delete volume sources. A sync overwrites the volume's Daffa-delivered files with the repository's."},
@@ -287,7 +287,7 @@ var All = []Def{
 	{BackupsRestore, "backups.restore", "backups", ModeStandalone, ScopeEnv, "Restore a snapshot, overwriting a live database."},
 	{BackupsDownload, "backups.download", "backups", ModeStandalone, ScopeEnv, "Download a snapshot. It is an encrypted dump of an entire database."},
 
-	{StorageView, "storage.view", "storage", ModeView, ScopeEnv, "See S3/R2 targets by name — never their secret keys. The list is shared by every host."},
+	{StorageView, "storage.view", "storage", ModeView, ScopeEnv, "See S3/R2 targets by name — never their secret keys. The list is shared by every cluster."},
 	{StorageEdit, "storage.edit", "storage", ModeEdit, ScopeGlobal, "Add, edit and remove S3/R2 targets, including their credentials. Fleet-wide."},
 
 	// ── observe ─────────────────────────────────────────────────────────────────
@@ -296,14 +296,14 @@ var All = []Def{
 	//
 	// Adding a CPU alert should not require the power to add an identity provider, and that is
 	// exactly what reusing settings.edit would have meant. And settings.* is ScopeGlobal, so
-	// monitors would have become the one object in Daffa that cannot be scoped to a host — when
+	// monitors would have become the one object in Daffa that cannot be scoped to a cluster — when
 	// "the SRE who runs staging manages staging's alerts" is the obvious case.
 	//
-	// From which one rule follows, and it is enforced in the store: a monitor with no host
+	// From which one rule follows, and it is enforced in the store: a monitor with no cluster
 	// filter watches the whole fleet, so creating one requires monitors.edit GLOBALLY. A
-	// host-scoped holder may only create monitors pinned to a host they hold it on.
+	// cluster-scoped holder may only create monitors pinned to a cluster they hold it on.
 	{MonitorsView, "monitors.view", "monitors", ModeView, ScopeEnv, "See resource monitors and the alerts they have raised."},
-	{MonitorsEdit, "monitors.edit", "monitors", ModeEdit, ScopeEnv, "Create and edit resource monitors, and change how long samples are kept. A monitor that watches every host requires this on every host."},
+	{MonitorsEdit, "monitors.edit", "monitors", ModeEdit, ScopeEnv, "Create and edit resource monitors, and change how long samples are kept. A monitor that watches every cluster requires this on every cluster."},
 
 	// Env-grantable: an operator scoped to staging sees staging's history. Entries with no
 	// environment — user, role and settings changes — are visible only to a GLOBAL holder.
@@ -322,10 +322,10 @@ var All = []Def{
 	//
 	// It is STANDALONE rather than the edit half of a view/edit pair, and that is not a technicality:
 	// there is no nodes.view, because a node is what an environment is MADE OF, and looking at what
-	// an environment is made of is hosts.view. Inventing a second capability to read the same page
+	// an environment is made of is clusters.view. Inventing a second capability to read the same page
 	// would be a taxonomy built for the database rather than for the person using it. (The golden
 	// test catches this either way — an edit capability with no matching view is refused.)
-	{NodesEdit, "nodes.edit", "nodes", ModeStandalone, ScopeEnv, "Drain, pause, promote and demote the machines in a Swarm, and remove them from it. Draining a node evicts every Swarm task on it. Reading the node list is hosts.view."},
+	{NodesEdit, "nodes.edit", "nodes", ModeStandalone, ScopeEnv, "Drain, pause, promote and demote the machines in a Swarm, and remove them from it. Draining a node evicts every Swarm task on it. Reading the node list is clusters.view."},
 
 	// There are no swarm secret or config capabilities. A secret is a stack's sealed
 	// sub-resource, governed by stacks.view/stacks.edit and delivered on every engine
@@ -370,16 +370,16 @@ var All = []Def{
 	{SettingsView, "settings.view", "settings", ModeView, ScopeGlobal, "See identity provider and notification settings. Never secrets."},
 	{SettingsEdit, "settings.edit", "settings", ModeEdit, ScopeGlobal, "Add, edit and remove identity providers, role mappings and notification rules."},
 
-	{HostsView, "hosts.view", "hosts", ModeView, ScopeEnv, "See a host and its disk usage. Without this, a host is invisible — it does not appear in the switcher at all."},
-	// Enrolling a host is how a host comes to EXIST, so it cannot be scoped to one.
-	{HostsEdit, "hosts.edit", "hosts", ModeEdit, ScopeGlobal, "Rename hosts, and enroll or revoke agents. An agent is a new host Daffa can reach — so this is fleet-wide."},
+	{ClustersView, "clusters.view", "clusters", ModeView, ScopeEnv, "See a cluster and its disk usage. Without this, a cluster is invisible — it does not appear in the switcher at all."},
+	// Enrolling a cluster is how it comes to EXIST, so it cannot be scoped to one.
+	{ClustersEdit, "clusters.edit", "clusters", ModeEdit, ScopeGlobal, "Rename clusters, and enroll or revoke agents. An agent brings a new machine Daffa can reach — so this is fleet-wide."},
 
-	// The monitors argument again: NOT settings.* and NOT hosts.edit, because both are
+	// The monitors argument again: NOT settings.* and NOT clusters.edit, because both are
 	// ScopeGlobal and "the SRE who runs staging sets staging's log rotation" is the obvious
 	// case. ScopeEnv here; the FLEET default is still guarded globally, by the route's
 	// scope rather than the capability's — see /api/settings/logging in api/server.go.
-	{LoggingView, "logging.view", "logging", ModeView, ScopeEnv, "See the default container log driver and rotation for deploys — the fleet default and any host override."},
-	{LoggingEdit, "logging.edit", "logging", ModeEdit, ScopeEnv, "Set a host's container log defaults, applied to services at their next deploy. Changing the fleet-wide default requires this globally."},
+	{LoggingView, "logging.view", "logging", ModeView, ScopeEnv, "See the default container log driver and rotation for deploys — the fleet default and any cluster override."},
+	{LoggingEdit, "logging.edit", "logging", ModeEdit, ScopeEnv, "Set a cluster's container log defaults, applied to services at their next deploy. Changing the fleet-wide default requires this globally."},
 }
 
 // Lookups, built once; the registry is immutable after init.
@@ -393,7 +393,7 @@ var (
 	// existing admin would silently not have it.
 	Everything Set
 
-	// EnvScopable is every capability that MAY be granted on a single host. A scoped grant is
+	// EnvScopable is every capability that MAY be granted on a single cluster. A scoped grant is
 	// masked to this on the way in, belt and braces: even if a caller slipped a global-only bit
 	// past the check, it could not land in an environment's mask.
 	EnvScopable Set
@@ -632,5 +632,5 @@ func GlobalOnly(s Set) Set {
 }
 
 // IsGlobalOnly reports whether the set carries any capability that cannot be scoped to a single
-// host. Granting such a role on one host is refused — see Scope.
+// cluster. Granting such a role on one cluster is refused — see Scope.
 func IsGlobalOnly(s Set) bool { return !GlobalOnly(s).IsZero() }

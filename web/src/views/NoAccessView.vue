@@ -57,7 +57,7 @@ function checkAgain() {
 
       <p class="muted mt-5 text-sm leading-relaxed">
         Ask an administrator to grant you a role under
-        <span class="font-medium">Settings → Access → Users</span>. Tell them which host and what
+        <span class="font-medium">Settings → Access → Users</span>. Tell them which cluster and what
         you need to do on it — the roles are built out of capabilities, and they can hand you
         exactly those and nothing more.
       </p>

@@ -60,7 +60,7 @@ const filters: { value: Status | ''; label: string }[] = [
     <PageHeader
       title="Deployments"
       :count="deployments?.length"
-      description="Every attempt to change what is running, on every host — the place to start when somebody says “the site is down” and nobody knows which stack broke."
+      description="Every attempt to change what is running, on every cluster — the place to start when somebody says “the site is down” and nobody knows which stack broke."
     >
       <template #actions>
         <!-- Failed first among the filters, because that is the reason anybody opens this page. -->
@@ -77,9 +77,9 @@ const filters: { value: Status | ''; label: string }[] = [
         </div>
 
         <div class="w-40">
-          <label for="dep-host" class="sr-only">Host</label>
+          <label for="dep-host" class="sr-only">Cluster</label>
           <Select id="dep-host" v-model="host" select-class="py-1.5 text-xs">
-            <option value="">Every host</option>
+            <option value="">Every cluster</option>
             <option v-for="h in hosts" :key="h.id" :value="h.id">{{ h.name }}</option>
           </Select>
         </div>

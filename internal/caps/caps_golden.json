@@ -59,12 +59,12 @@
     "bit": 4,
     "scope": "env"
   },
-  "hosts.edit": {
+  "clusters.edit": {
     "ns": "admin",
     "bit": 7,
     "scope": "global"
   },
-  "hosts.view": {
+  "clusters.view": {
     "ns": "admin",
     "bit": 6,
     "scope": "env"

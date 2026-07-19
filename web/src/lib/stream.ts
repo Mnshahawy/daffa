@@ -59,7 +59,7 @@ export function streamServiceLogs(
   tail = 200,
 ): () => void {
   return subscribe<LogLine>(
-    `/api/environments/${env}/services/${id}/logs?tail=${tail}&follow=true`,
+    `/api/clusters/${env}/services/${id}/logs?tail=${tail}&follow=true`,
     'log',
     h,
   )
@@ -73,7 +73,7 @@ export function streamLogs(
   node?: string,
 ): () => void {
   return subscribe<LogLine>(
-    `/api/environments/${env}/containers/${id}/logs?tail=${tail}&follow=true${node ? `&node=${node}` : ''}`,
+    `/api/clusters/${env}/containers/${id}/logs?tail=${tail}&follow=true${node ? `&node=${node}` : ''}`,
     'log',
     h,
   )
@@ -82,7 +82,7 @@ export function streamLogs(
 // streamEvents is how lists stay fresh: the daemon tells us what changed, and we
 // invalidate exactly that instead of polling on a timer.
 export function streamEvents(env: string, h: Handlers<DockerEvent>): () => void {
-  return subscribe<DockerEvent>(`/api/environments/${env}/events`, 'docker', h)
+  return subscribe<DockerEvent>(`/api/clusters/${env}/events`, 'docker', h)
 }
 
 export interface StatsSample {
@@ -106,7 +106,7 @@ export function streamStats(
   node?: string,
 ): () => void {
   return subscribe<StatsSample>(
-    `/api/environments/${env}/containers/${id}/stats${node ? `?node=${node}` : ''}`,
+    `/api/clusters/${env}/containers/${id}/stats${node ? `?node=${node}` : ''}`,
     'stats',
     h,
   )
@@ -191,7 +191,7 @@ export function openExec(
   // The node is how a shell reaches a container on ANOTHER machine. The server holds a tunnel per
   // node, so this one parameter is the entire routing mechanism — no agent mesh, no gossip.
   const url =
-    `${proto}//${location.host}/api/environments/${env}/containers/${id}/exec` +
+    `${proto}//${location.host}/api/clusters/${env}/containers/${id}/exec` +
     `?rows=${rows}&cols=${cols}${node ? `&node=${node}` : ''}`
   const ws = new WebSocket(url)
   ws.binaryType = 'arraybuffer'

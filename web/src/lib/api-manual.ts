@@ -122,18 +122,18 @@ export const manualDaffa = {
     api.put<User>(`/api/users/${id}/roles`, { grants }),
 
   renameEnvironment: (id: string, name: string) =>
-    api.patch<{ id: string; name: string }>(`/api/environments/${id}`, { name }),
+    api.patch<{ id: string; name: string }>(`/api/clusters/${id}`, { name }),
   scaleService: (env: string, id: string, replicas: number) =>
-    api.post(`/api/environments/${env}/services/${id}/scale`, { replicas }),
+    api.post(`/api/clusters/${env}/services/${id}/scale`, { replicas }),
   removeNode: (env: string, id: string, force = false) =>
-    api.del(`/api/environments/${env}/nodes/${id}${force ? '?force=true' : ''}`),
+    api.del(`/api/clusters/${env}/nodes/${id}${force ? '?force=true' : ''}`),
 
   swarmInit: (env: string, advertiseAddr = '') =>
-    api.post<{ node_id: string }>(`/api/environments/${env}/swarm/init`, {
+    api.post<{ node_id: string }>(`/api/clusters/${env}/swarm/init`, {
       advertise_addr: advertiseAddr,
     }),
   swarmLeave: (env: string, force = false) =>
-    api.post(`/api/environments/${env}/swarm/leave${force ? '?force=true' : ''}`),
+    api.post(`/api/clusters/${env}/swarm/leave${force ? '?force=true' : ''}`),
   /**
    * A container is NODE-LOCAL: its id is unique per daemon, not per cluster, so on a Swarm every
    * one of these has to say which machine it means.
@@ -148,30 +148,30 @@ export const manualDaffa = {
    */
   container: (env: string, id: string, node?: string) =>
     api.get<Record<string, unknown>>(
-      `/api/environments/${env}/containers/${id}${nodeQuery(node)}`,
+      `/api/clusters/${env}/containers/${id}${nodeQuery(node)}`,
     ),
   action: (env: string, id: string, action: ContainerAction, force = false, node?: string) =>
     api.post<{ status: string }>(
-      `/api/environments/${env}/containers/${id}/${action}${nodeQuery(node, force ? { force: 'true' } : undefined)}`,
+      `/api/clusters/${env}/containers/${id}/${action}${nodeQuery(node, force ? { force: 'true' } : undefined)}`,
     ),
 
   // The client names the containers to sample — it is the only party that knows what
   // is actually on screen.
   stats: (env: string, ids: string[], node?: string) =>
     api.get<Stats[]>(
-      `/api/environments/${env}/stats${nodeQuery(node, { ids: ids.join(',') })}`,
+      `/api/clusters/${env}/stats${nodeQuery(node, { ids: ids.join(',') })}`,
     ),
 
   removeImage: (env: string, id: string, force = false) =>
-    api.del(`/api/environments/${env}/images/${encodeURIComponent(id)}${force ? '?force=true' : ''}`),
+    api.del(`/api/clusters/${env}/images/${encodeURIComponent(id)}${force ? '?force=true' : ''}`),
 
   removeVolume: (env: string, name: string, force = false) =>
     api.del(
-      `/api/environments/${env}/volumes/${encodeURIComponent(name)}${force ? '?force=true' : ''}`,
+      `/api/clusters/${env}/volumes/${encodeURIComponent(name)}${force ? '?force=true' : ''}`,
     ),
 
   removeNetwork: (env: string, id: string) =>
-    api.del(`/api/environments/${env}/networks/${encodeURIComponent(id)}`),
+    api.del(`/api/clusters/${env}/networks/${encodeURIComponent(id)}`),
 
   /**
    * Remove a stack AND what it deployed.
@@ -223,7 +223,7 @@ export const manualDaffa = {
     const q = new URLSearchParams({ range: params.range })
     if (params.container) q.set('container', params.container)
     if (params.stack) q.set('stack', params.stack)
-    return api.get<MetricPoint[]>(`/api/environments/${env}/metrics?${q}`)
+    return api.get<MetricPoint[]>(`/api/clusters/${env}/metrics?${q}`)
   },
 
 }

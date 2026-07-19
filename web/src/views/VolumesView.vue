@@ -135,7 +135,7 @@ async function onRemove(v: Volume) {
     <EmptyState
       v-else-if="!volumes?.length"
       icon="database"
-      title="No volumes on this host"
+      title="No volumes on this cluster"
       body="A volume is where a container's data outlives the container. Compose creates them on the first deploy; nothing here is deleted when a stack comes down."
     />
 

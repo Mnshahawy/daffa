@@ -1253,35 +1253,36 @@ export const daffa = {
   deleteToken: (id: string) => api.del<StatusResponse>(`/api/tokens/${id}`),
   allTokens: () => api.get<APIToken[]>('/api/tokens/all'),
   capabilities: () => api.get<CapabilityRegistry>('/api/capabilities'),
-  environments: () => api.get<Environment[]>('/api/environments'),
-  info: (env: string) => api.get<DockerInfo>(`/api/environments/${env}/info`),
-  df: (env: string) => api.get<DiskUsage>(`/api/environments/${env}/df`),
-  hostLogConfig: (env: string) => api.get<HostLogConfig>(`/api/environments/${env}/logging`),
-  saveHostLogConfig: (env: string, body: LogConfigRequest) =>
-    api.put<LogConfig>(`/api/environments/${env}/logging`, body),
-  clearHostLogConfig: (env: string) => api.del<void>(`/api/environments/${env}/logging`),
+  environments: () => api.get<Environment[]>('/api/clusters'),
+  info: (cluster: string) => api.get<DockerInfo>(`/api/clusters/${cluster}/info`),
+  df: (cluster: string) => api.get<DiskUsage>(`/api/clusters/${cluster}/df`),
+  hostLogConfig: (cluster: string) => api.get<HostLogConfig>(`/api/clusters/${cluster}/logging`),
+  saveHostLogConfig: (cluster: string, body: LogConfigRequest) =>
+    api.put<LogConfig>(`/api/clusters/${cluster}/logging`, body),
+  clearHostLogConfig: (cluster: string) => api.del<void>(`/api/clusters/${cluster}/logging`),
   agents: () => api.get<Agent[]>('/api/agents'),
   deleteAgent: (id: string) => api.del<StatusResponse>(`/api/agents/${id}`),
-  containers: (env: string) => api.get<Container[]>(`/api/environments/${env}/containers`),
-  services: (env: string) => api.get<Service[]>(`/api/environments/${env}/services`),
-  service: (env: string, id: string) => api.get<Service>(`/api/environments/${env}/services/${id}`),
-  tasks: (env: string, id: string) =>
-    api.get<Task[]>(`/api/environments/${env}/services/${id}/tasks`),
-  clusterNodes: (env: string) => api.get<ClusterNode[]>(`/api/environments/${env}/nodes`),
-  redeployService: (env: string, id: string) =>
-    api.post<StatusResponse>(`/api/environments/${env}/services/${id}/redeploy`),
-  rollbackService: (env: string, id: string) =>
-    api.post<StatusResponse>(`/api/environments/${env}/services/${id}/rollback`),
-  removeService: (env: string, id: string) =>
-    api.del<StatusResponse>(`/api/environments/${env}/services/${id}`),
-  updateNode: (env: string, id: string, body: NodeUpdateRequest) =>
-    api.patch<StatusResponse>(`/api/environments/${env}/nodes/${id}`, body),
-  joinTokens: (env: string) => api.get<JoinTokens>(`/api/environments/${env}/swarm/tokens`),
-  images: (env: string) => api.get<Image[]>(`/api/environments/${env}/images`),
-  networks: (env: string) => api.get<Network[]>(`/api/environments/${env}/networks`),
-  volumes: (env: string) => api.get<Volume[]>(`/api/environments/${env}/volumes`),
-  prune: (env: string, target: 'images' | 'containers' | 'networks' | 'volumes' | 'build-cache') =>
-    api.post<PruneResult>(`/api/environments/${env}/prune/${target}`),
+  containers: (cluster: string) => api.get<Container[]>(`/api/clusters/${cluster}/containers`),
+  services: (cluster: string) => api.get<Service[]>(`/api/clusters/${cluster}/services`),
+  service: (cluster: string, id: string) =>
+    api.get<Service>(`/api/clusters/${cluster}/services/${id}`),
+  tasks: (cluster: string, id: string) =>
+    api.get<Task[]>(`/api/clusters/${cluster}/services/${id}/tasks`),
+  clusterNodes: (cluster: string) => api.get<ClusterNode[]>(`/api/clusters/${cluster}/nodes`),
+  redeployService: (cluster: string, id: string) =>
+    api.post<StatusResponse>(`/api/clusters/${cluster}/services/${id}/redeploy`),
+  rollbackService: (cluster: string, id: string) =>
+    api.post<StatusResponse>(`/api/clusters/${cluster}/services/${id}/rollback`),
+  removeService: (cluster: string, id: string) =>
+    api.del<StatusResponse>(`/api/clusters/${cluster}/services/${id}`),
+  updateNode: (cluster: string, id: string, body: NodeUpdateRequest) =>
+    api.patch<StatusResponse>(`/api/clusters/${cluster}/nodes/${id}`, body),
+  joinTokens: (cluster: string) => api.get<JoinTokens>(`/api/clusters/${cluster}/swarm/tokens`),
+  images: (cluster: string) => api.get<Image[]>(`/api/clusters/${cluster}/images`),
+  networks: (cluster: string) => api.get<Network[]>(`/api/clusters/${cluster}/networks`),
+  volumes: (cluster: string) => api.get<Volume[]>(`/api/clusters/${cluster}/volumes`),
+  prune: (cluster: string, target: 'images' | 'containers' | 'networks' | 'volumes' | 'build-cache') =>
+    api.post<PruneResult>(`/api/clusters/${cluster}/prune/${target}`),
   stacks: () => api.get<Stack[]>('/api/stacks'),
   stack: (id: string) => api.get<StackDetail>(`/api/stacks/${id}`),
   stackDeployments: (id: string) => api.get<Deployment[]>(`/api/stacks/${id}/deployments`),

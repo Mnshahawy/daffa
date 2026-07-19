@@ -124,7 +124,7 @@ export const router = createRouter({
           path: 'host',
           name: 'host',
           component: () => import('./views/HostView.vue'),
-          meta: { cap: Cap.HostsView },
+          meta: { cap: Cap.ClustersView },
         },
         {
           path: 'backups',
@@ -188,7 +188,7 @@ export const router = createRouter({
               path: 'agents',
               name: 'settings-agents',
               component: () => import('./views/AgentsView.vue'),
-              meta: { cap: Cap.HostsEdit },
+              meta: { cap: Cap.ClustersEdit },
             },
             {
               path: 'git',
@@ -277,7 +277,7 @@ function landingFor(session: ReturnType<typeof useSession>): string {
     [Cap.ImagesView, 'images'],
     [Cap.VolumesView, 'volumes'],
     [Cap.NetworksView, 'networks'],
-    [Cap.HostsView, 'host'],
+    [Cap.ClustersView, 'host'],
     [Cap.AuditView, 'audit'],
     [Cap.UsersView, 'settings-users'],
     [Cap.RolesView, 'settings-roles'],

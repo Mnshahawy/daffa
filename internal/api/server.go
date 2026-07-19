@@ -174,7 +174,7 @@ func (s *Server) Stop() {
 // reviewer will read.
 //
 // A capability route must ALSO declare where it applies. Since grants can be scoped to a
-// host, "may this person do X" is only half a question — the other half is "here?".
+// cluster, "may this person do X" is only half a question — the other half is "here?".
 type route struct {
 	pattern string
 	cap     caps.Cap  // zero ⇒ see open
@@ -201,11 +201,11 @@ const (
 	scopeNone
 
 	// scopeGlobal: fleet-wide. Only a global grant satisfies it. Everything here is either
-	// administrative (users, roles, settings) or brings a host into existence (agents),
-	// neither of which means anything "on one host".
+	// administrative (users, roles, settings) or brings a cluster into existence (agents),
+	// neither of which means anything "on one cluster".
 	scopeGlobal
 
-	// scopeEnv: the environment is the {env} path value.
+	// scopeEnv: the environment is the {cluster} path value.
 	scopeEnv
 
 	// scopeStack: the {id} path value is a stack; its environment is the stack's. The
@@ -216,24 +216,24 @@ const (
 	// scopeJob: the {id} path value is a backup job; likewise.
 	scopeJob
 
-	// scopeDeployment: the {id} path value is a deployment. It has no host of its own — its
-	// STACK does — so the middleware walks deployment → stack → host and checks there. A
+	// scopeDeployment: the {id} path value is a deployment. It has no cluster of its own — its
+	// STACK does — so the middleware walks deployment → stack → cluster and checks there. A
 	// deployment id is a global handle, and serving one without that walk would hand every
 	// deploy log in the fleet to anyone who could guess an id.
 	scopeDeployment
 
-	// scopeMonitor: the {id} path value is a resource monitor. Its environment is the host it
-	// watches — and a monitor with NO host watches the whole fleet, so it takes the capability
+	// scopeMonitor: the {id} path value is a resource monitor. Its environment is the cluster it
+	// watches — and a monitor with NO cluster watches the whole fleet, so it takes the capability
 	// globally. See requireOnMonitor.
 	scopeMonitor
 
 	// scopeVolumeSource: the {id} path value is a volume source; its environment is the
-	// host it delivers to. Same resolve-check-stash as a stack.
+	// cluster it delivers to. Same resolve-check-stash as a stack.
 	scopeVolumeSource
 
-	// scopeAny: satisfied by the capability held globally OR on any host. Only for the
+	// scopeAny: satisfied by the capability held globally OR on any cluster. Only for the
 	// three fleet-wide read lists (git credentials, registries, storage) — they have no
-	// environment, they carry no secrets, and an operator scoped to one host still has to
+	// cluster, they carry no secrets, and an operator scoped to one cluster still has to
 	// pick one when creating a stack there.
 	scopeAny
 
@@ -313,82 +313,82 @@ func (s *Server) apiRoutes() []route {
 		//oapi:summary Read this API's OpenAPI 3.1 description
 		{pattern: "GET /api/openapi.json", scope: scopeNone, open: "the spec describes shapes, not data; any signed-in user or token holder may read what using the API would reveal anyway", h: s.handleOpenAPISpec},
 
-		// ── hosts ──────────────────────────────────────────────────────────────────
-		// Listing environments is hosts.view rather than open: without it the console has
-		// no host to point at, so a role that omits it coherently sees nothing at all.
-		// The list is filtered, not gated: each environment appears only to a caller who
-		// holds hosts.view there (or globally). Node status is probed live, per node.
-		//oapi:summary List the environments the caller may see, with live node status
+		// ── clusters ──────────────────────────────────────────────────────────────────
+		// Listing clusters is clusters.view rather than open: without it the console has
+		// no cluster to point at, so a role that omits it coherently sees nothing at all.
+		// The list is filtered, not gated: each cluster appears only to a caller who
+		// holds clusters.view there (or globally). Node status is probed live, per node.
+		//oapi:summary List the clusters the caller may see, with live node status
 		//oapi:enum Environment.status online|offline
 		//oapi:enum Node.status online|offline
 		//oapi:enum Node.kind local|agent
-		{pattern: "GET /api/environments", cap: caps.HostsView, scope: scopeAny, h: s.handleListEnvironments,
+		{pattern: "GET /api/clusters", cap: caps.ClustersView, scope: scopeAny, h: s.handleListEnvironments,
 			resp: []envView(nil), ts: "environments"},
 		//oapi:summary Read the Docker daemon's summary for one node
-		//oapi:query node string the target node id; required only when the environment has more than one
-		{pattern: "GET /api/environments/{env}/info", cap: caps.HostsView, scope: scopeEnv, h: s.handleEnvInfo,
+		//oapi:query node string the target node id; required only when the cluster has more than one
+		{pattern: "GET /api/clusters/{cluster}/info", cap: caps.ClustersView, scope: scopeEnv, h: s.handleEnvInfo,
 			resp: dockerx.Info{}, ts: "info"},
 		//oapi:summary Read one node's disk usage, split by what could reclaim it
-		//oapi:query node string the target node id; required only when the environment has more than one
-		{pattern: "GET /api/environments/{env}/df", cap: caps.HostsView, scope: scopeEnv, h: s.handleDiskUsage,
+		//oapi:query node string the target node id; required only when the cluster has more than one
+		{pattern: "GET /api/clusters/{cluster}/df", cap: caps.ClustersView, scope: scopeEnv, h: s.handleDiskUsage,
 			resp: dockerx.DiskUsage{}, ts: "df"},
-		// Names the host the way an operator thinks of it. Refused (409) when another host
+		// Names the cluster the way an operator thinks of it. Refused (409) when another cluster
 		// already answers to the name — two identical entries in the switcher is a way to
 		// restart the wrong machine.
-		//oapi:summary Rename a host
+		//oapi:summary Rename a cluster
 		//oapi:required RenameRequest.name
 		//oapi:example req {"name": "prod-eu"}
-		{pattern: "PATCH /api/environments/{env}", cap: caps.HostsEdit, scope: scopeGlobal, h: s.handleRenameEnvironment,
+		{pattern: "PATCH /api/clusters/{cluster}", cap: caps.ClustersEdit, scope: scopeGlobal, h: s.handleRenameEnvironment,
 			req: renameRequest{}, resp: renameResponse{}},
 
-		// A host's container log defaults. Env-scoped on purpose — the SRE who runs
+		// A cluster's container log defaults. Env-scoped on purpose — the SRE who runs
 		// staging sets staging's log rotation; the FLEET default is the /api/settings
 		// trio below with the same capability taken globally.
-		//oapi:summary Read this host's container log defaults
-		{pattern: "GET /api/environments/{env}/logging", cap: caps.LoggingView, scope: scopeEnv, h: s.handleGetEnvLogConfig,
+		//oapi:summary Read this cluster's container log defaults
+		{pattern: "GET /api/clusters/{cluster}/logging", cap: caps.LoggingView, scope: scopeEnv, h: s.handleGetEnvLogConfig,
 			resp: envLogConfigResponse{}, ts: "hostLogConfig"},
 		// Applied to services that do not declare their own logging:, at their next deploy.
-		//oapi:summary Set this host's container log override
+		//oapi:summary Set this cluster's container log override
 		//oapi:example req {"driver": "local", "opts": {"max-size": "20m"}}
-		{pattern: "PUT /api/environments/{env}/logging", cap: caps.LoggingEdit, scope: scopeEnv, h: s.handleSaveEnvLogConfig,
+		{pattern: "PUT /api/clusters/{cluster}/logging", cap: caps.LoggingEdit, scope: scopeEnv, h: s.handleSaveEnvLogConfig,
 			req: logConfigRequest{}, resp: store.LogConfig{}, ts: "saveHostLogConfig"},
-		// Deleting the override reverts the host to the fleet default. Idempotent.
-		//oapi:summary Revert this host to the fleet's log defaults
+		// Deleting the override reverts the cluster to the fleet default. Idempotent.
+		//oapi:summary Revert this cluster to the fleet's log defaults
 		//oapi:status 204
-		{pattern: "DELETE /api/environments/{env}/logging", cap: caps.LoggingEdit, scope: scopeEnv, h: s.handleDeleteEnvLogConfig,
+		{pattern: "DELETE /api/clusters/{cluster}/logging", cap: caps.LoggingEdit, scope: scopeEnv, h: s.handleDeleteEnvLogConfig,
 			ts: "clearHostLogConfig"},
 
-		// Agents ARE hosts: enrolling one adds a machine Daffa can reach, and the
-		// enrolment token is a credential. That is hosts.edit, not hosts.view.
+		// Enrolling an agent adds a machine Daffa can reach, and the enrolment token is a
+		// credential. That is clusters.edit, not clusters.view.
 		//oapi:summary List enrolled agents and their connection state
 		//oapi:enum Agent.status online|offline|pending
-		{pattern: "GET /api/agents", cap: caps.HostsEdit, scope: scopeGlobal, h: s.handleListAgents,
+		{pattern: "GET /api/agents", cap: caps.ClustersEdit, scope: scopeGlobal, h: s.handleListAgents,
 			resp: []agentView(nil), ts: "agents"},
 		// Declares an agent and mints its one-time join token. The token is in this
 		// response and never anywhere else — it exists only in the operator's clipboard.
 		//oapi:summary Create an agent and mint its one-time join token
 		//oapi:required CreateAgentRequest.name
 		//oapi:example req {"name": "prod-worker-2"}
-		{pattern: "POST /api/agents", cap: caps.HostsEdit, scope: scopeGlobal, h: s.handleCreateAgent,
+		{pattern: "POST /api/agents", cap: caps.ClustersEdit, scope: scopeGlobal, h: s.handleCreateAgent,
 			req: createAgentRequest{}, resp: newAgentResponse{}},
 		// Cuts the tunnel first, then forgets the agent — and the environment with it, if
 		// that node was the last one in it.
 		//oapi:summary Delete an agent and disconnect its tunnel
-		{pattern: "DELETE /api/agents/{id}", cap: caps.HostsEdit, scope: scopeGlobal, h: s.handleDeleteAgent,
+		{pattern: "DELETE /api/agents/{id}", cap: caps.ClustersEdit, scope: scopeGlobal, h: s.handleDeleteAgent,
 			resp: statusResponse{}, ts: "deleteAgent"},
 
 		// ── containers ─────────────────────────────────────────────────────────────
 		// Fans out across every node of a swarm; each row carries the node it lives on,
 		// because a container id is unique per DAEMON, not per cluster.
-		//oapi:summary List containers across every node of the environment
+		//oapi:summary List containers across every node of the cluster
 		//oapi:query all boolean include stopped containers (default true; pass false for running only)
-		{pattern: "GET /api/environments/{env}/containers", cap: caps.ContainersView, scope: scopeEnv, h: s.handleListContainers,
+		{pattern: "GET /api/clusters/{cluster}/containers", cap: caps.ContainersView, scope: scopeEnv, h: s.handleListContainers,
 			resp: []dockerx.Container(nil), ts: "containers"},
 		// The response is Docker's own inspect object, passed through — its shape follows
 		// the daemon's API version and is not stable enough to promise fields from.
 		//oapi:summary Inspect a container (raw Docker inspect payload)
-		//oapi:query node string the target node id; required only when the environment has more than one
-		{pattern: "GET /api/environments/{env}/containers/{id}", cap: caps.ContainersView, scope: scopeEnv, h: s.handleInspectContainer,
+		//oapi:query node string the target node id; required only when the cluster has more than one
+		{pattern: "GET /api/clusters/{cluster}/containers/{id}", cap: caps.ContainersView, scope: scopeEnv, h: s.handleInspectContainer,
 			resp: map[string]any{}},
 		// SSE. Each `log` event is one line; `end` marks a non-followed tail as complete,
 		// `error` carries a mid-stream failure.
@@ -396,36 +396,36 @@ func (s *Server) apiRoutes() []route {
 		//oapi:enum LogLine.stream stdout|stderr
 		//oapi:query tail integer how many lines of history to send first (default 200, max 10000)
 		//oapi:query follow boolean keep the stream open for new lines (default true)
-		//oapi:query node string the target node id; required only when the environment has more than one
+		//oapi:query node string the target node id; required only when the cluster has more than one
 		//oapi:produces text/event-stream
-		{pattern: "GET /api/environments/{env}/containers/{id}/logs", cap: caps.ContainersView, scope: scopeEnv, h: s.handleContainerLogs,
+		{pattern: "GET /api/clusters/{cluster}/containers/{id}/logs", cap: caps.ContainersView, scope: scopeEnv, h: s.handleContainerLogs,
 			resp: dockerx.LogLine{}},
 		// SSE. Follows ONE container — the one on screen — with a `stats` event per sample.
 		//oapi:summary Stream one container's resource usage as server-sent events
-		//oapi:query node string the target node id; required only when the environment has more than one
+		//oapi:query node string the target node id; required only when the cluster has more than one
 		//oapi:produces text/event-stream
-		{pattern: "GET /api/environments/{env}/containers/{id}/stats", cap: caps.ContainersView, scope: scopeEnv, h: s.handleStatsStream,
+		{pattern: "GET /api/clusters/{cluster}/containers/{id}/stats", cap: caps.ContainersView, scope: scopeEnv, h: s.handleStatsStream,
 			resp: dockerx.Stats{}},
 		// One sample per named container. The CLIENT says which — it knows what is on
 		// screen, and sampling a container nobody is looking at is work spent for nothing.
 		//oapi:summary Sample resource usage for the named containers, once
 		//oapi:query ids string comma-separated container ids to sample (at most 100)
-		//oapi:query node string the target node id; required only when the environment has more than one
-		{pattern: "GET /api/environments/{env}/stats", cap: caps.ContainersView, scope: scopeEnv, h: s.handleStatsSnapshot,
+		//oapi:query node string the target node id; required only when the cluster has more than one
+		{pattern: "GET /api/clusters/{cluster}/stats", cap: caps.ContainersView, scope: scopeEnv, h: s.handleStatsSnapshot,
 			resp: []dockerx.Stats(nil)},
 		// SSE. Relays the daemon's container/image/volume/network events as `docker`
 		// events, so the UI invalidates exactly what changed instead of polling.
 		//oapi:summary Stream the Docker daemon's events as server-sent events
-		//oapi:query node string the target node id; required only when the environment has more than one
+		//oapi:query node string the target node id; required only when the cluster has more than one
 		//oapi:produces text/event-stream
-		{pattern: "GET /api/environments/{env}/events", cap: caps.ContainersView, scope: scopeEnv, h: s.handleEvents,
+		{pattern: "GET /api/clusters/{cluster}/events", cap: caps.ContainersView, scope: scopeEnv, h: s.handleEvents,
 			resp: dockerEvent{}},
 		//oapi:summary Run a lifecycle action on a container
 		//oapi:path action enum=start|stop|restart|kill|pause|unpause|remove the lifecycle operation to perform
 		//oapi:query force boolean remove only: also remove a running container
-		//oapi:query node string the target node id; required only when the environment has more than one
+		//oapi:query node string the target node id; required only when the cluster has more than one
 		//oapi:noreq
-		{pattern: "POST /api/environments/{env}/containers/{id}/{action}", cap: caps.ContainersEdit, scope: scopeEnv, h: s.handleContainerAction,
+		{pattern: "POST /api/clusters/{cluster}/containers/{id}/{action}", cap: caps.ContainersEdit, scope: scopeEnv, h: s.handleContainerAction,
 			resp: statusResponse{}},
 
 		// Exec checks containers.exec INSIDE the handler, not here: a WebSocket upgrade is
@@ -436,25 +436,25 @@ func (s *Server) apiRoutes() []route {
 		// in both directions, text frames are control messages (resize). It cannot be
 		// described as a JSON operation, so it is documented here in prose only.
 		//oapi:summary Open an interactive shell in a container (WebSocket, not JSON)
-		{pattern: "GET /api/environments/{env}/containers/{id}/exec", scope: scopeNone, open: "a WebSocket upgrade is a GET; handleExec enforces containers.exec itself", h: s.handleExec},
+		{pattern: "GET /api/clusters/{cluster}/containers/{id}/exec", scope: scopeNone, open: "a WebSocket upgrade is a GET; handleExec enforces containers.exec itself", h: s.handleExec},
 
 		// ── images, networks, volumes ──────────────────────────────────────────────
 		// Swarm. Cluster-wide, every one of them: these handlers reach their daemon through
 		// s.control(), which is a manager, and never through s.node(). The node table is the
 		// exception that proves it — it is a JOIN of what the swarm says exists against what
-		// Daffa can reach, so it needs both, and it is gated on hosts.view because a node is
-		// what an environment is MADE of rather than a resource of its own.
+		// Daffa can reach, so it needs both, and it is gated on clusters.view because a node is
+		// what a cluster is MADE of rather than a resource of its own.
 		//oapi:summary List the cluster's services with live task counts
 		//oapi:enum Service.mode replicated|global
-		{pattern: "GET /api/environments/{env}/services", cap: caps.ServicesView, scope: scopeEnv, h: s.handleListServices,
+		{pattern: "GET /api/clusters/{cluster}/services", cap: caps.ServicesView, scope: scopeEnv, h: s.handleListServices,
 			resp: []dockerx.Service(nil), ts: "services"},
 		//oapi:summary Read one service
-		{pattern: "GET /api/environments/{env}/services/{id}", cap: caps.ServicesView, scope: scopeEnv, h: s.handleInspectService,
+		{pattern: "GET /api/clusters/{cluster}/services/{id}", cap: caps.ServicesView, scope: scopeEnv, h: s.handleInspectService,
 			resp: dockerx.Service{}, ts: "service"},
 		// The task is the point: a service saying 0/3 tells you nothing, the task's error
 		// says why. Each row also says whether Daffa can reach the node it runs on.
 		//oapi:summary List a service's tasks — the rows that say WHY a replica is not running
-		{pattern: "GET /api/environments/{env}/services/{id}/tasks", cap: caps.ServicesView, scope: scopeEnv, h: s.handleListTasks,
+		{pattern: "GET /api/clusters/{cluster}/services/{id}/tasks", cap: caps.ServicesView, scope: scopeEnv, h: s.handleListTasks,
 			resp: []taskView(nil), ts: "tasks"},
 		// SSE. The one cluster-wide stream Docker proxies for us: the manager collects from
 		// every node running a task, so it works with no agent on the workers at all.
@@ -462,11 +462,11 @@ func (s *Server) apiRoutes() []route {
 		//oapi:query tail integer how many lines of history to send first (default 200)
 		//oapi:query follow boolean keep the stream open for new lines (default false)
 		//oapi:produces text/event-stream
-		{pattern: "GET /api/environments/{env}/services/{id}/logs", cap: caps.ServicesView, scope: scopeEnv, h: s.handleServiceLogs,
+		{pattern: "GET /api/clusters/{cluster}/services/{id}/logs", cap: caps.ServicesView, scope: scopeEnv, h: s.handleServiceLogs,
 			resp: dockerx.LogLine{}},
-		//oapi:summary List the environment's machines: swarm membership joined against Daffa reachability
+		//oapi:summary List the cluster's machines: swarm membership joined against Daffa reachability
 		//oapi:enum ClusterNode.role manager|worker
-		{pattern: "GET /api/environments/{env}/nodes", cap: caps.HostsView, scope: scopeEnv, h: s.handleListNodes,
+		{pattern: "GET /api/clusters/{cluster}/nodes", cap: caps.ClustersView, scope: scopeEnv, h: s.handleListNodes,
 			resp: []clusterNodeView(nil), ts: "clusterNodes"},
 
 		// `replicas` is a pointer on purpose: scaling to 0 is a real instruction, a missing
@@ -474,24 +474,24 @@ func (s *Server) apiRoutes() []route {
 		//oapi:summary Scale a service to an exact replica count
 		//oapi:required ScaleRequest.replicas
 		//oapi:example req {"replicas": 3}
-		{pattern: "POST /api/environments/{env}/services/{id}/scale", cap: caps.ServicesEdit, scope: scopeEnv, h: s.handleScaleService,
+		{pattern: "POST /api/clusters/{cluster}/services/{id}/scale", cap: caps.ServicesEdit, scope: scopeEnv, h: s.handleScaleService,
 			req: scaleRequest{}, resp: statusResponse{}},
 		// `docker service update --force`: recreate every task, re-resolving the image
 		// against the registry — the only way to get new bytes for a floating tag without
 		// editing anything.
 		//oapi:summary Force-redeploy a service, re-resolving its image
 		//oapi:noreq
-		{pattern: "POST /api/environments/{env}/services/{id}/redeploy", cap: caps.ServicesEdit, scope: scopeEnv, h: s.handleRedeployService,
+		{pattern: "POST /api/clusters/{cluster}/services/{id}/redeploy", cap: caps.ServicesEdit, scope: scopeEnv, h: s.handleRedeployService,
 			resp: statusResponse{}, ts: "redeployService"},
 		// Puts back the service's PREVIOUS spec, which swarm keeps for exactly this. Rolls
 		// back ONE service — a stack rollback re-applies a stored compose file and lives on
 		// the deployment.
 		//oapi:summary Roll a service back to its previous spec
 		//oapi:noreq
-		{pattern: "POST /api/environments/{env}/services/{id}/rollback", cap: caps.ServicesEdit, scope: scopeEnv, h: s.handleRollbackService,
+		{pattern: "POST /api/clusters/{cluster}/services/{id}/rollback", cap: caps.ServicesEdit, scope: scopeEnv, h: s.handleRollbackService,
 			resp: statusResponse{}, ts: "rollbackService"},
 		//oapi:summary Remove a service from the cluster
-		{pattern: "DELETE /api/environments/{env}/services/{id}", cap: caps.ServicesEdit, scope: scopeEnv, h: s.handleRemoveService,
+		{pattern: "DELETE /api/clusters/{cluster}/services/{id}", cap: caps.ServicesEdit, scope: scopeEnv, h: s.handleRemoveService,
 			resp: statusResponse{}, ts: "removeService"},
 
 		// Node operations are their own capability. Draining a machine moves EVERYBODY's workload;
@@ -502,14 +502,14 @@ func (s *Server) apiRoutes() []route {
 		//oapi:summary Change a machine's availability or role in the swarm
 		//oapi:path id the SWARM node id, not Daffa's — the node table sends both
 		//oapi:example req {"availability": "drain"}
-		{pattern: "PATCH /api/environments/{env}/nodes/{id}", cap: caps.NodesEdit, scope: scopeEnv, h: s.handleUpdateNode,
+		{pattern: "PATCH /api/clusters/{cluster}/nodes/{id}", cap: caps.NodesEdit, scope: scopeEnv, h: s.handleUpdateNode,
 			req: nodeUpdateRequest{}, resp: statusResponse{}, ts: "updateNode"},
 		// Removes the swarm's RECORD of a machine; it does not reach the machine itself
 		// (`docker swarm leave` is what a node runs on itself). For the one already gone.
 		//oapi:summary Remove a machine from the swarm's records
 		//oapi:path id the SWARM node id, not Daffa's
 		//oapi:query force boolean remove even if the swarm still believes the node is active
-		{pattern: "DELETE /api/environments/{env}/nodes/{id}", cap: caps.NodesEdit, scope: scopeEnv, h: s.handleRemoveNode,
+		{pattern: "DELETE /api/clusters/{cluster}/nodes/{id}", cap: caps.NodesEdit, scope: scopeEnv, h: s.handleRemoveNode,
 			resp: statusResponse{}},
 
 		// Swarm secrets and configs are retired: a secret is a STACK's sealed sub-resource now
@@ -520,58 +520,58 @@ func (s *Server) apiRoutes() []route {
 		// a machine to the cluster — so they are served by exactly one route, which requires
 		// swarm.edit, and they appear in no other payload anywhere.
 		//oapi:summary Turn a standalone host into a single-node Swarm
-		//oapi:query node string the target node id; required only when the environment has more than one
+		//oapi:query node string the target node id; required only when the cluster has more than one
 		//oapi:example req {"advertise_addr": "10.0.0.5"}
-		{pattern: "POST /api/environments/{env}/swarm/init", cap: caps.SwarmEdit, scope: scopeEnv, h: s.handleSwarmInit,
+		{pattern: "POST /api/clusters/{cluster}/swarm/init", cap: caps.SwarmEdit, scope: scopeEnv, h: s.handleSwarmInit,
 			req: swarmInitRequest{}, resp: swarmInitResponse{}},
 		// Reading these is reading a credential, and it is audited as such.
 		//oapi:summary Read the swarm's join tokens — the credentials that admit a machine
-		{pattern: "GET /api/environments/{env}/swarm/tokens", cap: caps.SwarmEdit, scope: scopeEnv, h: s.handleJoinTokens,
+		{pattern: "GET /api/clusters/{cluster}/swarm/tokens", cap: caps.SwarmEdit, scope: scopeEnv, h: s.handleJoinTokens,
 			resp: dockerx.JoinTokens{}, ts: "joinTokens"},
 		// For the last manager this dissolves the cluster — the raft store goes, and with
 		// it every service definition — which is why Docker demands force, and so do we.
 		//oapi:summary Take a node out of its Swarm
 		//oapi:query force boolean required for a manager; the last manager dissolves the cluster
-		//oapi:query node string the target node id; required only when the environment has more than one
+		//oapi:query node string the target node id; required only when the cluster has more than one
 		//oapi:noreq
-		{pattern: "POST /api/environments/{env}/swarm/leave", cap: caps.SwarmEdit, scope: scopeEnv, h: s.handleSwarmLeave,
+		{pattern: "POST /api/clusters/{cluster}/swarm/leave", cap: caps.SwarmEdit, scope: scopeEnv, h: s.handleSwarmLeave,
 			resp: statusResponse{}},
 
 		// Fans out across every node; each row says whether a container (running or
 		// stopped) still pins the image, because "can I delete this?" is the only question
 		// anyone opens the list to answer.
 		//oapi:summary List images across every node, biggest first, with in-use flags
-		{pattern: "GET /api/environments/{env}/images", cap: caps.ImagesView, scope: scopeEnv, h: s.handleListImages,
+		{pattern: "GET /api/clusters/{cluster}/images", cap: caps.ImagesView, scope: scopeEnv, h: s.handleListImages,
 			resp: []dockerx.Image(nil), ts: "images"},
 		//oapi:summary Remove an image from one node
 		//oapi:query force boolean remove even if tagged in multiple repositories
-		//oapi:query node string the target node id; required only when the environment has more than one
-		{pattern: "DELETE /api/environments/{env}/images/{id}", cap: caps.ImagesEdit, scope: scopeEnv, h: s.handleRemoveImage,
+		//oapi:query node string the target node id; required only when the cluster has more than one
+		{pattern: "DELETE /api/clusters/{cluster}/images/{id}", cap: caps.ImagesEdit, scope: scopeEnv, h: s.handleRemoveImage,
 			resp: statusResponse{}},
 		// Fans out and deduplicates by id: an overlay network is cluster-wide and every
 		// node reports it, but nobody needs to see it three times.
 		//oapi:summary List networks across every node, overlays deduplicated
-		{pattern: "GET /api/environments/{env}/networks", cap: caps.NetworksView, scope: scopeEnv, h: s.handleListNetworks,
+		{pattern: "GET /api/clusters/{cluster}/networks", cap: caps.NetworksView, scope: scopeEnv, h: s.handleListNetworks,
 			resp: []dockerx.Network(nil), ts: "networks"},
 		// bridge, host and none are Docker's own — system networks, marked as such in the
 		// list and refused here with a 400 (code system_network), never forwarded to the
 		// daemon.
 		//oapi:summary Remove a network from one node
-		//oapi:query node string the target node id; required only when the environment has more than one
-		{pattern: "DELETE /api/environments/{env}/networks/{id}", cap: caps.NetworksEdit, scope: scopeEnv, h: s.handleRemoveNetwork,
+		//oapi:query node string the target node id; required only when the cluster has more than one
+		{pattern: "DELETE /api/clusters/{cluster}/networks/{id}", cap: caps.NetworksEdit, scope: scopeEnv, h: s.handleRemoveNetwork,
 			resp: statusResponse{}},
 		// Each volume is annotated with the containers that mount it — the archaeology you
 		// otherwise do by hand before daring to delete one. Orphans sort first.
 		//oapi:summary List volumes across every node, with the containers that mount them
-		{pattern: "GET /api/environments/{env}/volumes", cap: caps.VolumesView, scope: scopeEnv, h: s.handleListVolumes,
+		{pattern: "GET /api/clusters/{cluster}/volumes", cap: caps.VolumesView, scope: scopeEnv, h: s.handleListVolumes,
 			resp: []dockerx.Volume(nil), ts: "volumes"},
 		// Refused (409) while anything Daffa manages depends on the volume — a volume
 		// source that would rewrite it on the next sync, or a backup job that would fail
 		// every night from then on.
 		//oapi:summary Remove a volume from one node
 		//oapi:query force boolean pass Docker's force flag through
-		//oapi:query node string the target node id; required only when the environment has more than one
-		{pattern: "DELETE /api/environments/{env}/volumes/{name}", cap: caps.VolumesEdit, scope: scopeEnv, h: s.handleRemoveVolume,
+		//oapi:query node string the target node id; required only when the cluster has more than one
+		{pattern: "DELETE /api/clusters/{cluster}/volumes/{name}", cap: caps.VolumesEdit, scope: scopeEnv, h: s.handleRemoveVolume,
 			resp: statusResponse{}},
 
 		// Prune is host-wide, bulk and irreversible. Removing one image and sweeping every
@@ -581,9 +581,9 @@ func (s *Server) apiRoutes() []route {
 		//oapi:summary Prune unused resources on one node, in bulk
 		//oapi:path target enum=images|containers|networks|volumes|build-cache what to sweep
 		//oapi:enum PruneResult.target images|containers|networks|volumes|build-cache
-		//oapi:query node string the target node id; required only when the environment has more than one
+		//oapi:query node string the target node id; required only when the cluster has more than one
 		//oapi:noreq
-		{pattern: "POST /api/environments/{env}/prune/{target}", cap: caps.SystemPrune, scope: scopeEnv, h: s.handlePrune,
+		{pattern: "POST /api/clusters/{cluster}/prune/{target}", cap: caps.SystemPrune, scope: scopeEnv, h: s.handlePrune,
 			resp: dockerx.PruneResult{}, ts: "prune"},
 
 		// ── stacks ─────────────────────────────────────────────────────────────────
@@ -1143,7 +1143,7 @@ func (s *Server) apiRoutes() []route {
 		//oapi:query range string one of 1h, 6h, 24h, 7d (default 1h)
 		//oapi:query container string narrow to one container name
 		//oapi:query stack string narrow to one stack
-		{pattern: "GET /api/environments/{env}/metrics", cap: caps.ContainersView, scope: scopeEnv, h: s.handleSeries,
+		{pattern: "GET /api/clusters/{cluster}/metrics", cap: caps.ContainersView, scope: scopeEnv, h: s.handleSeries,
 			resp: []store.Point(nil)},
 
 		// A host-scoped holder sees the monitors pinned to their hosts — not the
@@ -1187,7 +1187,7 @@ func (s *Server) apiRoutes() []route {
 		// ── container log defaults ─────────────────────────────────────────────────
 		// The fleet default is one setting, so it takes logging.* globally (the
 		// monitoring-settings precedent); a host's override takes it at that host —
-		// see the /api/environments/{env}/logging trio.
+		// see the /api/clusters/{cluster}/logging trio.
 		//oapi:summary Read the fleet-wide container log defaults
 		{pattern: "GET /api/settings/logging", cap: caps.LoggingView, scope: scopeGlobal, h: s.handleGetGlobalLogConfig,
 			resp: (*store.LogConfig)(nil), ts: "globalLogConfig"},
@@ -1445,7 +1445,7 @@ func (s *Server) guard(rt route) http.Handler {
 	}
 }
 
-func envFromPath(r *http.Request) string { return r.PathValue("env") }
+func envFromPath(r *http.Request) string { return r.PathValue("cluster") }
 
 // visible answers "which hosts may this person exercise c on, and is it fleet-wide?" — the
 // two arguments every filtered list query needs.
@@ -1848,7 +1848,7 @@ func (s *Server) recordDenial(r *http.Request, u *store.User, reason string) {
 	case strings.HasSuffix(r.URL.Path, "/exec"):
 		action = "container.exec"
 	case r.Method == http.MethodDelete:
-		// /api/environments/{env}/images/{id} → images
+		// /api/clusters/{cluster}/images/{id} → images
 		action = resourceFromPath(r.URL.Path) + ".remove"
 	default:
 		action = r.Method + " " + r.URL.Path
@@ -1860,7 +1860,7 @@ func (s *Server) recordDenial(r *http.Request, u *store.User, reason string) {
 	// reconstructing the role table as it was at the time.
 	s.audit(r.Context(), store.AuditEntry{
 		UserID: u.ID, UserLabel: u.Label(),
-		EnvID:   r.PathValue("env"),
+		EnvID:   r.PathValue("cluster"),
 		Action:  action,
 		Target:  target,
 		Outcome: "denied",
@@ -1872,10 +1872,10 @@ func (s *Server) recordDenial(r *http.Request, u *store.User, reason string) {
 	})
 }
 
-// resourceFromPath pulls the collection out of /api/environments/{env}/<collection>/…
+// resourceFromPath pulls the collection out of /api/clusters/{cluster}/<collection>/…
 func resourceFromPath(path string) string {
 	parts := strings.Split(strings.Trim(path, "/"), "/")
-	// api / environments / {env} / <collection> / …
+	// api / environments / {cluster} / <collection> / …
 	if len(parts) >= 4 {
 		return strings.TrimSuffix(parts[3], "s")
 	}

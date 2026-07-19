@@ -152,7 +152,7 @@ async function showTokens() {
 // which makes the damage quiet as well as total — so the dialog says what it destroys rather than
 // asking whether you are sure.
 async function leaveSwarm() {
-  const name = host.value?.name ?? 'this environment'
+  const name = host.value?.name ?? 'this cluster'
   const ok = await confirm({
     title: `Dissolve the Swarm on ${name}?`,
     body:
@@ -263,7 +263,7 @@ const instruments = computed<{ label: string; value: string; of?: string }[]>(()
 <template>
   <div>
     <PageHeader
-      title="Environment"
+      title="Cluster"
       :description="
         info ? `${info.name} · Docker ${info.server_version} · ${info.os} (${info.arch})` : undefined
       "
@@ -289,7 +289,7 @@ const instruments = computed<{ label: string; value: string; of?: string }[]>(()
           <!-- Standalone: offer to become one. -->
           <template v-if="!host?.swarm">
             <p class="muted mb-3 text-sm">
-              This environment is a standalone host. Making it a Swarm gives it services, tasks,
+              This cluster is a standalone host. Making it a Swarm gives it services, tasks,
               secrets and configs, and lets you deploy Swarm stacks to it. Nothing that is already
               running is touched.
             </p>
@@ -549,7 +549,7 @@ const instruments = computed<{ label: string; value: string; of?: string }[]>(()
           </span>
         </div>
         <p class="muted mb-4 max-w-[70ch] text-sm leading-relaxed">
-          The log driver and rotation injected into stacks deployed to this host, for
+          The log driver and rotation injected into stacks deployed to this cluster, for
           services that don't declare their own
           <span class="font-mono text-xs">logging:</span>. Set here, it overrides the fleet
           default from Settings; applied at each service's next deploy.
@@ -565,7 +565,7 @@ const instruments = computed<{ label: string; value: string; of?: string }[]>(()
           @clear="clearLogConfig"
         />
         <p v-if="logConfig && !logConfig.override && logConfig.global" class="subtle mt-3 text-xs">
-          Showing the global default — saving makes it this host's own override.
+          Showing the global default — saving makes it this cluster's own override.
         </p>
       </div>
 

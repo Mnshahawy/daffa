@@ -378,7 +378,7 @@ const create = useMutation({
     <EmptyState
       v-else-if="!mine.length && !adding"
       icon="layers"
-      title="No stacks on this host yet"
+      title="No stacks on this cluster yet"
       body="A stack is a set of services deployed together from one compose file. Point Daffa at a git repository and it will keep the repository as the source of truth."
     >
       <template #action>

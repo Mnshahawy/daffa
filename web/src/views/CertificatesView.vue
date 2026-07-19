@@ -631,7 +631,7 @@ async function onRemoveKey(k: EncryptionKey) {
           <div>
             <label for="dlv-env" class="mb-1.5 block text-sm font-medium">Host</label>
             <Select id="dlv-env" v-model="deliveryForm.env_id" required>
-              <option value="" disabled>Choose a host…</option>
+              <option value="" disabled>Choose a cluster…</option>
               <option v-for="e in envs" :key="e.id" :value="e.id">{{ e.name }}</option>
             </Select>
           </div>

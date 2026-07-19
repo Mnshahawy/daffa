@@ -335,7 +335,7 @@ function webhookUrl(id: string): string {
             required
             :disabled="!!editing"
           >
-            <option value="" disabled>Choose a host…</option>
+            <option value="" disabled>Choose a cluster…</option>
             <option v-for="e in editing ? (environments ?? []) : editableEnvs" :key="e.id" :value="e.id">
               {{ e.name }}
             </option>

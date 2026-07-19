@@ -202,7 +202,7 @@ func RouteMetas() ([]RouteMeta, error) {
 }
 
 // operationID is the fallback identity for routes with no ts: name — the pattern,
-// camel-cased: GET /api/environments/{env}/logging → getEnvironmentsByEnvLogging.
+// camel-cased: GET /api/clusters/{cluster}/logging → getEnvironmentsByEnvLogging.
 // TSName wins when set, so the spec and the client share one identity and cannot drift.
 func operationID(method, path string) string {
 	var b strings.Builder

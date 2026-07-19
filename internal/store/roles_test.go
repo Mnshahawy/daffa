@@ -95,14 +95,14 @@ func TestSeededRolesGrantWhatTheyClaim(t *testing.T) {
 				"registries.view", "gitcreds.view",
 				"backups.view", "backups.edit", "storage.view",
 				"monitors.view", "monitors.edit", "audit.view",
-				"hosts.view",
+				"clusters.view",
 			}},
 			{"Viewer", []string{
 				"containers.view", "images.view", "networks.view", "volumes.view",
 				"stacks.view",
 				"backups.view", "storage.view",
 				"monitors.view", "audit.view",
-				"hosts.view",
+				"clusters.view",
 			}},
 		} {
 			role, err := s.RoleByName(ctx, c.role)

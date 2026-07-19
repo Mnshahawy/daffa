@@ -28,7 +28,7 @@ const props = defineProps<{
   id?: string
   required?: boolean
   disabled?: boolean
-  /** Shown greyed when nothing is selected yet — the empty state of a "Choose a host…" select. */
+  /** Shown greyed when nothing is selected yet — the empty state of a "Choose a cluster…" select. */
   placeholder?: string
   /** Classes for the trigger button itself: density/type, e.g. `py-1 text-xs` for a compact one. */
   selectClass?: string

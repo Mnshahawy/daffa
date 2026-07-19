@@ -21,7 +21,7 @@
       "name": "capability registry"
     },
     {
-      "name": "hosts"
+      "name": "clusters"
     },
     {
       "name": "containers"
@@ -480,15 +480,15 @@
         }
       }
     },
-    "/api/environments": {
+    "/api/clusters": {
       "get": {
         "operationId": "environments",
         "tags": [
-          "hosts"
+          "clusters"
         ],
-        "summary": "List the environments the caller may see, with live node status",
-        "description": "Listing environments is hosts.view rather than open: without it the console has no host to point at, so a role that omits it coherently sees nothing at all. The list is filtered, not gated: each environment appears only to a caller who holds hosts.view there (or globally). Node status is probed live, per node.\n\nSatisfied by the capability held globally or on any host; list responses are filtered to what the caller may see.",
-        "x-daffa-capability": "hosts.view",
+        "summary": "List the clusters the caller may see, with live node status",
+        "description": "Listing clusters is clusters.view rather than open: without it the console has no cluster to point at, so a role that omits it coherently sees nothing at all. The list is filtered, not gated: each cluster appears only to a caller who holds clusters.view there (or globally). Node status is probed live, per node.\n\nSatisfied by the capability held globally or on any host; list responses are filtered to what the caller may see.",
+        "x-daffa-capability": "clusters.view",
         "x-daffa-scope": "any",
         "responses": {
           "200": {
@@ -537,22 +537,22 @@
         }
       }
     },
-    "/api/environments/{env}/info": {
+    "/api/clusters/{cluster}/info": {
       "get": {
         "operationId": "info",
         "tags": [
-          "hosts"
+          "clusters"
         ],
         "summary": "Read the Docker daemon's summary for one node",
         "description": "Requires the capability at the host named in the path.",
-        "x-daffa-capability": "hosts.view",
+        "x-daffa-capability": "clusters.view",
         "x-daffa-scope": "env",
         "parameters": [
           {
             "name": "node",
             "in": "query",
             "required": false,
-            "description": "the target node id; required only when the environment has more than one",
+            "description": "the target node id; required only when the cluster has more than one",
             "schema": {
               "type": "string"
             }
@@ -612,22 +612,22 @@
         }
       }
     },
-    "/api/environments/{env}/df": {
+    "/api/clusters/{cluster}/df": {
       "get": {
         "operationId": "df",
         "tags": [
-          "hosts"
+          "clusters"
         ],
         "summary": "Read one node's disk usage, split by what could reclaim it",
         "description": "Requires the capability at the host named in the path.",
-        "x-daffa-capability": "hosts.view",
+        "x-daffa-capability": "clusters.view",
         "x-daffa-scope": "env",
         "parameters": [
           {
             "name": "node",
             "in": "query",
             "required": false,
-            "description": "the target node id; required only when the environment has more than one",
+            "description": "the target node id; required only when the cluster has more than one",
             "schema": {
               "type": "string"
             }
@@ -687,15 +687,15 @@
         }
       }
     },
-    "/api/environments/{env}": {
+    "/api/clusters/{cluster}": {
       "patch": {
-        "operationId": "patchEnvironmentsByEnv",
+        "operationId": "patchClustersByCluster",
         "tags": [
-          "hosts"
+          "clusters"
         ],
-        "summary": "Rename a host",
-        "description": "Names the host the way an operator thinks of it. Refused (409) when another host already answers to the name — two identical entries in the switcher is a way to restart the wrong machine.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
-        "x-daffa-capability": "hosts.edit",
+        "summary": "Rename a cluster",
+        "description": "Names the cluster the way an operator thinks of it. Refused (409) when another cluster already answers to the name — two identical entries in the switcher is a way to restart the wrong machine.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "x-daffa-capability": "clusters.edit",
         "x-daffa-scope": "global",
         "requestBody": {
           "description": "Request bodies are capped at 1 MiB; unknown fields are refused.",
@@ -775,14 +775,14 @@
         }
       }
     },
-    "/api/environments/{env}/logging": {
+    "/api/clusters/{cluster}/logging": {
       "get": {
         "operationId": "hostLogConfig",
         "tags": [
-          "hosts"
+          "clusters"
         ],
-        "summary": "Read this host's container log defaults",
-        "description": "A host's container log defaults. Env-scoped on purpose — the SRE who runs staging sets staging's log rotation; the FLEET default is the /api/settings trio below with the same capability taken globally.\n\nRequires the capability at the host named in the path.",
+        "summary": "Read this cluster's container log defaults",
+        "description": "A cluster's container log defaults. Env-scoped on purpose — the SRE who runs staging sets staging's log rotation; the FLEET default is the /api/settings trio below with the same capability taken globally.\n\nRequires the capability at the host named in the path.",
         "x-daffa-capability": "logging.view",
         "x-daffa-scope": "env",
         "responses": {
@@ -841,9 +841,9 @@
       "put": {
         "operationId": "saveHostLogConfig",
         "tags": [
-          "hosts"
+          "clusters"
         ],
-        "summary": "Set this host's container log override",
+        "summary": "Set this cluster's container log override",
         "description": "Applied to services that do not declare their own logging:, at their next deploy.\n\nRequires the capability at the host named in the path.",
         "x-daffa-capability": "logging.edit",
         "x-daffa-scope": "env",
@@ -930,10 +930,10 @@
       "delete": {
         "operationId": "clearHostLogConfig",
         "tags": [
-          "hosts"
+          "clusters"
         ],
-        "summary": "Revert this host to the fleet's log defaults",
-        "description": "Deleting the override reverts the host to the fleet default. Idempotent.\n\nRequires the capability at the host named in the path.",
+        "summary": "Revert this cluster to the fleet's log defaults",
+        "description": "Deleting the override reverts the cluster to the fleet default. Idempotent.\n\nRequires the capability at the host named in the path.",
         "x-daffa-capability": "logging.edit",
         "x-daffa-scope": "env",
         "responses": {
@@ -987,11 +987,11 @@
       "get": {
         "operationId": "agents",
         "tags": [
-          "hosts"
+          "clusters"
         ],
         "summary": "List enrolled agents and their connection state",
-        "description": "Agents ARE hosts: enrolling one adds a machine Daffa can reach, and the enrolment token is a credential. That is hosts.edit, not hosts.view.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
-        "x-daffa-capability": "hosts.edit",
+        "description": "Enrolling an agent adds a machine Daffa can reach, and the enrolment token is a credential. That is clusters.edit, not clusters.view.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "x-daffa-capability": "clusters.edit",
         "x-daffa-scope": "global",
         "responses": {
           "200": {
@@ -1042,11 +1042,11 @@
       "post": {
         "operationId": "postAgents",
         "tags": [
-          "hosts"
+          "clusters"
         ],
         "summary": "Create an agent and mint its one-time join token",
         "description": "Declares an agent and mints its one-time join token. The token is in this response and never anywhere else — it exists only in the operator's clipboard.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
-        "x-daffa-capability": "hosts.edit",
+        "x-daffa-capability": "clusters.edit",
         "x-daffa-scope": "global",
         "requestBody": {
           "description": "Request bodies are capped at 1 MiB; unknown fields are refused.",
@@ -1120,11 +1120,11 @@
       "delete": {
         "operationId": "deleteAgent",
         "tags": [
-          "hosts"
+          "clusters"
         ],
         "summary": "Delete an agent and disconnect its tunnel",
         "description": "Cuts the tunnel first, then forgets the agent — and the environment with it, if that node was the last one in it.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
-        "x-daffa-capability": "hosts.edit",
+        "x-daffa-capability": "clusters.edit",
         "x-daffa-scope": "global",
         "responses": {
           "200": {
@@ -1180,13 +1180,13 @@
         }
       }
     },
-    "/api/environments/{env}/containers": {
+    "/api/clusters/{cluster}/containers": {
       "get": {
         "operationId": "containers",
         "tags": [
           "containers"
         ],
-        "summary": "List containers across every node of the environment",
+        "summary": "List containers across every node of the cluster",
         "description": "Fans out across every node of a swarm; each row carries the node it lives on, because a container id is unique per DAEMON, not per cluster.\n\nRequires the capability at the host named in the path.",
         "x-daffa-capability": "containers.view",
         "x-daffa-scope": "env",
@@ -1258,9 +1258,9 @@
         }
       }
     },
-    "/api/environments/{env}/containers/{id}": {
+    "/api/clusters/{cluster}/containers/{id}": {
       "get": {
-        "operationId": "getEnvironmentsByEnvContainersById",
+        "operationId": "getClustersByClusterContainersById",
         "tags": [
           "containers"
         ],
@@ -1273,7 +1273,7 @@
             "name": "node",
             "in": "query",
             "required": false,
-            "description": "the target node id; required only when the environment has more than one",
+            "description": "the target node id; required only when the cluster has more than one",
             "schema": {
               "type": "string"
             }
@@ -1333,9 +1333,9 @@
         }
       }
     },
-    "/api/environments/{env}/containers/{id}/logs": {
+    "/api/clusters/{cluster}/containers/{id}/logs": {
       "get": {
-        "operationId": "getEnvironmentsByEnvContainersByIdLogs",
+        "operationId": "getClustersByClusterContainersByIdLogs",
         "tags": [
           "containers"
         ],
@@ -1366,7 +1366,7 @@
             "name": "node",
             "in": "query",
             "required": false,
-            "description": "the target node id; required only when the environment has more than one",
+            "description": "the target node id; required only when the cluster has more than one",
             "schema": {
               "type": "string"
             }
@@ -1426,9 +1426,9 @@
         }
       }
     },
-    "/api/environments/{env}/containers/{id}/stats": {
+    "/api/clusters/{cluster}/containers/{id}/stats": {
       "get": {
-        "operationId": "getEnvironmentsByEnvContainersByIdStats",
+        "operationId": "getClustersByClusterContainersByIdStats",
         "tags": [
           "containers"
         ],
@@ -1441,7 +1441,7 @@
             "name": "node",
             "in": "query",
             "required": false,
-            "description": "the target node id; required only when the environment has more than one",
+            "description": "the target node id; required only when the cluster has more than one",
             "schema": {
               "type": "string"
             }
@@ -1501,9 +1501,9 @@
         }
       }
     },
-    "/api/environments/{env}/stats": {
+    "/api/clusters/{cluster}/stats": {
       "get": {
-        "operationId": "getEnvironmentsByEnvStats",
+        "operationId": "getClustersByClusterStats",
         "tags": [
           "containers"
         ],
@@ -1525,7 +1525,7 @@
             "name": "node",
             "in": "query",
             "required": false,
-            "description": "the target node id; required only when the environment has more than one",
+            "description": "the target node id; required only when the cluster has more than one",
             "schema": {
               "type": "string"
             }
@@ -1588,9 +1588,9 @@
         }
       }
     },
-    "/api/environments/{env}/events": {
+    "/api/clusters/{cluster}/events": {
       "get": {
-        "operationId": "getEnvironmentsByEnvEvents",
+        "operationId": "getClustersByClusterEvents",
         "tags": [
           "containers"
         ],
@@ -1603,7 +1603,7 @@
             "name": "node",
             "in": "query",
             "required": false,
-            "description": "the target node id; required only when the environment has more than one",
+            "description": "the target node id; required only when the cluster has more than one",
             "schema": {
               "type": "string"
             }
@@ -1663,9 +1663,9 @@
         }
       }
     },
-    "/api/environments/{env}/containers/{id}/{action}": {
+    "/api/clusters/{cluster}/containers/{id}/{action}": {
       "post": {
-        "operationId": "postEnvironmentsByEnvContainersByIdByAction",
+        "operationId": "postClustersByClusterContainersByIdByAction",
         "tags": [
           "containers"
         ],
@@ -1705,7 +1705,7 @@
             "name": "node",
             "in": "query",
             "required": false,
-            "description": "the target node id; required only when the environment has more than one",
+            "description": "the target node id; required only when the cluster has more than one",
             "schema": {
               "type": "string"
             }
@@ -1765,9 +1765,9 @@
         }
       }
     },
-    "/api/environments/{env}/containers/{id}/exec": {
+    "/api/clusters/{cluster}/containers/{id}/exec": {
       "get": {
-        "operationId": "getEnvironmentsByEnvContainersByIdExec",
+        "operationId": "getClustersByClusterContainersByIdExec",
         "tags": [
           "containers"
         ],
@@ -1811,14 +1811,14 @@
         }
       }
     },
-    "/api/environments/{env}/services": {
+    "/api/clusters/{cluster}/services": {
       "get": {
         "operationId": "services",
         "tags": [
           "images, networks, volumes"
         ],
         "summary": "List the cluster's services with live task counts",
-        "description": "Swarm. Cluster-wide, every one of them: these handlers reach their daemon through s.control(), which is a manager, and never through s.node(). The node table is the exception that proves it — it is a JOIN of what the swarm says exists against what Daffa can reach, so it needs both, and it is gated on hosts.view because a node is what an environment is MADE of rather than a resource of its own.\n\nRequires the capability at the host named in the path.",
+        "description": "Swarm. Cluster-wide, every one of them: these handlers reach their daemon through s.control(), which is a manager, and never through s.node(). The node table is the exception that proves it — it is a JOIN of what the swarm says exists against what Daffa can reach, so it needs both, and it is gated on clusters.view because a node is what a cluster is MADE of rather than a resource of its own.\n\nRequires the capability at the host named in the path.",
         "x-daffa-capability": "services.view",
         "x-daffa-scope": "env",
         "responses": {
@@ -1878,7 +1878,7 @@
         }
       }
     },
-    "/api/environments/{env}/services/{id}": {
+    "/api/clusters/{cluster}/services/{id}": {
       "get": {
         "operationId": "service",
         "tags": [
@@ -2004,7 +2004,7 @@
         }
       }
     },
-    "/api/environments/{env}/services/{id}/tasks": {
+    "/api/clusters/{cluster}/services/{id}/tasks": {
       "get": {
         "operationId": "tasks",
         "tags": [
@@ -2071,9 +2071,9 @@
         }
       }
     },
-    "/api/environments/{env}/services/{id}/logs": {
+    "/api/clusters/{cluster}/services/{id}/logs": {
       "get": {
-        "operationId": "getEnvironmentsByEnvServicesByIdLogs",
+        "operationId": "getClustersByClusterServicesByIdLogs",
         "tags": [
           "images, networks, volumes"
         ],
@@ -2155,15 +2155,15 @@
         }
       }
     },
-    "/api/environments/{env}/nodes": {
+    "/api/clusters/{cluster}/nodes": {
       "get": {
         "operationId": "clusterNodes",
         "tags": [
           "images, networks, volumes"
         ],
-        "summary": "List the environment's machines: swarm membership joined against Daffa reachability",
+        "summary": "List the cluster's machines: swarm membership joined against Daffa reachability",
         "description": "Requires the capability at the host named in the path.",
-        "x-daffa-capability": "hosts.view",
+        "x-daffa-capability": "clusters.view",
         "x-daffa-scope": "env",
         "responses": {
           "200": {
@@ -2222,9 +2222,9 @@
         }
       }
     },
-    "/api/environments/{env}/services/{id}/scale": {
+    "/api/clusters/{cluster}/services/{id}/scale": {
       "post": {
-        "operationId": "postEnvironmentsByEnvServicesByIdScale",
+        "operationId": "postClustersByClusterServicesByIdScale",
         "tags": [
           "images, networks, volumes"
         ],
@@ -2310,7 +2310,7 @@
         }
       }
     },
-    "/api/environments/{env}/services/{id}/redeploy": {
+    "/api/clusters/{cluster}/services/{id}/redeploy": {
       "post": {
         "operationId": "redeployService",
         "tags": [
@@ -2374,7 +2374,7 @@
         }
       }
     },
-    "/api/environments/{env}/services/{id}/rollback": {
+    "/api/clusters/{cluster}/services/{id}/rollback": {
       "post": {
         "operationId": "rollbackService",
         "tags": [
@@ -2438,7 +2438,7 @@
         }
       }
     },
-    "/api/environments/{env}/nodes/{id}": {
+    "/api/clusters/{cluster}/nodes/{id}": {
       "patch": {
         "operationId": "updateNode",
         "tags": [
@@ -2537,7 +2537,7 @@
         }
       },
       "delete": {
-        "operationId": "deleteEnvironmentsByEnvNodesById",
+        "operationId": "deleteClustersByClusterNodesById",
         "tags": [
           "images, networks, volumes"
         ],
@@ -2619,9 +2619,9 @@
         }
       }
     },
-    "/api/environments/{env}/swarm/init": {
+    "/api/clusters/{cluster}/swarm/init": {
       "post": {
-        "operationId": "postEnvironmentsByEnvSwarmInit",
+        "operationId": "postClustersByClusterSwarmInit",
         "tags": [
           "images, networks, volumes"
         ],
@@ -2634,7 +2634,7 @@
             "name": "node",
             "in": "query",
             "required": false,
-            "description": "the target node id; required only when the environment has more than one",
+            "description": "the target node id; required only when the cluster has more than one",
             "schema": {
               "type": "string"
             }
@@ -2718,7 +2718,7 @@
         }
       }
     },
-    "/api/environments/{env}/swarm/tokens": {
+    "/api/clusters/{cluster}/swarm/tokens": {
       "get": {
         "operationId": "joinTokens",
         "tags": [
@@ -2782,9 +2782,9 @@
         }
       }
     },
-    "/api/environments/{env}/swarm/leave": {
+    "/api/clusters/{cluster}/swarm/leave": {
       "post": {
-        "operationId": "postEnvironmentsByEnvSwarmLeave",
+        "operationId": "postClustersByClusterSwarmLeave",
         "tags": [
           "images, networks, volumes"
         ],
@@ -2806,7 +2806,7 @@
             "name": "node",
             "in": "query",
             "required": false,
-            "description": "the target node id; required only when the environment has more than one",
+            "description": "the target node id; required only when the cluster has more than one",
             "schema": {
               "type": "string"
             }
@@ -2866,7 +2866,7 @@
         }
       }
     },
-    "/api/environments/{env}/images": {
+    "/api/clusters/{cluster}/images": {
       "get": {
         "operationId": "images",
         "tags": [
@@ -2933,9 +2933,9 @@
         }
       }
     },
-    "/api/environments/{env}/images/{id}": {
+    "/api/clusters/{cluster}/images/{id}": {
       "delete": {
-        "operationId": "deleteEnvironmentsByEnvImagesById",
+        "operationId": "deleteClustersByClusterImagesById",
         "tags": [
           "images, networks, volumes"
         ],
@@ -2957,7 +2957,7 @@
             "name": "node",
             "in": "query",
             "required": false,
-            "description": "the target node id; required only when the environment has more than one",
+            "description": "the target node id; required only when the cluster has more than one",
             "schema": {
               "type": "string"
             }
@@ -3017,7 +3017,7 @@
         }
       }
     },
-    "/api/environments/{env}/networks": {
+    "/api/clusters/{cluster}/networks": {
       "get": {
         "operationId": "networks",
         "tags": [
@@ -3084,9 +3084,9 @@
         }
       }
     },
-    "/api/environments/{env}/networks/{id}": {
+    "/api/clusters/{cluster}/networks/{id}": {
       "delete": {
-        "operationId": "deleteEnvironmentsByEnvNetworksById",
+        "operationId": "deleteClustersByClusterNetworksById",
         "tags": [
           "images, networks, volumes"
         ],
@@ -3099,7 +3099,7 @@
             "name": "node",
             "in": "query",
             "required": false,
-            "description": "the target node id; required only when the environment has more than one",
+            "description": "the target node id; required only when the cluster has more than one",
             "schema": {
               "type": "string"
             }
@@ -3159,7 +3159,7 @@
         }
       }
     },
-    "/api/environments/{env}/volumes": {
+    "/api/clusters/{cluster}/volumes": {
       "get": {
         "operationId": "volumes",
         "tags": [
@@ -3226,9 +3226,9 @@
         }
       }
     },
-    "/api/environments/{env}/volumes/{name}": {
+    "/api/clusters/{cluster}/volumes/{name}": {
       "delete": {
-        "operationId": "deleteEnvironmentsByEnvVolumesByName",
+        "operationId": "deleteClustersByClusterVolumesByName",
         "tags": [
           "images, networks, volumes"
         ],
@@ -3250,7 +3250,7 @@
             "name": "node",
             "in": "query",
             "required": false,
-            "description": "the target node id; required only when the environment has more than one",
+            "description": "the target node id; required only when the cluster has more than one",
             "schema": {
               "type": "string"
             }
@@ -3310,7 +3310,7 @@
         }
       }
     },
-    "/api/environments/{env}/prune/{target}": {
+    "/api/clusters/{cluster}/prune/{target}": {
       "post": {
         "operationId": "prune",
         "tags": [
@@ -3341,7 +3341,7 @@
             "name": "node",
             "in": "query",
             "required": false,
-            "description": "the target node id; required only when the environment has more than one",
+            "description": "the target node id; required only when the cluster has more than one",
             "schema": {
               "type": "string"
             }
@@ -9244,9 +9244,9 @@
         }
       }
     },
-    "/api/environments/{env}/metrics": {
+    "/api/clusters/{cluster}/metrics": {
       "get": {
-        "operationId": "getEnvironmentsByEnvMetrics",
+        "operationId": "getClustersByClusterMetrics",
         "tags": [
           "resource monitors"
         ],
@@ -9796,7 +9796,7 @@
           "container log defaults"
         ],
         "summary": "Read the fleet-wide container log defaults",
-        "description": "The fleet default is one setting, so it takes logging.* globally (the monitoring-settings precedent); a host's override takes it at that host — see the /api/environments/{env}/logging trio.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "The fleet default is one setting, so it takes logging.* globally (the monitoring-settings precedent); a host's override takes it at that host — see the /api/clusters/{cluster}/logging trio.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
         "x-daffa-capability": "logging.view",
         "x-daffa-scope": "global",
         "responses": {

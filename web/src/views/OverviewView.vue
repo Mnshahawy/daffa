@@ -60,7 +60,7 @@ const recent = computed(() =>
 /**
  * Everything that is not right, in one list.
  *
- * The ordering is by how much it should ruin your morning, not by type: a host you cannot
+ * The ordering is by how much it should ruin your morning, not by type: a cluster you cannot
  * reach outranks a stack whose repository has moved on.
  */
 interface Concern {
@@ -82,7 +82,7 @@ const concerns = computed<Concern[]>(() => {
         icon: 'server',
         tone: 'danger',
         title: e.name,
-        detail: 'Host unreachable — nothing can be deployed or operated here',
+        detail: 'Cluster unreachable — nothing can be deployed or operated here',
         to: { name: 'settings-agents' },
       })
     }
@@ -131,7 +131,7 @@ const concerns = computed<Concern[]>(() => {
 // The instruments. Each one is a link, because a count you cannot act on is decoration.
 const instruments = computed(() => [
   {
-    label: 'Hosts online',
+    label: 'Clusters online',
     value: `${hostsOnline.value.length}/${environments.value?.length ?? 0}`,
     bad: hostsOnline.value.length < (environments.value?.length ?? 0),
     to: { name: 'settings-agents' },
@@ -163,7 +163,7 @@ const instruments = computed(() => [
 
 <template>
   <div>
-    <PageHeader title="Overview" :description="`Everything on ${environments?.find((e) => e.id === session.envId)?.name ?? 'this host'}, at a glance.`">
+    <PageHeader title="Overview" :description="`Everything on ${environments?.find((e) => e.id === session.envId)?.name ?? 'this cluster'}, at a glance.`">
       <template #actions>
         <BaseButton v-if="session.can(Cap.StacksEdit)" intent="primary" :to="{ name: 'stacks' }">
           <AppIcon name="plus" class="size-4" />
@@ -224,7 +224,7 @@ const instruments = computed(() => [
           <span>
             <strong>All clear.</strong>
             <span class="muted">
-              Every host is reachable, every stack deployed, every container up.</span
+              Every cluster is reachable, every stack deployed, every container up.</span
             >
           </span>
         </div>

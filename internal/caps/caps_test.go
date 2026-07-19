@@ -128,11 +128,11 @@ func TestGlobalOnlyCapsAreNotEnvScopable(t *testing.T) {
 		}
 	}
 
-	// And the administrative objects must be global-only, full stop. Daffa is not per-host, so
+	// And the administrative objects must be global-only, full stop. Daffa is not per-cluster, so
 	// "may edit users, on staging" has no meaning to be got right.
 	for _, name := range []string{
 		"users.view", "users.edit", "roles.view", "roles.edit",
-		"settings.view", "settings.edit", "hosts.edit",
+		"settings.view", "settings.edit", "clusters.edit",
 	} {
 		c, ok := ByName(name)
 		if !ok {

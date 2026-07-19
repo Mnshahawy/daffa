@@ -11,7 +11,7 @@ import (
 // builds these from its route table + parsed annotations; nothing here imports it back.
 type Op struct {
 	Method  string // GET | POST | PUT | PATCH | DELETE
-	Path    string // /api/environments/{env}/logging
+	Path    string // /api/clusters/{cluster}/logging
 	Pattern string // the route table's key, verbatim (diagnostics)
 
 	OperationID string

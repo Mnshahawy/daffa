@@ -54,10 +54,10 @@ func (s *Server) handleListEnvironments(w http.ResponseWriter, r *http.Request) 
 
 	out := make([]envView, 0, len(envs))
 	for _, e := range envs {
-		// hosts.view is the visibility bit. Held globally it shows every environment; held on one
+		// clusters.view is the visibility bit. Held globally it shows every cluster; held on one
 		// it shows that one. Someone who holds it nowhere sees an empty list and a console with
 		// nothing to point at — which is the correct rendering of "you have no access", not a bug.
-		if !u.Caps.Has(caps.HostsView, e.ID) {
+		if !u.Caps.Has(caps.ClustersView, e.ID) {
 			continue
 		}
 
@@ -106,7 +106,7 @@ type renameResponse struct {
 // Daffa can come up with on its own; "web-1" and "prod-eu" are what an operator actually
 // thinks in.
 func (s *Server) handleRenameEnvironment(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("env")
+	id := r.PathValue("cluster")
 
 	env, err := s.store.EnvironmentByID(r.Context(), id)
 	if errors.Is(err, store.ErrNotFound) {
@@ -149,10 +149,10 @@ func (s *Server) handleRenameEnvironment(w http.ResponseWriter, r *http.Request)
 	httpx.JSON(w, http.StatusOK, renameResponse{ID: id, Name: req.Name})
 }
 
-// env resolves the {env} path segment to a live handle, writing the error response
+// env resolves the {cluster} path segment to a live handle, writing the error response
 // itself if it cannot.
 func (s *Server) env(w http.ResponseWriter, r *http.Request) (*dockerx.Env, bool) {
-	env, err := s.pool.Get(r.PathValue("env"))
+	env, err := s.pool.Get(r.PathValue("cluster"))
 	if err != nil {
 		httpx.Fail(w, r, http.StatusNotFound, "no_such_environment",
 			"That environment is not connected.")

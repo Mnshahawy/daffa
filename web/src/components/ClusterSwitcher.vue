@@ -50,7 +50,7 @@ const input = ref<HTMLInputElement>()
 const rename = useMutation({
   mutationFn: ({ id, name }: { id: string; name: string }) => daffa.renameEnvironment(id, name),
   onSuccess: () => {
-    toast.ok('Host renamed.')
+    toast.ok('Cluster renamed.')
     editing.value = null
     qc.invalidateQueries({ queryKey: ['environments'] })
   },
@@ -58,7 +58,7 @@ const rename = useMutation({
 })
 
 async function startEdit(env: Environment, e: Event) {
-  e.stopPropagation() // do not let the click select the host and close the menu
+  e.stopPropagation() // do not let the click select the cluster and close the menu
   editing.value = env.id
   draft.value = env.name
   await nextTick()
@@ -87,8 +87,8 @@ function select(env: Environment) {
     <template #trigger="{ open }">
       <!-- Collapsed, this used to be a bare coloured dot: a green circle, floating in the rail,
            saying nothing about WHAT was online or that it could be clicked at all. It is the
-           control that decides which machine every page below it is talking about, so it has to
-           look like a host — the server glyph says what it is, and the status dot rides on its
+           control that decides which cluster every page below it is talking about, so it has to
+           look like one — the server glyph says what it is, and the status dot rides on its
            corner rather than standing in for it. -->
       <span
         class="flex w-full items-center gap-2 rounded-[var(--radius-control)] border text-sm transition hover:border-[var(--border-strong)]"
@@ -131,7 +131,7 @@ function select(env: Environment) {
       </span>
     </template>
 
-    <div class="eyebrow px-2 py-1.5">Hosts</div>
+    <div class="eyebrow px-2 py-1.5">Clusters</div>
 
     <div
       v-for="env in environments"
@@ -159,9 +159,9 @@ function select(env: Environment) {
           {{ envBadge(env) }}
         </span>
         <button
-          v-if="session.can(Cap.HostsEdit)"
+          v-if="session.can(Cap.ClustersEdit)"
           class="subtle shrink-0 rounded p-0.5 transition hover:text-[var(--accent-text)]"
-          aria-label="Rename host"
+          aria-label="Rename cluster"
           title="Rename"
           @click.stop="startEdit(env, $event)"
         >
@@ -172,12 +172,12 @@ function select(env: Environment) {
 
     <div class="mt-1 border-t pt-1" :style="{ borderColor: 'var(--border)' }">
       <RouterLink
-        v-if="session.can(Cap.HostsEdit)"
+        v-if="session.can(Cap.ClustersEdit)"
         :to="{ name: 'settings-agents' }"
         class="muted flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm transition hover:bg-[var(--surface-sunken)] hover:text-[var(--text)]"
       >
         <AppIcon name="plus" class="size-3.5" />
-        Add a host…
+        Add a cluster…
       </RouterLink>
     </div>
   </DropdownMenu>

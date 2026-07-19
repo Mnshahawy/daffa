@@ -17,7 +17,7 @@ import (
 //
 // On partial results. A node that is unreachable contributes nothing, and this does NOT fail the
 // request — one dead machine must not blank the list of the four that are fine. But it is never
-// silently trimmed either: every node's status is already on GET /api/environments, which the
+// silently trimmed either: every node's status is already on GET /api/clusters, which the
 // switcher polls anyway, so the UI names the machine it could not read rather than quietly
 // pretending the cluster is smaller than it is. A list that omits a machine without saying so is a
 // list that will be trusted and is wrong.

@@ -63,11 +63,11 @@ export const Cap = {
   StacksView: { ns: Ns.Deploy, bit: 1 },
   /** Create, deploy, cancel, roll back and remove stacks; set their environment variables, secrets and auto-deploy. */
   StacksEdit: { ns: Ns.Deploy, bit: 2 },
-  /** See configured registries — never their passwords. The list is shared by every host. */
+  /** See configured registries — never their passwords. The list is shared by every cluster. */
   RegistriesView: { ns: Ns.Deploy, bit: 4 },
   /** Add and remove registries, including their passwords. Fleet-wide. */
   RegistriesEdit: { ns: Ns.Deploy, bit: 8 },
-  /** See which git credentials exist, by name — never their tokens or keys. The list is shared by every host. */
+  /** See which git credentials exist, by name — never their tokens or keys. The list is shared by every cluster. */
   GitCredsView: { ns: Ns.Deploy, bit: 16 },
   /** Add and remove git credentials, including tokens and SSH keys. Fleet-wide. */
   GitCredsEdit: { ns: Ns.Deploy, bit: 32 },
@@ -83,13 +83,13 @@ export const Cap = {
   BackupsRestore: { ns: Ns.Data, bit: 4 },
   /** Download a snapshot. It is an encrypted dump of an entire database. */
   BackupsDownload: { ns: Ns.Data, bit: 8 },
-  /** See S3/R2 targets by name — never their secret keys. The list is shared by every host. */
+  /** See S3/R2 targets by name — never their secret keys. The list is shared by every cluster. */
   StorageView: { ns: Ns.Data, bit: 16 },
   /** Add, edit and remove S3/R2 targets, including their credentials. Fleet-wide. */
   StorageEdit: { ns: Ns.Data, bit: 32 },
   /** See resource monitors and the alerts they have raised. */
   MonitorsView: { ns: Ns.Observe, bit: 1 },
-  /** Create and edit resource monitors, and change how long samples are kept. A monitor that watches every host requires this on every host. */
+  /** Create and edit resource monitors, and change how long samples are kept. A monitor that watches every cluster requires this on every cluster. */
   MonitorsEdit: { ns: Ns.Observe, bit: 2 },
   /** Read the audit log — every privileged action anyone took, and every one they were refused. */
   AuditView: { ns: Ns.Observe, bit: 4 },
@@ -97,7 +97,7 @@ export const Cap = {
   ServicesView: { ns: Ns.Swarm, bit: 1 },
   /** Scale, redeploy, roll back and remove Swarm services. On a Swarm this is also read access to every secret: you can mount any of them into a service you control and read it out of the container. */
   ServicesEdit: { ns: Ns.Swarm, bit: 2 },
-  /** Drain, pause, promote and demote the machines in a Swarm, and remove them from it. Draining a node evicts every Swarm task on it. Reading the node list is hosts.view. */
+  /** Drain, pause, promote and demote the machines in a Swarm, and remove them from it. Draining a node evicts every Swarm task on it. Reading the node list is clusters.view. */
   NodesEdit: { ns: Ns.Swarm, bit: 4 },
   /** Create a Swarm on a host, read its join tokens, and leave it. A join token lets anybody who has it add a machine to the cluster, so it is a credential and this is the capability that reads one. */
   SwarmEdit: { ns: Ns.Swarm, bit: 8 },
@@ -125,13 +125,13 @@ export const Cap = {
   SettingsView: { ns: Ns.Admin, bit: 16 },
   /** Add, edit and remove identity providers, role mappings and notification rules. */
   SettingsEdit: { ns: Ns.Admin, bit: 32 },
-  /** See a host and its disk usage. Without this, a host is invisible — it does not appear in the switcher at all. */
-  HostsView: { ns: Ns.Admin, bit: 64 },
-  /** Rename hosts, and enroll or revoke agents. An agent is a new host Daffa can reach — so this is fleet-wide. */
-  HostsEdit: { ns: Ns.Admin, bit: 128 },
-  /** See the default container log driver and rotation for deploys — the fleet default and any host override. */
+  /** See a cluster and its disk usage. Without this, a cluster is invisible — it does not appear in the switcher at all. */
+  ClustersView: { ns: Ns.Admin, bit: 64 },
+  /** Rename clusters, and enroll or revoke agents. An agent brings a new machine Daffa can reach — so this is fleet-wide. */
+  ClustersEdit: { ns: Ns.Admin, bit: 128 },
+  /** See the default container log driver and rotation for deploys — the fleet default and any cluster override. */
   LoggingView: { ns: Ns.Admin, bit: 256 },
-  /** Set a host's container log defaults, applied to services at their next deploy. Changing the fleet-wide default requires this globally. */
+  /** Set a cluster's container log defaults, applied to services at their next deploy. Changing the fleet-wide default requires this globally. */
   LoggingEdit: { ns: Ns.Admin, bit: 512 },
 } as const satisfies Record<string, Cap>
 

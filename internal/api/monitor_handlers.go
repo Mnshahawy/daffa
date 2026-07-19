@@ -20,7 +20,7 @@ import (
 // container's history is no more sensitive than the live stats panel that capability already
 // grants, so it needs no capability of its own.
 func (s *Server) handleSeries(w http.ResponseWriter, r *http.Request) {
-	env := r.PathValue("env")
+	env := r.PathValue("cluster")
 
 	to := time.Now().UTC()
 	from := to.Add(-parseRange(r.URL.Query().Get("range")))

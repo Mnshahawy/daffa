@@ -120,7 +120,7 @@ func TestBodyScopedRoutesAreKnown(t *testing.T) {
 	}
 }
 
-// A route that names a stack or a job must not be scopeEnv: there is no {env} in its path,
+// A route that names a stack or a job must not be scopeEnv: there is no {cluster} in its path,
 // so the extractor would return "" and only a GLOBAL grant would ever satisfy it — which
 // would silently lock out every scoped user, and look like a permissions bug.
 func TestTargetRoutesUseTheRightScope(t *testing.T) {
@@ -128,13 +128,13 @@ func TestTargetRoutesUseTheRightScope(t *testing.T) {
 	for _, rt := range s.apiRoutes() {
 		_, path, _ := strings.Cut(rt.pattern, " ")
 
-		hasEnvVar := strings.Contains(path, "{env}")
+		hasEnvVar := strings.Contains(path, "{cluster}")
 		if rt.scope == scopeEnv && !hasEnvVar {
-			t.Errorf("%s is scopeEnv but has no {env} in its path — the extractor would "+
+			t.Errorf("%s is scopeEnv but has no {cluster} in its path — the extractor would "+
 				"return \"\" and only a global grant would pass", rt.pattern)
 		}
 		if hasEnvVar && rt.scope != scopeEnv && rt.scope != scopeGlobal && rt.scope != scopeNone {
-			t.Errorf("%s has an {env} but is %v — is that deliberate?", rt.pattern, rt.scope)
+			t.Errorf("%s has an {cluster} but is %v — is that deliberate?", rt.pattern, rt.scope)
 		}
 		if rt.scope == scopeStack && !strings.HasPrefix(path, "/api/stacks/{id}") {
 			t.Errorf("%s is scopeStack but its {id} is not a stack", rt.pattern)

@@ -10,7 +10,7 @@ import DaffaMark from '@/components/brand/DaffaMark.vue'
 import AppIcon from '@/components/ui/AppIcon.vue'
 import CommandPalette from '@/components/ui/CommandPalette.vue'
 import DropdownMenu from '@/components/DropdownMenu.vue'
-import HostSwitcher from '@/components/HostSwitcher.vue'
+import ClusterSwitcher from '@/components/ClusterSwitcher.vue'
 import ThemeToggle from '@/components/ThemeToggle.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
 
@@ -121,10 +121,10 @@ const mac = navigator.platform.toUpperCase().includes('MAC')
         </RouterLink>
       </div>
 
-      <!-- The host is the context every page below is scoped to, so it sits above them all,
+      <!-- The cluster is the context every page below is scoped to, so it sits above them all,
            not tucked in a far corner of a top bar. -->
       <div class="px-3 pb-3">
-        <HostSwitcher :collapsed="collapsed" />
+        <ClusterSwitcher :collapsed="collapsed" />
       </div>
 
       <!-- ⌘K. Given a permanent home rather than left as an easter egg — Dokploy's palette is
@@ -291,7 +291,7 @@ const mac = navigator.platform.toUpperCase().includes('MAC')
           <BaseButton intent="ghost" size="sm" icon label="Search" @click="palette?.show()">
             <AppIcon name="search" class="size-4" />
           </BaseButton>
-          <HostSwitcher />
+          <ClusterSwitcher />
           <DropdownMenu align="right">
             <template #trigger>
               <span
@@ -358,7 +358,7 @@ const mac = navigator.platform.toUpperCase().includes('MAC')
            from it on a wide screen reads as unmoored. Capped, but anchored: slack collects on
            the right, where there is nothing to be next to. -->
       <div class="max-w-7xl p-5 sm:p-6 lg:p-8">
-        <!-- An offline host is not a footnote. Every action on the page below is about to
+        <!-- An offline cluster is not a footnote. Every action on the page below is about to
              fail, and saying so once, here, beats thirty individual errors. -->
         <div
           v-if="current && current.status === 'offline'"

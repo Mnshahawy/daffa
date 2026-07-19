@@ -89,12 +89,12 @@ const editing = ref<string | null>(null)
 // ── target suggestions (stack / container comboboxes) ─────────────────────────
 // The Stack and Container targets are name filters ("" = any). These feed a ComboBox so an
 // operator can pick from what exists without losing the ability to type a name that is not running
-// yet (a stopped container, a not-yet-deployed stack, an "Every host" rule). Declared after draft:
+// yet (a stopped container, a not-yet-deployed stack, an "Every cluster" rule). Declared after draft:
 // vue-query reads the reactive key/enabled during setup, so draft must already exist.
 const { data: stacks } = useQuery({ queryKey: ['stacks'], queryFn: daffa.stacks })
 
 // Containers are listed per host, and the endpoint needs containers.view on it — so the query is
-// gated on both a chosen host and the capability. That also means "Every host" fetches nothing (no
+// gated on both a chosen host and the capability. That also means "Every cluster" fetches nothing (no
 // single host to enumerate) and the operator simply types the name there.
 const { data: containers } = useQuery({
   queryKey: ['monitor-containers', () => draft.value.env_id],
@@ -297,7 +297,7 @@ function inUnits(metric: string, v: number): string {
 }
 
 function envName(id: string): string {
-  if (!id) return 'every host'
+  if (!id) return 'every cluster'
   return envs.value?.find((e) => e.id === id)?.name ?? id
 }
 
@@ -443,7 +443,7 @@ const recoveredStatus: Status = { tone: 'success', label: 'Recovered' }
           <tr class="border-b" :style="{ borderColor: 'var(--border)' }">
             <th class="eyebrow py-2 pr-4 text-left font-medium">State</th>
             <th class="eyebrow py-2 pr-4 text-left font-medium">Rule</th>
-            <th class="eyebrow py-2 pr-4 text-left font-medium">Host</th>
+            <th class="eyebrow py-2 pr-4 text-left font-medium">Cluster</th>
             <th class="eyebrow py-2 text-right font-medium">Actions</th>
           </tr>
         </thead>
@@ -614,14 +614,14 @@ const recoveredStatus: Status = { tone: 'success', label: 'Recovered' }
 
         <div class="grid gap-4 sm:grid-cols-3">
           <div>
-            <label for="m-env" class="mb-1.5 block text-sm font-medium">Host</label>
+            <label for="m-env" class="mb-1.5 block text-sm font-medium">Cluster</label>
             <Select id="m-env" v-model="draft.env_id">
               <!--
-                Every host is a FLEET-WIDE rule, and it takes monitors.edit everywhere. A
+                Every cluster is a FLEET-WIDE rule, and it takes monitors.edit everywhere. A
                 host-scoped holder is not offered it, because the server would refuse it — and
                 being told "no" after filling in a form is worse than not being offered.
               -->
-              <option v-if="canEditFleet" value="">Every host</option>
+              <option v-if="canEditFleet" value="">Every cluster</option>
               <option v-for="e in envs" :key="e.id" :value="e.id">{{ e.name }}</option>
             </Select>
           </div>

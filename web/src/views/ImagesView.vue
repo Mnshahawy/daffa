@@ -95,7 +95,7 @@ async function onRemove(img: Image) {
     <EmptyState
       v-else-if="!images?.length"
       icon="archive"
-      title="No images on this host"
+      title="No images on this cluster"
       body="An image is the filesystem a container runs from. They arrive when you pull one or deploy a stack, and they stay on the host until something removes them."
     />
 

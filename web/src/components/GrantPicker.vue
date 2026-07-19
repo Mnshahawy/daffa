@@ -92,7 +92,7 @@ function rowStyle(roleId: string) {
             <span
               v-else
               class="subtle text-xs"
-              :title="`This role carries ${r.global_only?.join(', ')}, which administers Daffa itself and cannot be limited to one host.`"
+              :title="`This role carries ${r.global_only?.join(', ')}, which administers Daffa itself and cannot be limited to one cluster.`"
             >
               —
             </span>
@@ -105,6 +105,6 @@ function rowStyle(roleId: string) {
   <p v-if="roles.some((r) => !r.scopable)" class="muted mt-3 text-xs">
     A role marked <span class="font-mono">—</span> can only be granted everywhere: it carries a
     capability that administers Daffa itself (users, roles, settings), and Daffa is not
-    per-host. Hover to see which.
+    per-cluster. Hover to see which.
   </p>
 </template>

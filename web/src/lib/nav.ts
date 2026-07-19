@@ -148,11 +148,11 @@ export const navGroups: NavGroup[] = [
       },
       {
         name: 'host',
-        label: 'Host',
+        label: 'Cluster',
         icon: 'server',
-        cap: Cap.HostsView,
-        hint: 'The daemon, its version and its disk',
-        keywords: 'daemon machine server info df disk',
+        cap: Cap.ClustersView,
+        hint: 'The cluster, its Docker version and its disk',
+        keywords: 'cluster environment daemon machine server info df disk',
       },
     ],
   },
@@ -218,9 +218,9 @@ export const settingsGroups: { title: string; items: SettingsTab[] }[] = [
     items: [
       {
         name: 'settings-agents',
-        label: 'Hosts',
-        hint: 'The machines Daffa manages',
-        cap: Cap.HostsEdit,
+        label: 'Clusters',
+        hint: 'The clusters Daffa manages',
+        cap: Cap.ClustersEdit,
         icon: 'server',
       },
       {

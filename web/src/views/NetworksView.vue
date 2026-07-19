@@ -83,7 +83,7 @@ async function onRemove(n: Network) {
     <EmptyState
       v-else-if="!networks?.length"
       icon="network"
-      title="No networks on this host"
+      title="No networks on this cluster"
       body="A network is what lets containers find each other by name. Compose makes one per stack; bridge, host and none are built into Docker and are always here."
     />
 

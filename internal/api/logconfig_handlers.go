@@ -1,7 +1,7 @@
 package api
 
 // Default container logging for deployed stacks: the fleet-wide default under
-// /api/settings/logging and a per-host override under /api/environments/{env}/logging.
+// /api/settings/logging and a per-host override under /api/clusters/{cluster}/logging.
 // The config is injected into deploys in buildBundle; see docs/stacks.md.
 
 import (
@@ -87,7 +87,7 @@ type envLogConfigResponse struct {
 }
 
 func (s *Server) handleGetEnvLogConfig(w http.ResponseWriter, r *http.Request) {
-	envID := r.PathValue("env")
+	envID := r.PathValue("cluster")
 	override, err := s.store.EnvLogConfig(r.Context(), envID)
 	if err != nil {
 		httpx.Error(w, r, err)
@@ -110,7 +110,7 @@ func (s *Server) handleGetEnvLogConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSaveEnvLogConfig(w http.ResponseWriter, r *http.Request) {
-	envID := r.PathValue("env")
+	envID := r.PathValue("cluster")
 	// The FK would refuse a vanished host anyway, but as a 500. Say what happened.
 	if _, err := s.store.EnvironmentByID(r.Context(), envID); err != nil {
 		httpx.Error(w, r, err)
@@ -129,7 +129,7 @@ func (s *Server) handleSaveEnvLogConfig(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleDeleteEnvLogConfig(w http.ResponseWriter, r *http.Request) {
-	envID := r.PathValue("env")
+	envID := r.PathValue("cluster")
 	if err := s.store.DeleteEnvLogConfig(r.Context(), envID); err != nil {
 		httpx.Error(w, r, err)
 		return

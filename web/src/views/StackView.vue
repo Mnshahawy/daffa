@@ -499,7 +499,7 @@ const stateLabel: Record<string, string> = {
   partial: 'Partially running',
   stopped: 'Stopped',
   not_deployed: 'Not deployed',
-  unreachable: 'Host unreachable',
+  unreachable: 'Cluster unreachable',
 }
 
 function triggeredBy(d: { trigger_kind: string; started_by_name?: string }): string {
