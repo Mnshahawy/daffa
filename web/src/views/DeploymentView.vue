@@ -1,15 +1,16 @@
 <script setup lang="ts">
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
-import { computed, ref, watchEffect } from 'vue'
+import { computed, watchEffect } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import type { RouteLocationRaw } from 'vue-router'
 import DeploymentLog from '@/components/DeploymentLog.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import PageHeader from '@/components/ui/PageHeader.vue'
 import StatusPill from '@/components/ui/StatusPill.vue'
-import { ApiError, daffa } from '@/lib/api'
+import { daffa } from '@/lib/api'
 import { Cap } from '@/lib/caps'
 import { confirm } from '@/lib/confirm'
+import { toast } from '@/lib/toast'
 import { absolute, actionLabel, actionNoun, duration, shortSha } from '@/lib/format'
 import { deploymentStatus } from '@/lib/status'
 import { setTitle } from '@/lib/title'
@@ -21,7 +22,6 @@ const session = useSession()
 const qc = useQueryClient()
 
 const id = computed(() => route.params.id as string)
-const error = ref('')
 
 const { data: dep, isLoading } = useQuery({
   queryKey: ['deployment', () => id.value],
@@ -110,19 +110,23 @@ const trigger = computed(() => {
 
 const cancel = useMutation({
   mutationFn: () => daffa.cancelDeployment(id.value),
-  onSuccess: () => void qc.invalidateQueries({ queryKey: ['deployment'] }),
-  onError: (e) => (error.value = e instanceof ApiError ? e.message : String(e)),
+  onSuccess: () => {
+    toast.ok('Deployment cancelled.')
+    void qc.invalidateQueries({ queryKey: ['deployment'] })
+  },
+  onError: (e) => toast.err(e, 'Could not cancel the deploy.'),
 })
 
 const redeploy = useMutation({
   mutationFn: () => daffa.redeploy(id.value),
   onSuccess: (r) => {
+    toast.ok('Redeploy started.')
     void qc.invalidateQueries({ queryKey: ['stack'] })
     void qc.invalidateQueries({ queryKey: ['deployments'] })
     // Follow the new deploy, which is what the person pressing the button wants to watch.
     void router.push({ name: 'deployment', params: { id: r.deployment_id } })
   },
-  onError: (e) => (error.value = e instanceof ApiError ? e.message : String(e)),
+  onError: (e) => toast.err(e, 'Could not redeploy.'),
 })
 
 // Stopping a run mid-flight leaves the stack between two states, and that is a thing to be told
@@ -196,14 +200,6 @@ async function askRedeploy() {
       :style="verdictStyle"
     >
       {{ verdict }}
-    </p>
-
-    <p
-      v-if="error"
-      class="mb-4 rounded-[var(--radius-control)] p-3 text-sm"
-      :style="{ background: 'var(--danger-soft)', color: 'var(--danger)' }"
-    >
-      {{ error }}
     </p>
 
     <!-- The facts. Everything somebody needs in order to say what this deploy was. -->

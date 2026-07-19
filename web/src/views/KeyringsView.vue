@@ -2,7 +2,6 @@
 import { computed, ref } from 'vue'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import {
-  ApiError,
   daffa,
   type Keyring,
   type KeyringDelivery,
@@ -11,10 +10,12 @@ import {
 import { Cap } from '@/lib/caps'
 import { useSession } from '@/stores/session'
 import { confirm } from '@/lib/confirm'
+import { toast } from '@/lib/toast'
 import type { Status } from '@/lib/status'
 import AppIcon from '@/components/ui/AppIcon.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
+import Select from '@/components/ui/Select.vue'
 import StatusPill from '@/components/ui/StatusPill.vue'
 
 const session = useSession()
@@ -28,12 +29,7 @@ const { data: deliveries } = useQuery({
 })
 const { data: envs } = useQuery({ queryKey: ['environments'], queryFn: daffa.environments })
 
-const error = ref('')
-function fail(e: unknown, fallback: string) {
-  error.value = e instanceof ApiError ? e.message : fallback
-}
 function refresh() {
-  error.value = ''
   qc.invalidateQueries({ queryKey: ['keyrings'] })
   qc.invalidateQueries({ queryKey: ['keyring-deliveries'] })
 }
@@ -56,11 +52,12 @@ const form = ref({ name: '', rotate_days: 0 })
 const createKeyring = useMutation({
   mutationFn: () => daffa.createKeyring({ ...form.value }),
   onSuccess: () => {
+    toast.ok('Keyring created.')
     form.value = { name: '', rotate_days: 0 }
     adding.value = false
     refresh()
   },
-  onError: (e) => fail(e, 'Could not create the keyring.'),
+  onError: (e) => toast.err(e, 'Could not create the keyring.'),
 })
 
 function keyringStatus(k: Keyring): Status {
@@ -77,8 +74,11 @@ function keyringStatus(k: Keyring): Status {
 
 const rotate = useMutation({
   mutationFn: (id: string) => daffa.rotateKeyring(id),
-  onSuccess: refresh,
-  onError: (e) => fail(e, 'Could not rotate the keyring.'),
+  onSuccess: () => {
+    toast.ok('Keyring rotated.')
+    refresh()
+  },
+  onError: (e) => toast.err(e, 'Could not rotate the keyring.'),
 })
 
 async function onRotate(k: Keyring) {
@@ -93,8 +93,11 @@ async function onRotate(k: Keyring) {
 
 const retire = useMutation({
   mutationFn: (p: { id: string; vid: string }) => daffa.retireKeyringVersion(p.id, p.vid),
-  onSuccess: refresh,
-  onError: (e) => fail(e, 'Could not retire the version.'),
+  onSuccess: () => {
+    toast.ok('Version retired.')
+    refresh()
+  },
+  onError: (e) => toast.err(e, 'Could not retire the version.'),
 })
 
 async function onRetire(k: Keyring, v: KeyringVersion) {
@@ -111,20 +114,29 @@ async function onRetire(k: Keyring, v: KeyringVersion) {
 const updateSchedule = useMutation({
   mutationFn: (p: { id: string; rotate_days: number }) =>
     daffa.updateKeyring(p.id, { rotate_days: p.rotate_days }),
-  onSuccess: refresh,
-  onError: (e) => fail(e, 'Could not update the schedule.'),
+  onSuccess: () => {
+    toast.ok('Schedule updated.')
+    refresh()
+  },
+  onError: (e) => toast.err(e, 'Could not update the schedule.'),
 })
 
 const removeKeyring = useMutation({
   mutationFn: (id: string) => daffa.deleteKeyring(id),
-  onSuccess: refresh,
-  onError: (e) => fail(e, 'Could not delete the keyring.'),
+  onSuccess: () => {
+    toast.ok('Keyring deleted.')
+    refresh()
+  },
+  onError: (e) => toast.err(e, 'Could not delete the keyring.'),
 })
 
 async function onRemoveKeyring(k: Keyring) {
   const carried = (deliveries.value ?? []).filter((d) => d.keyring_id === k.id).length
   if (carried > 0) {
-    error.value = `${k.name} is carried by ${carried} deliver${carried === 1 ? 'y' : 'ies'}. Delete them first.`
+    toast.err(
+      null,
+      `${k.name} is carried by ${carried} deliver${carried === 1 ? 'y' : 'ies'}. Delete them first.`,
+    )
     return
   }
   const ok = await confirm({
@@ -154,11 +166,12 @@ const deliveryForm = ref(deliveryBlank())
 const createDelivery = useMutation({
   mutationFn: () => daffa.createKeyringDelivery({ ...deliveryForm.value }),
   onSuccess: () => {
+    toast.ok('Delivery created.')
     deliveryForm.value = deliveryBlank()
     addingDelivery.value = false
     refresh()
   },
-  onError: (e) => fail(e, 'Could not create the delivery.'),
+  onError: (e) => toast.err(e, 'Could not create the delivery.'),
 })
 
 function deliveryStatus(d: KeyringDelivery): Status {
@@ -174,14 +187,18 @@ function deliveryStatus(d: KeyringDelivery): Status {
 
 const syncDelivery = useMutation({
   mutationFn: (id: string) => daffa.syncKeyringDelivery(id),
+  onSuccess: () => toast.ok('Delivery synced.'),
   onSettled: refresh,
-  onError: (e) => fail(e, 'Sync failed.'),
+  onError: (e) => toast.err(e, 'Sync failed.'),
 })
 
 const removeDelivery = useMutation({
   mutationFn: (id: string) => daffa.deleteKeyringDelivery(id),
-  onSuccess: refresh,
-  onError: (e) => fail(e, 'Could not delete the delivery.'),
+  onSuccess: () => {
+    toast.ok('Delivery deleted.')
+    refresh()
+  },
+  onError: (e) => toast.err(e, 'Could not delete the delivery.'),
 })
 
 async function onRemoveDelivery(d: KeyringDelivery) {
@@ -197,8 +214,6 @@ async function onRemoveDelivery(d: KeyringDelivery) {
 
 <template>
   <div class="space-y-10">
-    <p v-if="error" class="text-sm" :style="{ color: 'var(--danger)' }">{{ error }}</p>
-
     <!-- ── keyrings ────────────────────────────────────────────────────────── -->
     <section>
       <div class="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2">
@@ -403,17 +418,17 @@ async function onRemoveDelivery(d: KeyringDelivery) {
         <div class="grid gap-4 sm:grid-cols-4">
           <div>
             <label for="kdl-keyring" class="mb-1.5 block text-sm font-medium">Keyring</label>
-            <select id="kdl-keyring" v-model="deliveryForm.keyring_id" required class="field">
+            <Select id="kdl-keyring" v-model="deliveryForm.keyring_id" required>
               <option value="" disabled>Choose a keyring…</option>
               <option v-for="k in keyrings" :key="k.id" :value="k.id">{{ k.name }}</option>
-            </select>
+            </Select>
           </div>
           <div>
             <label for="kdl-env" class="mb-1.5 block text-sm font-medium">Host</label>
-            <select id="kdl-env" v-model="deliveryForm.env_id" required class="field">
+            <Select id="kdl-env" v-model="deliveryForm.env_id" required>
               <option value="" disabled>Choose a host…</option>
               <option v-for="e in envs" :key="e.id" :value="e.id">{{ e.name }}</option>
-            </select>
+            </Select>
           </div>
           <div>
             <label for="kdl-volume" class="mb-1.5 block text-sm font-medium">Volume</label>

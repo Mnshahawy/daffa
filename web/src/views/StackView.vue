@@ -3,6 +3,7 @@ import { computed, ref, watch, watchEffect } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useQuery, useQueryClient } from '@tanstack/vue-query'
 import { ApiError, daffa, type EnvVarItem, type StackAction, type StackSecretItem, type Task } from '@/lib/api'
+import { toast } from '@/lib/toast'
 import { useSession } from '@/stores/session'
 import AutoDeployPanel from '@/components/AutoDeployPanel.vue'
 import DropdownMenu from '@/components/DropdownMenu.vue'
@@ -13,8 +14,10 @@ import StackSecretsEditor from '@/components/StackSecretsEditor.vue'
 import MetricPanel from '@/components/MetricPanel.vue'
 import AppIcon from '@/components/ui/AppIcon.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
+import CopyButton from '@/components/ui/CopyButton.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import PageHeader from '@/components/ui/PageHeader.vue'
+import Select from '@/components/ui/Select.vue'
 import StatusPill from '@/components/ui/StatusPill.vue'
 import { Cap } from '@/lib/caps'
 import { confirm } from '@/lib/confirm'
@@ -28,7 +31,6 @@ const session = useSession()
 const qc = useQueryClient()
 
 const id = computed(() => route.params.id as string)
-const error = ref('')
 const busy = ref(false)
 
 // Tabs, because this page had become one long scroll: actions, log, services, metrics, variables,
@@ -132,14 +134,15 @@ async function act(action: StackAction) {
     if (!ok) return
   }
 
-  error.value = ''
   busy.value = true
   try {
     await daffa.stackAction(id.value, action)
     await qc.invalidateQueries({ queryKey: ['deployments'] })
+    // No success toast: the action only STARTS a deploy here. Its real outcome — progress and
+    // failure alike — streams into the DeploymentLog panel, and a premature "done" would lie.
   } catch (e) {
     busy.value = false
-    error.value = e instanceof ApiError ? e.message : 'The action failed.'
+    toast.err(e, 'The action failed.')
   }
 }
 
@@ -260,12 +263,6 @@ function toneColor(a: StackAction): string | undefined {
 // can see exactly what would deploy without leaving for the repo host.
 const showSource = ref(false)
 const sourceYaml = computed(() => data.value?.yaml ?? '')
-const sourceCopied = ref(false)
-async function copySource() {
-  await navigator.clipboard.writeText(sourceYaml.value)
-  sourceCopied.value = true
-  window.setTimeout(() => (sourceCopied.value = false), 1500)
-}
 
 // Whether the "also delete its volumes" box is even DRAWN comes from the engine's action list, not
 // from this file's opinion. Swarm cannot remove a stack's volumes — they are node-local, and the
@@ -327,6 +324,7 @@ async function runDelete(volumes: boolean, force: boolean) {
   try {
     await daffa.deleteStack(id.value, { volumes, force })
     await qc.invalidateQueries({ queryKey: ['stacks'] })
+    toast.ok('Stack deleted.')
     void router.push({ name: 'stacks' })
     deleteBusy.value = false
   } catch (e) {
@@ -653,8 +651,6 @@ function triggeredBy(d: { trigger_kind: string; started_by_name?: string }): str
       {{ w.text }}
     </div>
 
-    <p v-if="error" class="mb-4 text-sm" :style="{ color: 'var(--danger)' }">{{ error }}</p>
-
     <!-- Tabs -->
     <div class="mb-5 flex gap-1" role="tablist">
       <button
@@ -781,9 +777,9 @@ function triggeredBy(d: { trigger_kind: string; started_by_name?: string }): str
       <template v-else>
         <div class="mb-4 flex flex-wrap items-center gap-3">
           <label for="stack-container" class="text-sm font-medium">Container</label>
-          <select id="stack-container" v-model="selectedContainer" class="field max-w-xs">
+          <Select id="stack-container" v-model="selectedContainer" class="max-w-xs">
             <option v-for="o in containerOptions" :key="o.key" :value="o.key">{{ o.label }}</option>
-          </select>
+          </Select>
           <!-- The full page still exists; this is the way out to it. -->
           <RouterLink
             v-if="currentContainer"
@@ -989,12 +985,12 @@ function triggeredBy(d: { trigger_kind: string; started_by_name?: string }): str
           </div>
           <div>
             <label for="sw-cred" class="mb-1.5 block text-sm font-medium">Credential</label>
-            <select id="sw-cred" v-model="switchGit.git_credential_id" class="field">
+            <Select id="sw-cred" v-model="switchGit.git_credential_id">
               <option value="">None — public repository</option>
               <option v-for="c in gitCreds" :key="c.id" :value="c.id">
                 {{ c.name }} ({{ c.kind === 'ssh' ? 'SSH' : 'token' }})
               </option>
-            </select>
+            </Select>
             <p class="subtle mt-1 text-xs">
               <RouterLink
                 v-if="canSeeGitCreds"
@@ -1075,10 +1071,7 @@ function triggeredBy(d: { trigger_kind: string; started_by_name?: string }): str
               </p>
             </div>
             <div class="flex items-center gap-1">
-              <button class="btn btn-ghost btn-sm" @click="copySource">
-                <AppIcon :name="sourceCopied ? 'check' : 'copy'" class="size-3.5" />
-                {{ sourceCopied ? 'Copied' : 'Copy' }}
-              </button>
+              <CopyButton :text="sourceYaml" />
               <button
                 class="btn btn-ghost btn-sm btn-icon"
                 aria-label="Close"

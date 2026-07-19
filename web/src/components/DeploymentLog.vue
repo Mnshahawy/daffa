@@ -4,6 +4,7 @@ import type { Deployment } from '@/lib/api'
 import { streamDeployment, type DeploymentEnd } from '@/lib/stream'
 import AppIcon from './ui/AppIcon.vue'
 import BaseButton from './ui/BaseButton.vue'
+import CopyButton from './ui/CopyButton.vue'
 
 const props = defineProps<{ deployment: Deployment }>()
 const emit = defineEmits<{ end: [DeploymentEnd] }>()
@@ -74,10 +75,6 @@ function onScroll() {
 watch(() => props.deployment.id, subscribe, { immediate: true })
 onUnmounted(() => stop?.())
 
-function copy() {
-  void navigator.clipboard.writeText(text.value)
-}
-
 // A deploy log is the thing people paste into a ticket or send to a colleague, and a 5000-line
 // compose failure does not survive a copy-paste into a chat window.
 function download() {
@@ -126,10 +123,7 @@ function download() {
           Wrap
         </label>
 
-        <BaseButton v-if="text" intent="ghost" size="xs" @click="copy">
-          <AppIcon name="copy" class="size-3" />
-          Copy
-        </BaseButton>
+        <CopyButton v-if="text" intent="ghost" size="xs" :text="text" />
 
         <BaseButton v-if="text" intent="ghost" size="xs" @click="download">
           <AppIcon name="download" class="size-3" />

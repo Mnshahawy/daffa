@@ -1,16 +1,18 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
-import { ApiError, bytes, daffa, type BackupJob } from '@/lib/api'
+import { bytes, daffa, type BackupJob } from '@/lib/api'
 import { useSession } from '@/stores/session'
 import BackupSnapshots from '@/components/BackupSnapshots.vue'
 import { Cap } from '@/lib/caps'
 import { confirm } from '@/lib/confirm'
+import { toast } from '@/lib/toast'
 import { type Status } from '@/lib/status'
 import AppIcon from '@/components/ui/AppIcon.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import PageHeader from '@/components/ui/PageHeader.vue'
+import Select from '@/components/ui/Select.vue'
 import StatusPill from '@/components/ui/StatusPill.vue'
 
 const session = useSession()
@@ -23,7 +25,6 @@ const { data: jobs, isLoading } = useQuery({
 })
 
 const adding = ref(false)
-const error = ref('')
 const expanded = ref<string | null>(null)
 
 // Storage is chosen, not retyped. The bucket and its credentials live in Settings →
@@ -65,6 +66,23 @@ const form = ref({
 // nothing to it, so the form stops asking rather than greying out.
 const isVolume = computed(() => form.value.engine === 'volume')
 
+// A sourced volume is a disposable copy of a git repo: backing it up would only snapshot what git
+// already tracks, and the next sync would undo any restore. The server refuses such a job; this
+// catches it in the form so the volume field says so before the rest is filled in.
+const { data: volSources } = useQuery({
+  queryKey: ['volume-sources'],
+  queryFn: daffa.volumeSources,
+  enabled: computed(() => session.can(Cap.VolsourcesView)),
+})
+const sourcedVolumes = computed(() => {
+  const set = new Set<string>()
+  for (const s of volSources.value ?? []) if (s.env_id === session.envId) set.add(s.volume)
+  return set
+})
+const volumeIsSourced = computed(
+  () => isVolume.value && sourcedVolumes.value.has(form.value.volume.trim()),
+)
+
 function toggleKey(id: string) {
   const ks = form.value.key_ids
   form.value.key_ids = ks.includes(id) ? ks.filter((k) => k !== id) : [...ks, id]
@@ -84,26 +102,30 @@ const create = useMutation({
   mutationFn: () => daffa.createBackup({ ...form.value, env_id: session.envId }),
   onSuccess: () => {
     adding.value = false
-    error.value = ''
+    toast.ok('Backup job created.')
     qc.invalidateQueries({ queryKey: ['backups'] })
   },
-  onError: (e) => {
-    error.value = e instanceof ApiError ? e.message : 'Could not create the job.'
-  },
+  onError: (e) => toast.err(e, 'Could not create the job.'),
 })
 
 const run = useMutation({
   mutationFn: (id: string) => daffa.runBackup(id),
+  onSuccess: () => toast.ok('Backup started.'),
+  onError: (e) => toast.err(e, 'Could not start the backup.'),
   onSettled: () => qc.invalidateQueries({ queryKey: ['backups'] }),
 })
 
 const toggle = useMutation({
   mutationFn: (id: string) => daffa.toggleBackup(id),
+  onSuccess: () => toast.ok('Backup job updated.'),
+  onError: (e) => toast.err(e, 'Could not update the job.'),
   onSettled: () => qc.invalidateQueries({ queryKey: ['backups'] }),
 })
 
 const remove = useMutation({
   mutationFn: (id: string) => daffa.deleteBackup(id),
+  onSuccess: () => toast.ok('Backup job deleted.'),
+  onError: (e) => toast.err(e, 'Could not delete the job.'),
   onSettled: () => qc.invalidateQueries({ queryKey: ['backups'] }),
 })
 
@@ -217,18 +239,30 @@ function runStatus(j: BackupJob): Status {
             class="field font-mono text-xs"
             data-cursor="text"
           />
-          <p class="subtle mt-1 text-xs">
+          <p v-if="!volumeIsSourced" class="subtle mt-1 text-xs">
             The named volume to snapshot. No user container is touched — the daemon reads it.
+          </p>
+          <p
+            v-else
+            class="mt-1.5 rounded-[var(--radius-control)] px-3 py-2 text-xs"
+            :style="{
+              background: 'var(--warn-soft)',
+              border: '1px solid color-mix(in oklch, var(--warn) 30%, transparent)',
+            }"
+          >
+            This volume is kept in sync from git by a volume source — its contents are a disposable
+            copy of the repo, so there is nothing to back up that git does not already track. Back up
+            the repository instead.
           </p>
         </div>
         <div>
           <label for="b-engine" class="mb-1.5 block text-sm font-medium">Engine</label>
-          <select id="b-engine" v-model="form.engine" class="field">
+          <Select id="b-engine" v-model="form.engine">
             <option value="postgres">PostgreSQL</option>
             <option value="mysql">MySQL / MariaDB</option>
             <option value="mongodb">MongoDB</option>
             <option value="volume">Volume — tar of a named volume</option>
-          </select>
+          </Select>
           <p v-if="isVolume" class="subtle mt-1 text-xs">
             For file-shaped data: repositories, uploads, provisioning state. A file-level snapshot
             of a live database is torn — for databases use a database engine.
@@ -341,12 +375,12 @@ function runStatus(j: BackupJob): Status {
         <div v-else class="grid gap-4 sm:grid-cols-2">
           <div>
             <label for="b-storage" class="mb-1.5 block text-sm font-medium">Storage target</label>
-            <select id="b-storage" v-model="form.storage_id" required class="field">
+            <Select id="b-storage" v-model="form.storage_id" required>
               <option value="" disabled>Choose a bucket…</option>
               <option v-for="t in targets" :key="t.id" :value="t.id">
                 {{ t.name }} — {{ t.bucket }}
               </option>
-            </select>
+            </Select>
           </div>
           <div>
             <label for="b-prefix" class="mb-1.5 block text-sm font-medium">
@@ -434,14 +468,12 @@ function runStatus(j: BackupJob): Status {
         </p>
       </div>
 
-      <p v-if="error" class="text-sm" :style="{ color: 'var(--danger)' }">{{ error }}</p>
-
       <BaseButton
         type="submit"
         intent="primary"
         size="md"
         :loading="create.isPending.value"
-        :disabled="!targets?.length"
+        :disabled="!targets?.length || volumeIsSourced"
       >
         Create job
       </BaseButton>

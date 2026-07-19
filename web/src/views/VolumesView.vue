@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
-import { ApiError, bytes, daffa, type Volume } from '@/lib/api'
+import { bytes, daffa, type Volume } from '@/lib/api'
 import { useSession } from '@/stores/session'
 import { confirm } from '@/lib/confirm'
+import { toast } from '@/lib/toast'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import PageHeader from '@/components/ui/PageHeader.vue'
@@ -67,19 +68,24 @@ const shown = computed(() => {
 
 // The refusal has to reach the person: a volume a source or an enabled backup job
 // references is refused server-side, and the error names what to detach first.
-const removeError = ref('')
 const remove = useMutation({
   mutationFn: (name: string) => daffa.removeVolume(session.envId, name),
-  onSuccess: () => {
-    removeError.value = ''
-  },
-  onError: (e) => {
-    removeError.value = e instanceof ApiError ? e.message : 'Could not remove the volume.'
-  },
+  onSuccess: () => toast.ok('Volume removed.'),
+  onError: (e) => toast.err(e, 'Could not remove the volume.'),
   onSettled: () => qc.invalidateQueries({ queryKey: ['volumes'] }),
 })
 
-const orphaned = computed(() => (volumes.value ?? []).filter((v) => !v.used_by?.length).length)
+// "Mounted by nothing" is Docker's view — it only sees RUNNING containers, so a volume that is
+// load-bearing but not currently mounted reads as unused. The classic case: a `sourced` volume
+// (repopulated from git) that a deploy-time HOOK mounts via `compose run --rm` and unmounts the
+// instant it exits — precisely db-initdb here. Daffa already refuses to delete a sourced, backed-up,
+// or system volume even when nothing mounts it (resource_handlers.go), so the list must not flag
+// those "unused" and invite exactly the deletion the server would block. The `sourced`/`backed up`
+// name badge is what says WHY it is kept.
+const kept = (name: string) => sourced.value.has(name) || backedUp.value.has(name)
+const isUnused = (v: Volume) => !v.used_by?.length && !kept(v.name) && !v.system
+
+const orphaned = computed(() => (volumes.value ?? []).filter(isUnused).length)
 
 async function onRemove(v: Volume) {
   // A volume is DATA. Deleting one is not like deleting a container, and the dialog
@@ -105,7 +111,13 @@ async function onRemove(v: Volume) {
     <PageHeader
       title="Volumes"
       :count="volumes ? (filter ? `${shown.length} of ${volumes.length}` : volumes.length) : undefined"
-      :description="volumes?.length ? `${orphaned} of these are mounted by nothing.` : undefined"
+      :description="
+        volumes?.length
+          ? orphaned === 1
+            ? '1 of these is unused — mounted by nothing and not kept by Daffa.'
+            : `${orphaned} of these are unused — mounted by nothing and not kept by Daffa.`
+          : undefined
+      "
     >
       <template #actions>
         <SearchInput
@@ -117,15 +129,6 @@ async function onRemove(v: Volume) {
         <PruneButton target="volumes" label="Prune anonymous" />
       </template>
     </PageHeader>
-
-    <p
-      v-if="removeError"
-      role="alert"
-      class="mb-4 rounded-[var(--radius-control)] px-3 py-2 text-sm"
-      :style="{ background: 'var(--danger-soft)', color: 'var(--danger)' }"
-    >
-      {{ removeError }}
-    </p>
 
     <p v-if="isLoading" class="muted text-sm">Loading…</p>
 
@@ -188,13 +191,22 @@ async function onRemove(v: Volume) {
                 {{ v.used_by.join(', ') }}
               </span>
               <!-- Unused is amber, not red: an orphaned volume is very often the last copy of
-                   something, and the point of flagging it is "look at this", not "delete it". -->
+                   something, and the point of flagging it is "look at this", not "delete it". Only
+                   truly orphaned volumes get it — one Daffa keeps (sourced/backed up/system) is not
+                   orphaned even though nothing mounts it right now. -->
               <span
-                v-else
+                v-else-if="isUnused(v)"
                 class="rounded-md px-1.5 py-0.5 text-xs font-medium"
                 :style="{ background: 'var(--warn-soft)', color: 'var(--warn)' }"
               >
                 unused
+              </span>
+              <span
+                v-else
+                class="subtle text-xs"
+                title="Nothing mounts this right now, but Daffa keeps it — a volume source, a backup job, or a deploy-time hook uses it."
+              >
+                not mounted
               </span>
             </td>
 

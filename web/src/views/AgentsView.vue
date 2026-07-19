@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
-import { ApiError, daffa, type Agent, type NewAgent } from '@/lib/api'
+import { daffa, type Agent, type NewAgent } from '@/lib/api'
+import { toast } from '@/lib/toast'
 import { confirm } from '@/lib/confirm'
 import { hostStatus, type Status } from '@/lib/status'
 import AppIcon from '@/components/ui/AppIcon.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
+import CopyButton from '@/components/ui/CopyButton.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import StatusPill from '@/components/ui/StatusPill.vue'
 
@@ -18,7 +20,6 @@ const { data: agents, isLoading } = useQuery({
 })
 
 const name = ref('')
-const error = ref('')
 // The join token is shown ONCE, here, and never stored anywhere it can be read back.
 // If it is lost, the answer is to delete the agent and add it again — not to go
 // looking for it.
@@ -29,16 +30,15 @@ const create = useMutation({
   onSuccess: (agent) => {
     created.value = agent
     name.value = ''
-    error.value = ''
     qc.invalidateQueries({ queryKey: ['agents'] })
   },
-  onError: (e) => {
-    error.value = e instanceof ApiError ? e.message : 'Could not create the agent.'
-  },
+  onError: (e) => toast.err(e, 'Could not create the agent.'),
 })
 
 const remove = useMutation({
   mutationFn: (id: string) => daffa.deleteAgent(id),
+  onSuccess: () => toast.ok('Agent removed.'),
+  onError: (e) => toast.err(e, 'Could not remove the agent.'),
   onSettled: () => {
     qc.invalidateQueries({ queryKey: ['agents'] })
     qc.invalidateQueries({ queryKey: ['environments'] })
@@ -70,10 +70,6 @@ function agentStatus(a: Agent): Status {
 function installCommand(a: NewAgent): string {
   const server = location.origin
   return `daffa agent --server ${server} --token ${a.join_token}`
-}
-
-async function copy(text: string) {
-  await navigator.clipboard.writeText(text)
 }
 
 function seen(a: Agent): string {
@@ -113,8 +109,6 @@ function seen(a: Agent): string {
         </BaseButton>
       </form>
 
-      <p v-if="error" class="mt-3 text-sm" :style="{ color: 'var(--danger)' }">{{ error }}</p>
-
       <!-- The one-time token -->
       <div
         v-if="created"
@@ -133,15 +127,7 @@ function seen(a: Agent): string {
           :style="{ background: 'var(--surface-sunken)' }"
         >
           <code class="flex-1 break-all">{{ installCommand(created) }}</code>
-          <BaseButton
-            intent="ghost"
-            size="xs"
-            class="shrink-0"
-            @click="copy(installCommand(created!))"
-          >
-            <AppIcon name="copy" class="size-3.5" />
-            Copy
-          </BaseButton>
+          <CopyButton intent="ghost" size="xs" class="shrink-0" :text="installCommand(created!)" />
         </div>
         <p class="muted mt-2 text-xs">
           This join token is shown once and expires in

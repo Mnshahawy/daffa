@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useQuery, useQueryClient } from '@tanstack/vue-query'
-import { ApiError, daffa, type Role } from '@/lib/api'
+import { daffa, type Role } from '@/lib/api'
 import { Cap } from '@/lib/caps'
 import { confirm } from '@/lib/confirm'
+import { toast } from '@/lib/toast'
 import { useSession } from '@/stores/session'
 import CapabilityMatrix from '@/components/CapabilityMatrix.vue'
 import AppIcon from '@/components/ui/AppIcon.vue'
@@ -23,7 +24,6 @@ const { data: capabilities } = useQuery({
 
 const editing = ref<Role | null>(null)
 const creating = ref(false)
-const error = ref('')
 const busy = ref(false)
 
 const form = ref({ name: '', description: '', cap_names: [] as string[] })
@@ -31,26 +31,22 @@ const form = ref({ name: '', description: '', cap_names: [] as string[] })
 function startCreate() {
   creating.value = true
   editing.value = null
-  error.value = ''
   form.value = { name: '', description: '', cap_names: [] }
 }
 
 function startEdit(r: Role) {
   creating.value = false
   editing.value = r
-  error.value = ''
   form.value = { name: r.name, description: r.description, cap_names: [...r.cap_names] }
 }
 
 function cancel() {
   creating.value = false
   editing.value = null
-  error.value = ''
 }
 
 async function save() {
   busy.value = true
-  error.value = ''
   try {
     if (editing.value) {
       await daffa.updateRole(editing.value.id, form.value)
@@ -62,8 +58,9 @@ async function save() {
     // the UI keeps showing buttons they no longer have.
     await session.refresh()
     cancel()
+    toast.ok('Role saved.')
   } catch (e) {
-    error.value = e instanceof ApiError ? e.message : 'Could not save the role.'
+    toast.err(e, 'Could not save the role.')
   } finally {
     busy.value = false
   }
@@ -86,13 +83,13 @@ async function remove(r: Role) {
   })
   if (!ok) return
 
-  error.value = ''
   try {
     await daffa.deleteRole(r.id)
     await qc.invalidateQueries({ queryKey: ['roles'] })
     await session.refresh()
+    toast.ok('Role deleted.')
   } catch (e) {
-    error.value = e instanceof ApiError ? e.message : 'Could not delete the role.'
+    toast.err(e, 'Could not delete the role.')
   }
 }
 </script>
@@ -117,8 +114,6 @@ async function remove(r: Role) {
         </BaseButton>
       </div>
     </div>
-
-    <p v-if="error" class="mb-4 text-sm" :style="{ color: 'var(--danger)' }">{{ error }}</p>
 
     <!-- Editor -->
     <div v-if="creating || editing" class="surface mb-6 rounded-[var(--radius-card)] p-5">

@@ -10,6 +10,7 @@ import PageHeader from '@/components/ui/PageHeader.vue'
 import PruneButton from '@/components/PruneButton.vue'
 import SearchInput from '@/components/SearchInput.vue'
 import { Cap } from '@/lib/caps'
+import { toast } from '@/lib/toast'
 
 const session = useSession()
 const qc = useQueryClient()
@@ -37,6 +38,8 @@ const shown = computed(() => {
 const remove = useMutation({
   mutationFn: ({ id, force }: { id: string; force: boolean }) =>
     daffa.removeImage(session.envId, id, force),
+  onSuccess: () => toast.ok('Image removed.'),
+  onError: (e) => toast.err(e, 'Could not remove the image.'),
   onSettled: () => qc.invalidateQueries({ queryKey: ['images'] }),
 })
 

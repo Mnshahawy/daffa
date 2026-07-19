@@ -3,6 +3,7 @@ import { computed, onUnmounted, ref, watch } from 'vue'
 import { useQuery, useQueryClient } from '@tanstack/vue-query'
 import { bytes, daffa, type Container, type ContainerAction } from '@/lib/api'
 import { streamEvents } from '@/lib/stream'
+import { toast } from '@/lib/toast'
 import { useSession } from '@/stores/session'
 import { containerStatus, containerUptime } from '@/lib/status'
 import { Cap } from '@/lib/caps'
@@ -83,8 +84,24 @@ const groups = computed(() => {
 // table showed one row, which is a header describing a page you are not looking at.
 const shownCount = computed(() => groups.value.reduce((n, [, items]) => n + items.length, 0))
 
+// Past tense, for the toast. The one the operator just clicked, confirmed.
+const acted: Record<ContainerAction, string> = {
+  start: 'started',
+  stop: 'stopped',
+  restart: 'restarted',
+  pause: 'paused',
+  unpause: 'resumed',
+  kill: 'killed',
+  remove: 'removed',
+}
+
 async function act(c: Container, action: ContainerAction) {
-  await daffa.action(session.envId, c.id, action, action === 'remove')
+  try {
+    await daffa.action(session.envId, c.id, action, action === 'remove')
+    toast.ok(`${c.name} ${acted[action]}.`)
+  } catch (e) {
+    toast.err(e, `Could not ${action} ${c.name}.`)
+  }
   await qc.invalidateQueries({ queryKey: ['containers'] })
 }
 

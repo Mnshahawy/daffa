@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
-import { ApiError, daffa, type StorageTarget } from '@/lib/api'
+import { daffa, type StorageTarget } from '@/lib/api'
 import { confirm } from '@/lib/confirm'
+import { toast } from '@/lib/toast'
 import { useSession } from '@/stores/session'
 import { Cap } from '@/lib/caps'
 import AppIcon from '@/components/ui/AppIcon.vue'
@@ -11,7 +12,6 @@ import EmptyState from '@/components/ui/EmptyState.vue'
 
 const qc = useQueryClient()
 const session = useSession()
-const error = ref('')
 const adding = ref(false)
 
 // The page is reachable with storage.view alone; creating and deleting targets is
@@ -32,27 +32,24 @@ const create = useMutation({
   onSuccess: () => {
     form.value = blank()
     adding.value = false
-    error.value = ''
+    toast.ok('Target saved.')
     qc.invalidateQueries({ queryKey: ['storage'] })
   },
-  onError: (e) => {
-    error.value = e instanceof ApiError ? e.message : 'Could not save the target.'
-  },
+  onError: (e) => toast.err(e, 'Could not save the target.'),
 })
 
 const remove = useMutation({
   mutationFn: (id: string) => daffa.deleteStorage(id),
   onSettled: () => qc.invalidateQueries({ queryKey: ['storage'] }),
-  onError: (e) => {
-    error.value = e instanceof ApiError ? e.message : 'Could not delete the target.'
-  },
+  onSuccess: () => toast.ok('Target deleted.'),
+  onError: (e) => toast.err(e, 'Could not delete the target.'),
 })
 
 async function onRemove(t: StorageTarget) {
   // The server refuses anyway if jobs depend on it; saying so here saves a round trip
   // and an error message that arrives after the click.
   if (t.in_use > 0) {
-    error.value = `${t.name} is used by ${t.in_use} backup job${t.in_use === 1 ? '' : 's'}. Point them elsewhere first.`
+    toast.warn(`${t.name} is used by ${t.in_use} backup job${t.in_use === 1 ? '' : 's'}. Point them elsewhere first.`)
     return
   }
   const ok = await confirm({
@@ -141,8 +138,6 @@ async function onRemove(t: StorageTarget) {
         </div>
       </div>
 
-      <p v-if="error" class="mt-3 text-sm" :style="{ color: 'var(--danger)' }">{{ error }}</p>
-
       <BaseButton
         type="submit"
         intent="primary"
@@ -157,10 +152,6 @@ async function onRemove(t: StorageTarget) {
         failing at 3am.
       </p>
     </form>
-
-    <p v-if="error && !adding" class="mb-3 text-sm" :style="{ color: 'var(--danger)' }">
-      {{ error }}
-    </p>
 
     <p v-if="isLoading" class="muted text-sm">Loading…</p>
 

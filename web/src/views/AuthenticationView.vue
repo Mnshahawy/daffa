@@ -4,10 +4,12 @@ import { useQuery, useQueryClient } from '@tanstack/vue-query'
 import { ApiError, daffa, type Provider } from '@/lib/api'
 import { Cap } from '@/lib/caps'
 import { confirm } from '@/lib/confirm'
+import { toast } from '@/lib/toast'
 import { useSession } from '@/stores/session'
 import AppIcon from '@/components/ui/AppIcon.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
+import Select from '@/components/ui/Select.vue'
 import StatusPill from '@/components/ui/StatusPill.vue'
 
 const session = useSession()
@@ -27,7 +29,6 @@ const { data: envs } = useQuery({ queryKey: ['environments'], queryFn: daffa.env
 // cannot be limited to one.
 const mappingRole = computed(() => roles.value?.find((r) => r.id === newMapping.value.role_id))
 
-const error = ref('')
 const busy = ref(false)
 const editing = ref<Provider | null>(null)
 const creating = ref(false)
@@ -157,7 +158,6 @@ function applyPreset(p: Preset) {
 function startCreate() {
   creating.value = true
   editing.value = null
-  error.value = ''
   chosenPreset.value = null
   presetSuggestion.value = { name: '', slug: '' }
   form.value = blank()
@@ -166,19 +166,16 @@ function startCreate() {
 function startEdit(p: Provider) {
   creating.value = false
   editing.value = p
-  error.value = ''
   form.value = { ...p, client_secret: '' } // blank means "keep the stored one"
 }
 
 function cancel() {
   creating.value = false
   editing.value = null
-  error.value = ''
 }
 
 async function save() {
   busy.value = true
-  error.value = ''
   try {
     if (editing.value) {
       await daffa.updateProvider(editing.value.id, form.value)
@@ -187,8 +184,9 @@ async function save() {
     }
     await qc.invalidateQueries({ queryKey: ['providers'] })
     cancel()
+    toast.ok('Provider saved.')
   } catch (e) {
-    error.value = e instanceof ApiError ? e.message : 'Could not save the provider.'
+    toast.err(e, 'Could not save the provider.')
   } finally {
     busy.value = false
   }
@@ -227,8 +225,9 @@ async function remove(p: Provider) {
   try {
     await daffa.deleteProvider(p.id)
     await qc.invalidateQueries({ queryKey: ['providers'] })
+    toast.ok('Provider removed.')
   } catch (e) {
-    error.value = e instanceof ApiError ? e.message : 'Could not remove the provider.'
+    toast.err(e, 'Could not remove the provider.')
   }
 }
 
@@ -251,8 +250,9 @@ async function addMapping() {
     await daffa.createMapping(expanded.value, newMapping.value)
     newMapping.value = { claim_value: '', role_id: '', env_id: '' }
     await refetchMappings()
+    toast.ok('Mapping added.')
   } catch (e) {
-    error.value = e instanceof ApiError ? e.message : 'Could not add the mapping.'
+    toast.err(e, 'Could not add the mapping.')
   }
 }
 
@@ -274,6 +274,7 @@ async function removeMapping(id: string) {
 
   await daffa.deleteMapping(expanded.value, id)
   await refetchMappings()
+  toast.ok('Mapping deleted.')
 }
 
 function roleName(id: string): string {
@@ -301,8 +302,6 @@ function roleName(id: string): string {
         </BaseButton>
       </div>
     </div>
-
-    <p v-if="error" class="mb-4 text-sm" :style="{ color: 'var(--danger)' }">{{ error }}</p>
 
     <!-- Editor -->
     <form
@@ -445,10 +444,10 @@ function roleName(id: string): string {
           <label for="p-default" class="mb-1.5 block text-sm font-medium">
             Role for unmapped users
           </label>
-          <select id="p-default" v-model="form.default_role_id" class="field">
+          <Select id="p-default" v-model="form.default_role_id">
             <option value="">Refuse them (recommended)</option>
             <option v-for="r in roles" :key="r.id" :value="r.id">{{ r.name }}</option>
-          </select>
+          </Select>
           <p class="subtle mt-1 max-w-2xl text-xs">
             What someone gets when their claims match no mapping. Refusing is the safe default:
             signing them in with no capabilities would show them an empty application, which
@@ -653,20 +652,20 @@ function roleName(id: string): string {
 
                     <div class="w-44">
                       <label :for="`m-role-${p.id}`" class="eyebrow mb-1 block">Role</label>
-                      <select :id="`m-role-${p.id}`" v-model="newMapping.role_id" class="field">
+                      <Select :id="`m-role-${p.id}`" v-model="newMapping.role_id">
                         <option value="">Choose a role…</option>
                         <option v-for="r in roles" :key="r.id" :value="r.id">{{ r.name }}</option>
-                      </select>
+                      </Select>
                     </div>
 
                     <!-- A role that administers Daffa itself cannot be limited to one host, so it
                          is not offered one — rather than offering it and having the server refuse. -->
                     <div v-if="mappingRole?.scopable" class="w-40">
                       <label :for="`m-env-${p.id}`" class="eyebrow mb-1 block">Scope</label>
-                      <select :id="`m-env-${p.id}`" v-model="newMapping.env_id" class="field">
+                      <Select :id="`m-env-${p.id}`" v-model="newMapping.env_id">
                         <option value="">Everywhere</option>
                         <option v-for="e in envs" :key="e.id" :value="e.id">on {{ e.name }}</option>
-                      </select>
+                      </Select>
                     </div>
 
                     <BaseButton

@@ -1,14 +1,17 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useQuery, useQueryClient } from '@tanstack/vue-query'
-import { ApiError, daffa, type Alert, type Monitor } from '@/lib/api'
+import { daffa, type Alert, type Monitor } from '@/lib/api'
 import { Cap } from '@/lib/caps'
 import { confirm } from '@/lib/confirm'
 import { useSession } from '@/stores/session'
+import { toast } from '@/lib/toast'
 import { type Status } from '@/lib/status'
 import AppIcon from '@/components/ui/AppIcon.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
+import ComboBox from '@/components/ui/ComboBox.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
+import Select from '@/components/ui/Select.vue'
 import StatusPill from '@/components/ui/StatusPill.vue'
 
 const session = useSession()
@@ -31,7 +34,6 @@ const { data: envs } = useQuery({
   queryFn: daffa.environments,
 })
 
-const error = ref('')
 const busy = ref(false)
 
 // ── sampling and retention ────────────────────────────────────────────────────
@@ -57,12 +59,12 @@ const tooFast = computed(() => form.value.interval_secs < minInterval.value)
 
 async function saveConfig() {
   busy.value = true
-  error.value = ''
   try {
     await daffa.saveMonitorConfig(form.value)
     await qc.invalidateQueries({ queryKey: ['monitor-config'] })
+    toast.ok('Sampling settings saved.')
   } catch (e) {
-    error.value = e instanceof ApiError ? e.message : 'Could not save.'
+    toast.err(e, 'Could not save.')
   } finally {
     busy.value = false
   }
@@ -85,7 +87,7 @@ const draft = ref({ ...blank })
 const editing = ref<string | null>(null)
 
 // ── target suggestions (stack / container comboboxes) ─────────────────────────
-// The Stack and Container targets are name filters ("" = any). These feed a <datalist> so an
+// The Stack and Container targets are name filters ("" = any). These feed a ComboBox so an
 // operator can pick from what exists without losing the ability to type a name that is not running
 // yet (a stopped container, a not-yet-deployed stack, an "Every host" rule). Declared after draft:
 // vue-query reads the reactive key/enabled during setup, so draft must already exist.
@@ -107,11 +109,15 @@ const stackOptions = computed(() => {
   return [...new Set(scoped.map((s) => s.name))].sort()
 })
 
-// Containers on the host, narrowed to the selected stack (its compose project) when one is set.
-const containerOptions = computed(() => {
+// The target below the stack is the SERVICE, not a single container — a monitor watches "the api
+// service", and its replicas come and go. So the options are service names (`c.service`), narrowed
+// to the chosen stack; a standalone container with no service is offered by its own name, which is
+// exactly the identity the evaluator keys on (COALESCE(service, container_name)).
+const serviceOptions = computed(() => {
   const list = containers.value ?? []
-  const scoped = draft.value.stack ? list.filter((c) => c.project === draft.value.stack) : list
-  return [...new Set(scoped.map((c) => c.name))].sort()
+  const stack = draft.value.stack
+  const scoped = stack ? list.filter((c) => c.project === stack) : list
+  return [...new Set(scoped.map((c) => c.service || c.name))].sort()
 })
 
 // ── what a rule is written in, versus what it is stored in ────────────────────
@@ -218,7 +224,6 @@ function edit(m: Monitor) {
   editing.value = m.id
   draft.value = { ...m }
   decompose(m)
-  error.value = ''
 }
 
 function reset() {
@@ -227,20 +232,19 @@ function reset() {
   resource.value = 'mem'
   unit.value = '%'
   amount.value = 70
-  error.value = ''
 }
 
 async function save() {
   busy.value = true
-  error.value = ''
   try {
     const rule = pending.value
     if (editing.value) await daffa.updateMonitor(editing.value, rule)
     else await daffa.createMonitor(rule)
     await qc.invalidateQueries({ queryKey: ['monitors'] })
     reset()
+    toast.ok('Monitor saved.')
   } catch (e) {
-    error.value = e instanceof ApiError ? e.message : 'Could not save the monitor.'
+    toast.err(e, 'Could not save the monitor.')
   } finally {
     busy.value = false
   }
@@ -259,8 +263,9 @@ async function remove(m: Monitor) {
     await daffa.deleteMonitor(m.id)
     await qc.invalidateQueries({ queryKey: ['monitors'] })
     await qc.invalidateQueries({ queryKey: ['alerts'] })
+    toast.ok('Monitor deleted.')
   } catch (e) {
-    error.value = e instanceof ApiError ? e.message : 'Could not delete.'
+    toast.err(e, 'Could not delete.')
   } finally {
     busy.value = false
   }
@@ -301,7 +306,7 @@ function sentence(m: Monitor | typeof blank): string {
   const dir = m.op === '>' ? 'stays above' : 'stays below'
   const dur = durations.find((d) => d.value === m.duration_secs)?.label ?? `${m.duration_secs}s`
   const where = [
-    m.container ? `container ${m.container}` : '',
+    m.container ? `service ${m.container}` : '',
     m.stack ? `stack ${m.stack}` : '',
     `on ${envName(m.env_id)}`,
   ]
@@ -374,15 +379,6 @@ const recoveredStatus: Status = { tone: 'success', label: 'Recovered' }
       </p>
     </div>
 
-    <p
-      v-if="error"
-      role="alert"
-      class="mb-4 rounded-[var(--radius-control)] px-3 py-2 text-sm"
-      :style="{ background: 'var(--danger-soft)', color: 'var(--danger)' }"
-    >
-      {{ error }}
-    </p>
-
     <!-- Firing first. It is the only thing on this page that might need doing right now. -->
     <section
       v-if="firing.length"
@@ -400,7 +396,7 @@ const recoveredStatus: Status = { tone: 'success', label: 'Recovered' }
         <thead>
           <tr class="border-b" :style="{ borderColor: 'var(--border)' }">
             <th class="eyebrow px-4 py-2 text-left font-medium">State</th>
-            <th class="eyebrow py-2 pr-4 text-left font-medium">Container</th>
+            <th class="eyebrow py-2 pr-4 text-left font-medium">Service</th>
             <th class="eyebrow py-2 pr-4 text-left font-medium">Monitor</th>
             <th class="eyebrow py-2 pr-4 text-right font-medium">Value</th>
             <th class="eyebrow py-2 pr-4 text-right font-medium">Since</th>
@@ -543,22 +539,21 @@ const recoveredStatus: Status = { tone: 'success', label: 'Recovered' }
         <div class="grid gap-4 sm:grid-cols-4">
           <div>
             <label for="m-metric" class="mb-1.5 block text-sm font-medium">Watch</label>
-            <select
+            <Select
               id="m-metric"
-              class="field"
-              :value="resource"
-              @change="pickResource(($event.target as HTMLSelectElement).value as Resource)"
+              :model-value="resource"
+              @update:model-value="pickResource($event as Resource)"
             >
               <option value="mem">Memory</option>
               <option value="cpu">CPU</option>
-            </select>
+            </Select>
           </div>
           <div>
             <label for="m-op" class="mb-1.5 block text-sm font-medium">When it</label>
-            <select id="m-op" v-model="draft.op" class="field">
+            <Select id="m-op" v-model="draft.op">
               <option value=">">stays above</option>
               <option value="<">stays below</option>
-            </select>
+            </Select>
           </div>
 
           <!-- The threshold and its unit are one control, because they are one decision: "70"
@@ -576,22 +571,22 @@ const recoveredStatus: Status = { tone: 'success', label: 'Recovered' }
                 class="field min-w-0 flex-1 font-mono text-xs"
               />
               <label :for="'m-unit'" class="sr-only">Unit</label>
-              <select
+              <Select
                 id="m-unit"
-                class="field w-20 shrink-0"
-                :value="unit"
-                @change="pickUnit(($event.target as HTMLSelectElement).value as Unit)"
+                class="w-20 shrink-0"
+                :model-value="unit"
+                @update:model-value="pickUnit($event as Unit)"
               >
                 <option v-for="u in unitsFor[resource]" :key="u" :value="u">{{ u }}</option>
-              </select>
+              </Select>
             </div>
           </div>
 
           <div>
             <label for="m-duration" class="mb-1.5 block text-sm font-medium">For</label>
-            <select id="m-duration" v-model.number="draft.duration_secs" class="field">
+            <Select id="m-duration" v-model.number="draft.duration_secs">
               <option v-for="d in durations" :key="d.value" :value="d.value">{{ d.label }}</option>
-            </select>
+            </Select>
           </div>
         </div>
 
@@ -620,7 +615,7 @@ const recoveredStatus: Status = { tone: 'success', label: 'Recovered' }
         <div class="grid gap-4 sm:grid-cols-3">
           <div>
             <label for="m-env" class="mb-1.5 block text-sm font-medium">Host</label>
-            <select id="m-env" v-model="draft.env_id" class="field">
+            <Select id="m-env" v-model="draft.env_id">
               <!--
                 Every host is a FLEET-WIDE rule, and it takes monitors.edit everywhere. A
                 host-scoped holder is not offered it, because the server would refuse it — and
@@ -628,39 +623,31 @@ const recoveredStatus: Status = { tone: 'success', label: 'Recovered' }
               -->
               <option v-if="canEditFleet" value="">Every host</option>
               <option v-for="e in envs" :key="e.id" :value="e.id">{{ e.name }}</option>
-            </select>
+            </Select>
           </div>
           <div>
             <label for="m-stack" class="mb-1.5 block text-sm font-medium">
               Stack <span class="subtle font-normal">(optional)</span>
             </label>
-            <input
+            <ComboBox
               id="m-stack"
               v-model="draft.stack"
-              list="monitor-stacks"
+              :options="stackOptions"
               placeholder="any"
-              class="field font-mono text-xs"
-              data-cursor="text"
+              input-class="font-mono text-xs"
             />
-            <datalist id="monitor-stacks">
-              <option v-for="s in stackOptions" :key="s" :value="s" />
-            </datalist>
           </div>
           <div>
-            <label for="m-container" class="mb-1.5 block text-sm font-medium">
-              Container <span class="subtle font-normal">(optional)</span>
+            <label for="m-service" class="mb-1.5 block text-sm font-medium">
+              Service <span class="subtle font-normal">(optional)</span>
             </label>
-            <input
-              id="m-container"
+            <ComboBox
+              id="m-service"
               v-model="draft.container"
-              list="monitor-containers"
+              :options="serviceOptions"
               placeholder="any"
-              class="field font-mono text-xs"
-              data-cursor="text"
+              input-class="font-mono text-xs"
             />
-            <datalist id="monitor-containers">
-              <option v-for="c in containerOptions" :key="c" :value="c" />
-            </datalist>
           </div>
         </div>
 
@@ -784,7 +771,7 @@ const recoveredStatus: Status = { tone: 'success', label: 'Recovered' }
         <thead>
           <tr class="border-b" :style="{ borderColor: 'var(--border)' }">
             <th class="eyebrow px-4 py-2 text-left font-medium">State</th>
-            <th class="eyebrow py-2 pr-4 text-left font-medium">Container</th>
+            <th class="eyebrow py-2 pr-4 text-left font-medium">Service</th>
             <th class="eyebrow py-2 pr-4 text-left font-medium">Why it cleared</th>
             <th class="eyebrow py-2 pr-4 text-right font-medium">Recovered</th>
           </tr>

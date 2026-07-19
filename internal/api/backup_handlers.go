@@ -176,6 +176,17 @@ func (s *Server) handleCreateBackupJob(w http.ResponseWriter, r *http.Request) {
 			badName(w, r)
 			return
 		}
+		// A sourced volume is a disposable copy of a git repo — the volume source rewrites it on
+		// every sync. Backing it up would snapshot what git already tracks, and restoring the backup
+		// would be undone by the next sync. The source of truth is the repo, so refuse the job and
+		// say so. Symmetric with the remove-volume refusal (resource_handlers.go).
+		if src, err := s.store.VolumeSourceByVolume(r.Context(), req.EnvID, req.Volume); err == nil {
+			httpx.Fail(w, r, http.StatusBadRequest, "sourced_volume",
+				"This volume is kept in sync from "+src.GitURL+" — its contents are a disposable copy of "+
+					"the repo, so there is nothing to back up that git does not already track. Back up the "+
+					"repository instead.")
+			return
+		}
 		req.Container, req.Databases, req.DBUser, req.DBPassword = "", "", "", ""
 		req.StopContainers = strings.TrimSpace(req.StopContainers)
 		cleaned, badPath := sanitizeExcludePaths(req.ExcludePaths)

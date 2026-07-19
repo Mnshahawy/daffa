@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useQueryClient } from '@tanstack/vue-query'
-import { bytes, daffa, ApiError, type PruneTarget } from '@/lib/api'
+import { bytes, daffa, type PruneTarget } from '@/lib/api'
+import { toast } from '@/lib/toast'
 import { Cap } from '@/lib/caps'
 import { confirm } from '@/lib/confirm'
 import { useSession } from '@/stores/session'
@@ -49,13 +50,15 @@ async function run() {
   result.value = ''
   try {
     const r = await daffa.prune(session.envId, props.target)
+    // The freed total is the whole point of running this, so it stays put on the row rather
+    // than sliding away on a toast timer — it is a value to read, not a receipt to glance at.
     result.value =
       r.deleted === 0
         ? 'Nothing to prune.'
         : `Removed ${r.deleted}${r.freed ? `, freed ${bytes(r.freed)}` : ''}.`
     await qc.invalidateQueries()
   } catch (e) {
-    result.value = e instanceof ApiError ? e.message : 'Prune failed.'
+    toast.err(e, 'Prune failed.')
   } finally {
     busy.value = false
   }

@@ -7,6 +7,7 @@ import { useSession } from '@/stores/session'
 import { type Status } from '@/lib/status'
 import AppIcon from '@/components/ui/AppIcon.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
+import CopyButton from '@/components/ui/CopyButton.vue'
 import StatusPill from '@/components/ui/StatusPill.vue'
 
 const props = defineProps<{ job: BackupJob }>()
@@ -43,10 +44,6 @@ function restoreCommand(s: Snapshot): string {
   ]
   if (s.encrypted) parts.push('--identity ~/key.txt')
   return parts.join(' \\\n  ')
-}
-
-async function copy(text: string) {
-  await navigator.clipboard.writeText(text)
 }
 
 /** Encryption is a state of the object in the bucket, so it is said the way every other state
@@ -150,15 +147,7 @@ function encryptionStatus(s: Snapshot): Status {
           :style="{ background: 'var(--surface)' }"
         >
           <pre class="flex-1 overflow-x-auto whitespace-pre">{{ restoreCommand(selected) }}</pre>
-          <BaseButton
-            intent="secondary"
-            size="xs"
-            class="shrink-0"
-            @click="copy(restoreCommand(selected!))"
-          >
-            <AppIcon name="copy" class="size-3.5" />
-            Copy
-          </BaseButton>
+          <CopyButton intent="secondary" size="xs" class="shrink-0" :text="restoreCommand(selected!)" />
         </div>
 
         <!-- The volume engine's two refusals are worth saying before the command runs into

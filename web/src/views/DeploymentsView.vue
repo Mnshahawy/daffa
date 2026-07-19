@@ -7,6 +7,7 @@ import { deploymentStatus } from '@/lib/status'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import PageHeader from '@/components/ui/PageHeader.vue'
+import Select from '@/components/ui/Select.vue'
 import StatusPill from '@/components/ui/StatusPill.vue'
 
 // The cross-stack feed.
@@ -77,10 +78,10 @@ const filters: { value: Status | ''; label: string }[] = [
 
         <div class="w-40">
           <label for="dep-host" class="sr-only">Host</label>
-          <select id="dep-host" v-model="host" class="field py-1.5 text-xs">
+          <Select id="dep-host" v-model="host" select-class="py-1.5 text-xs">
             <option value="">Every host</option>
             <option v-for="h in hosts" :key="h.id" :value="h.id">{{ h.name }}</option>
-          </select>
+          </Select>
         </div>
       </template>
     </PageHeader>

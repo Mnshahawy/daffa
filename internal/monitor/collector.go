@@ -16,10 +16,35 @@ import (
 
 // Compose stamps these on everything it creates; they are how a container knows which stack it
 // belongs to. Daffa deploys with `-p <stack name>`, so the project label IS the stack's name.
+// Swarm stamps its own set instead — a service task carries no compose labels at all — and its
+// namespace label is, identically, the stack's name. A box can run both engines at once, so a
+// container's stack is read from whichever pair is present (see stackOf/serviceOf). Without the
+// swarm fallback, every swarm container samples with an empty stack: the target picker shows
+// nothing for a swarm stack, and a stack-scoped monitor over one can never match a single row.
 const (
-	labelProject = "com.docker.compose.project"
-	labelService = "com.docker.compose.service"
+	labelProject      = "com.docker.compose.project"
+	labelService      = "com.docker.compose.service"
+	labelSwarmStack   = "com.docker.stack.namespace"
+	labelSwarmService = "com.docker.swarm.service.name"
 )
+
+// stackOf is the stack a container belongs to, compose or swarm. Compose wins when both are
+// somehow present; otherwise the swarm namespace answers. "" means the container is in no stack.
+func stackOf(labels map[string]string) string {
+	if p := labels[labelProject]; p != "" {
+		return p
+	}
+	return labels[labelSwarmStack]
+}
+
+// serviceOf is the container's service within its stack — compose's service name, or swarm's
+// (which is `<stack>_<service>`, e.g. `teeeet1_app`). Display only; the stack is what monitors key on.
+func serviceOf(labels map[string]string) string {
+	if s := labels[labelService]; s != "" {
+		return s
+	}
+	return labels[labelSwarmService]
+}
 
 type Collector struct {
 	store *store.Store
@@ -200,8 +225,8 @@ func (c *Collector) collectNode(ctx context.Context, envID string, node *dockerx
 			EnvID:         envID,
 			ContainerID:   shortID(r.ContainerID),
 			ContainerName: containerName(ct),
-			Stack:         ct.Labels[labelProject],
-			Service:       ct.Labels[labelService],
+			Stack:         stackOf(ct.Labels),
+			Service:       serviceOf(ct.Labels),
 			CPUPct:        cpuPct,
 			CPUCores:      cores,
 			MemBytes:      int64(r.MemBytes),

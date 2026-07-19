@@ -3,15 +3,16 @@ import { computed, ref } from 'vue'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import { ApiError, daffa, type GitCredential } from '@/lib/api'
 import { confirm } from '@/lib/confirm'
+import { toast } from '@/lib/toast'
 import { useSession } from '@/stores/session'
 import { Cap } from '@/lib/caps'
 import AppIcon from '@/components/ui/AppIcon.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
+import Select from '@/components/ui/Select.vue'
 
 const qc = useQueryClient()
 const session = useSession()
-const error = ref('')
 const adding = ref(false)
 
 // Reachable with deploy.git_creds.view; adding and deleting is deploy.git_creds.edit. Gate
@@ -108,20 +109,17 @@ const create = useMutation({
     chosenProvider.value = null
     selfHost.value = ''
     keyStatus.value = null
-    error.value = ''
+    toast.ok('Credential saved.')
     qc.invalidateQueries({ queryKey: ['gitcreds'] })
   },
-  onError: (e) => {
-    error.value = e instanceof ApiError ? e.message : 'Could not save the credential.'
-  },
+  onError: (e) => toast.err(e, 'Could not save the credential.'),
 })
 
 const remove = useMutation({
   mutationFn: (id: string) => daffa.deleteGitCredential(id),
   onSettled: () => qc.invalidateQueries({ queryKey: ['gitcreds'] }),
-  onError: (e) => {
-    error.value = e instanceof ApiError ? e.message : 'Could not delete the credential.'
-  },
+  onSuccess: () => toast.ok('Credential deleted.'),
+  onError: (e) => toast.err(e, 'Could not delete the credential.'),
 })
 
 // ── test a credential against a repo (ls-remote, no clone) ──────────────────────
@@ -149,7 +147,7 @@ const test = useMutation({
 
 async function onRemove(c: GitCredential) {
   if (c.in_use > 0) {
-    error.value = `${c.name} is used by ${c.in_use} stack${c.in_use === 1 ? '' : 's'}. Point them elsewhere first.`
+    toast.warn(`${c.name} is used by ${c.in_use} stack${c.in_use === 1 ? '' : 's'}. Point them elsewhere first.`)
     return
   }
   const ok = await confirm({
@@ -266,10 +264,10 @@ async function onRemove(c: GitCredential) {
         </div>
         <div>
           <label for="g-kind" class="mb-1.5 block text-sm font-medium">Type</label>
-          <select id="g-kind" v-model="form.kind" class="field">
+          <Select id="g-kind" v-model="form.kind">
             <option value="token">Access token (https://)</option>
             <option value="ssh">SSH key (git@host:…)</option>
-          </select>
+          </Select>
         </div>
       </div>
 
@@ -388,16 +386,10 @@ async function onRemove(c: GitCredential) {
         </p>
       </template>
 
-      <p v-if="error" class="text-sm" :style="{ color: 'var(--danger)' }">{{ error }}</p>
-
       <BaseButton type="submit" intent="primary" size="md" :loading="create.isPending.value">
         Save credential
       </BaseButton>
     </form>
-
-    <p v-if="error && !adding" class="mb-3 text-sm" :style="{ color: 'var(--danger)' }">
-      {{ error }}
-    </p>
 
     <p v-if="isLoading" class="muted text-sm">Loading…</p>
 

@@ -151,6 +151,113 @@ func TestANewContainerCannotAlreadyBeSustained(t *testing.T) {
 	})
 }
 
+// A swarm service is watched as a service, not as its task containers — because those come and go.
+//
+// A rolling update, a reschedule, or a scale event replaces a replica with a new task whose
+// container name carries a fresh id. Keyed on the container, the sustained window would reset the
+// instant that happened: ten minutes of a pegged service, split across two task names, would read
+// as two five-minute runs and never fire. The service name is the thing that stays.
+func TestAServiceOutlivesItsTaskContainers(t *testing.T) {
+	eachDialect(t, func(t *testing.T, s *Store) {
+		ctx := context.Background()
+		env := oneHost(t, s)
+
+		m := &Monitor{
+			Name: "CPU high", Enabled: true, Metric: "cpu_pct", Op: ">",
+			Threshold: 70, DurationSecs: 600, EnvID: env,
+		}
+		if err := s.CreateMonitor(ctx, m); err != nil {
+			t.Fatal(err)
+		}
+
+		at := time.Now().UTC().Truncate(time.Second)
+		const interval = 30 * time.Second
+
+		// Twenty rounds, every one pegged — but a rolling update swaps the task container halfway,
+		// so the first ten samples belong to one ephemeral container name and the last ten to
+		// another. Both are the same service, `web`.
+		for i := range 20 {
+			ts := at.Add(-time.Duration(19-i) * interval)
+			name := "web.1.aaaaaaaaaaaa"
+			if i >= 10 {
+				name = "web.1.bbbbbbbbbbbb"
+			}
+			if err := s.InsertSamples(ctx, []Sample{{
+				TS: ts, EnvID: env, ContainerID: "x", ContainerName: name, Service: "web", CPUPct: 99,
+			}}); err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		got, err := s.Evaluate(ctx, m, at)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 1 {
+			t.Fatalf("evaluated to %d rows; want 1 — the service, not one per task container", len(got))
+		}
+		if got[0].ContainerName != "web" {
+			t.Errorf("target = %q; want the service name %q", got[0].ContainerName, "web")
+		}
+		if !got[0].Sustained(20) {
+			t.Errorf("a service pegged for the whole window did not sustain across a task swap "+
+				"(%d of %d) — keyed on the ephemeral container it never could", got[0].Breaching, got[0].Samples)
+		}
+	})
+}
+
+// The service is breaching whenever ANY of its replicas is — and the replicas are collapsed to one
+// value per timestamp first, so coverage is counted in timestamps, not in replica-rows.
+func TestAServiceBreachesWhenAnyReplicaDoes(t *testing.T) {
+	eachDialect(t, func(t *testing.T, s *Store) {
+		ctx := context.Background()
+		env := oneHost(t, s)
+
+		m := &Monitor{
+			Name: "CPU high", Enabled: true, Metric: "cpu_pct", Op: ">",
+			Threshold: 70, DurationSecs: 600, EnvID: env,
+		}
+		if err := s.CreateMonitor(ctx, m); err != nil {
+			t.Fatal(err)
+		}
+
+		at := time.Now().UTC().Truncate(time.Second)
+		const interval = 30 * time.Second
+
+		// Two replicas at every one of the twenty timestamps: one pegged, one idle.
+		for i := range 20 {
+			ts := at.Add(-time.Duration(19-i) * interval)
+			if err := s.InsertSamples(ctx, []Sample{
+				{TS: ts, EnvID: env, ContainerID: "hot", ContainerName: "web.1.aaa", Service: "web", CPUPct: 95},
+				{TS: ts, EnvID: env, ContainerID: "cold", ContainerName: "web.2.bbb", Service: "web", CPUPct: 5},
+			}); err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		got, err := s.Evaluate(ctx, m, at)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 1 {
+			t.Fatalf("evaluated to %d rows; want 1 service target", len(got))
+		}
+		// Twenty timestamps, not forty replica-rows — else two replicas would satisfy a ten-minute
+		// coverage floor in five minutes.
+		if got[0].Samples != 20 {
+			t.Errorf("samples = %d; want 20 (per timestamp, replicas collapsed)", got[0].Samples)
+		}
+		if !got[0].Sustained(20) {
+			t.Errorf("a service with a pegged replica at every timestamp did not sustain (%d of %d)",
+				got[0].Breaching, got[0].Samples)
+		}
+		// The reported value is the worst replica's, not the idle one's.
+		if got[0].Worst < 90 {
+			t.Errorf("worst = %v; want the hot replica's ~95, not the idle 5", got[0].Worst)
+		}
+	})
+}
+
 // '<' is the "is this thing dead?" alert, and the value it reports must be the LOW one. Telling
 // somebody the maximum CPU of a worker you are alerting on for being idle is telling them the
 // number they are least interested in.

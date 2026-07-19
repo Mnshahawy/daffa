@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useQuery, useQueryClient } from '@tanstack/vue-query'
-import { ApiError, daffa, type LogConfigRequest } from '@/lib/api'
+import { daffa, type LogConfigRequest } from '@/lib/api'
 import { Cap } from '@/lib/caps'
 import { useSession } from '@/stores/session'
+import { toast } from '@/lib/toast'
 import LogConfigForm from '@/components/LogConfigForm.vue'
 
 const session = useSession()
@@ -18,17 +19,16 @@ const { data: config, isLoading } = useQuery({
   queryFn: daffa.globalLogConfig,
 })
 
-const error = ref('')
 const busy = ref(false)
 
 async function save(body: LogConfigRequest) {
   busy.value = true
-  error.value = ''
   try {
     await daffa.saveGlobalLogConfig(body)
     await qc.invalidateQueries({ queryKey: ['log-config'] })
+    toast.ok('Log settings saved.')
   } catch (e) {
-    error.value = e instanceof ApiError ? e.message : 'Could not save.'
+    toast.err(e, 'Could not save.')
   } finally {
     busy.value = false
   }
@@ -36,12 +36,12 @@ async function save(body: LogConfigRequest) {
 
 async function clear() {
   busy.value = true
-  error.value = ''
   try {
     await daffa.clearGlobalLogConfig()
     await qc.invalidateQueries({ queryKey: ['log-config'] })
+    toast.ok('Log settings cleared.')
   } catch (e) {
-    error.value = e instanceof ApiError ? e.message : 'Could not clear.'
+    toast.err(e, 'Could not clear.')
   } finally {
     busy.value = false
   }
@@ -59,15 +59,6 @@ async function clear() {
         logs from filling the host's disk.
       </p>
     </div>
-
-    <p
-      v-if="error"
-      role="alert"
-      class="mb-4 rounded-[var(--radius-control)] px-3 py-2 text-sm"
-      :style="{ background: 'var(--danger-soft)', color: 'var(--danger)' }"
-    >
-      {{ error }}
-    </p>
 
     <section class="surface rounded-[var(--radius-card)] p-5">
       <h3 class="text-sm font-semibold">Fleet default</h3>

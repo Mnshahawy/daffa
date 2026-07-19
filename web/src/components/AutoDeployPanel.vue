@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import { useQueryClient } from '@tanstack/vue-query'
-import { ApiError, daffa, type Stack } from '@/lib/api'
+import { daffa, type Stack } from '@/lib/api'
+import { toast } from '@/lib/toast'
 import { confirm } from '@/lib/confirm'
-import AppIcon from './ui/AppIcon.vue'
 import BaseButton from './ui/BaseButton.vue'
+import CopyButton from './ui/CopyButton.vue'
 
 const props = defineProps<{ stack: Stack; canWrite: boolean }>()
 
@@ -12,7 +13,6 @@ const qc = useQueryClient()
 const enabled = ref(props.stack.auto_deploy)
 const watchPaths = ref(props.stack.watch_paths ?? '')
 const busy = ref(false)
-const error = ref('')
 
 // The secret is shown exactly once, when it is minted. It is sealed in the database
 // afterwards and there is no way to read it back — which is the point, and is why the
@@ -31,17 +31,19 @@ const webhookUrl = `${location.origin}/webhooks/stacks/${props.stack.id}`
 
 async function save(rotate = false) {
   busy.value = true
-  error.value = ''
   try {
     const r = await daffa.setAutoDeploy(props.stack.id, {
       enabled: enabled.value,
       watch_paths: watchPaths.value,
       rotate,
     })
+    // A freshly minted secret gets its own one-time reveal below — that IS the feedback, so a
+    // toast on top of it would be redundant. Otherwise, confirm the save landed.
     if (r.secret) secret.value = r.secret
+    else toast.ok('Auto-deploy saved.')
     await qc.invalidateQueries({ queryKey: ['stack'] })
   } catch (e) {
-    error.value = e instanceof ApiError ? e.message : 'Could not save.'
+    toast.err(e, 'Could not save.')
     enabled.value = props.stack.auto_deploy // put the toggle back where it was
   } finally {
     busy.value = false
@@ -64,9 +66,6 @@ async function askRotate() {
   if (ok) void save(true)
 }
 
-async function copy(text: string) {
-  await navigator.clipboard.writeText(text)
-}
 </script>
 
 <template>
@@ -148,10 +147,7 @@ async function copy(text: string) {
             :style="{ background: 'var(--surface-sunken)' }"
           >
             <code class="flex-1 break-all">{{ webhookUrl }}</code>
-            <BaseButton intent="ghost" size="xs" @click="copy(webhookUrl)">
-              <AppIcon name="copy" class="size-3" />
-              Copy
-            </BaseButton>
+            <CopyButton intent="ghost" size="xs" :text="webhookUrl" />
           </div>
 
           <!-- The one time the secret is visible -->
@@ -169,10 +165,7 @@ async function copy(text: string) {
               :style="{ background: 'var(--surface)' }"
             >
               <code class="flex-1 break-all">{{ secret }}</code>
-              <BaseButton intent="ghost" size="xs" @click="copy(secret)">
-                <AppIcon name="copy" class="size-3" />
-                Copy
-              </BaseButton>
+              <CopyButton intent="ghost" size="xs" :text="secret" />
             </div>
             <p class="muted mt-1.5 text-xs">
               This is shown once. It is stored encrypted and cannot be read back — if you lose it,
@@ -195,8 +188,6 @@ async function copy(text: string) {
           </div>
         </div>
       </template>
-
-      <p v-if="error" class="mt-3 text-sm" :style="{ color: 'var(--danger)' }">{{ error }}</p>
     </div>
   </div>
 </template>

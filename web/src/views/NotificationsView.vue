@@ -4,8 +4,10 @@ import { useQuery, useQueryClient } from '@tanstack/vue-query'
 import { ApiError, daffa, type NotifyEvent } from '@/lib/api'
 import { Cap } from '@/lib/caps'
 import { useSession } from '@/stores/session'
+import { toast } from '@/lib/toast'
 import AppIcon from '@/components/ui/AppIcon.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
+import Select from '@/components/ui/Select.vue'
 
 const session = useSession()
 const qc = useQueryClient()
@@ -22,7 +24,6 @@ const { data: roles } = useQuery({
   enabled: computed(() => session.can(Cap.RolesView)),
 })
 
-const error = ref('')
 const busy = ref(false)
 const testResult = ref<{ ok: boolean; message: string } | null>(null)
 const preview = ref<{ event: string; html: string } | null>(null)
@@ -52,7 +53,6 @@ const _seed = computed(() => {
 
 async function save() {
   busy.value = true
-  error.value = ''
   testResult.value = null
   try {
     // Send only the request fields. The form is seeded from the GET view, which carries the
@@ -70,8 +70,9 @@ async function save() {
     })
     await qc.invalidateQueries({ queryKey: ['smtp'] })
     form.value.password = '' // it is stored now; keep it out of the DOM
+    toast.ok('Mail server saved.')
   } catch (e) {
-    error.value = e instanceof ApiError ? e.message : 'Could not save.'
+    toast.err(e, 'Could not save.')
   } finally {
     busy.value = false
   }
@@ -140,7 +141,6 @@ const channelKinds = [
 const channelKind = ref<'slack' | 'discord' | 'webhook' | null>(null)
 const channelForm = ref({ name: '', url: '' })
 const channelBusy = ref(false)
-const channelError = ref('')
 const channelTest = ref<{ id: string; ok: boolean; message: string } | null>(null)
 
 const activeKind = computed(() => channelKinds.find((k) => k.kind === channelKind.value) ?? null)
@@ -148,13 +148,11 @@ const activeKind = computed(() => channelKinds.find((k) => k.kind === channelKin
 function pickChannelKind(kind: 'slack' | 'discord' | 'webhook') {
   channelKind.value = channelKind.value === kind ? null : kind
   channelForm.value = { name: kind.charAt(0).toUpperCase() + kind.slice(1), url: '' }
-  channelError.value = ''
 }
 
 async function addChannel() {
   if (!channelKind.value) return
   channelBusy.value = true
-  channelError.value = ''
   try {
     // The server posts a "Daffa is connected" message to prove the URL works before it saves —
     // so a 400 here means the webhook itself was rejected, and the message says why.
@@ -165,8 +163,9 @@ async function addChannel() {
     })
     channelKind.value = null
     await qc.invalidateQueries({ queryKey: ['notify-channels'] })
+    toast.ok('Channel added.')
   } catch (e) {
-    channelError.value = e instanceof ApiError ? e.message : 'Could not add the channel.'
+    toast.err(e, 'Could not add the channel.')
   } finally {
     channelBusy.value = false
   }
@@ -183,13 +182,13 @@ async function testChannel(id: string) {
 }
 
 async function removeChannel(id: string) {
-  channelError.value = ''
   try {
     await daffa.deleteNotifyChannel(id)
     await qc.invalidateQueries({ queryKey: ['notify-channels'] })
     await qc.invalidateQueries({ queryKey: ['notify-rules'] }) // its routing rules cascade away
+    toast.ok('Channel removed.')
   } catch (e) {
-    channelError.value = e instanceof ApiError ? e.message : 'Could not delete the channel.'
+    toast.err(e, 'Could not delete the channel.')
   }
 }
 
@@ -202,7 +201,6 @@ function rulesFor(event: string) {
 }
 
 async function addRule(event: string) {
-  error.value = ''
   try {
     await daffa.createNotifyRule({
       event,
@@ -213,18 +211,19 @@ async function addRule(event: string) {
     newRule.value = { role_id: '', address: '', channel_id: '' }
     adding.value = null
     await qc.invalidateQueries({ queryKey: ['notify-rules'] })
+    toast.ok('Rule added.')
   } catch (e) {
-    error.value = e instanceof ApiError ? e.message : 'Could not add the rule.'
+    toast.err(e, 'Could not add the rule.')
   }
 }
 
 async function removeRule(id: string) {
-  error.value = ''
   try {
     await daffa.deleteNotifyRule(id)
     await qc.invalidateQueries({ queryKey: ['notify-rules'] })
+    toast.ok('Rule removed.')
   } catch (e) {
-    error.value = e instanceof ApiError ? e.message : 'Could not remove the rule.'
+    toast.err(e, 'Could not remove the rule.')
   }
 }
 </script>
@@ -240,8 +239,6 @@ async function removeRule(id: string) {
         every night is the thing you find out about on the day you need the backup.
       </p>
     </div>
-
-    <p v-if="error" class="mb-4 text-sm" :style="{ color: 'var(--danger)' }">{{ error }}</p>
 
     <!-- SMTP -->
     <div class="surface mb-6 rounded-[var(--radius-card)] p-5">
@@ -452,7 +449,6 @@ async function removeRule(id: string) {
               />
             </div>
           </div>
-          <p v-if="channelError" class="text-xs" :style="{ color: 'var(--danger)' }">{{ channelError }}</p>
           <BaseButton
             intent="primary"
             size="sm"
@@ -538,15 +534,16 @@ async function removeRule(id: string) {
              paged about prod. -->
         <div v-if="adding === e.event" class="mt-3 flex flex-wrap items-center gap-2">
           <label :for="`rule-role-${e.event}`" class="sr-only">Role to tell</label>
-          <select
+          <Select
             :id="`rule-role-${e.event}`"
             v-model="newRule.role_id"
-            class="field w-auto py-1 text-xs"
+            class="w-auto"
+            select-class="py-1 text-xs"
             @change="((newRule.address = ''), (newRule.channel_id = ''))"
           >
             <option value="">Everyone holding a role…</option>
             <option v-for="r in roles" :key="r.id" :value="r.id">{{ r.name }}</option>
-          </select>
+          </Select>
 
           <span class="subtle text-xs">or</span>
 
@@ -563,15 +560,16 @@ async function removeRule(id: string) {
           <template v-if="channels?.length">
             <span class="subtle text-xs">or</span>
             <label :for="`rule-chan-${e.event}`" class="sr-only">Channel to post to</label>
-            <select
+            <Select
               :id="`rule-chan-${e.event}`"
               v-model="newRule.channel_id"
-              class="field w-auto py-1 text-xs"
+              class="w-auto"
+              select-class="py-1 text-xs"
               @change="((newRule.role_id = ''), (newRule.address = ''))"
             >
               <option value="">A channel…</option>
               <option v-for="c in channels" :key="c.id" :value="c.id">{{ c.name }}</option>
-            </select>
+            </Select>
           </template>
 
           <BaseButton

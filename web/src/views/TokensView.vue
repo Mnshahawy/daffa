@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
-import { ApiError, daffa, type APIToken } from '@/lib/api'
+import { daffa, type APIToken } from '@/lib/api'
+import { toast } from '@/lib/toast'
 import { Cap } from '@/lib/caps'
 import { useSession } from '@/stores/session'
 import { confirm } from '@/lib/confirm'
 import AppIcon from '@/components/ui/AppIcon.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
+import CopyButton from '@/components/ui/CopyButton.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 
 const session = useSession()
@@ -25,12 +27,7 @@ const others = computed(() =>
   (all.value ?? []).filter((t) => t.user_id !== session.user?.id),
 )
 
-const error = ref('')
-function fail(e: unknown, fallback: string) {
-  error.value = e instanceof ApiError ? e.message : fallback
-}
 function refresh() {
-  error.value = ''
   qc.invalidateQueries({ queryKey: ['tokens'] })
   qc.invalidateQueries({ queryKey: ['tokens-all'] })
 }
@@ -57,19 +54,16 @@ const create = useMutation({
     adding.value = false
     refresh()
   },
-  onError: (e) => fail(e, 'Could not create the token.'),
+  onError: (e) => toast.err(e, 'Could not create the token.'),
 })
-
-function copyToken() {
-  if (!created.value) return
-  void navigator.clipboard.writeText(created.value.token)
-  copied.value = true
-}
 
 const remove = useMutation({
   mutationFn: (id: string) => daffa.deleteToken(id),
-  onSuccess: refresh,
-  onError: (e) => fail(e, 'Could not revoke the token.'),
+  onSuccess: () => {
+    toast.ok('Token revoked.')
+    refresh()
+  },
+  onError: (e) => toast.err(e, 'Could not revoke the token.'),
 })
 
 async function onRevoke(t: APIToken) {
@@ -85,8 +79,6 @@ async function onRevoke(t: APIToken) {
 
 <template>
   <div class="space-y-10">
-    <p v-if="error" class="text-sm" :style="{ color: 'var(--danger)' }">{{ error }}</p>
-
     <section>
       <div class="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2">
         <div class="min-w-0">
@@ -121,10 +113,7 @@ async function onRevoke(t: APIToken) {
         </p>
         <code class="mb-3 block overflow-x-auto rounded-lg p-3 font-mono text-xs" :style="{ background: 'var(--surface-sunken)' }">{{ created.token }}</code>
         <div class="flex flex-wrap items-center gap-3">
-          <BaseButton intent="primary" size="md" @click="copyToken">
-            <AppIcon name="copy" class="size-4" />
-            Copy token
-          </BaseButton>
+          <CopyButton intent="primary" size="md" label="Copy token" :text="created.token" @copied="copied = true" />
           <BaseButton intent="secondary" size="md" :disabled="!copied" :title="copied ? '' : 'Copy it first'" @click="created = null">
             I have stored it safely
           </BaseButton>

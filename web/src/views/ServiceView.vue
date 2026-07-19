@@ -2,7 +2,8 @@
 import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
-import { ApiError, daffa } from '@/lib/api'
+import { daffa } from '@/lib/api'
+import { toast } from '@/lib/toast'
 import { useSession } from '@/stores/session'
 import { Cap } from '@/lib/caps'
 import { confirm } from '@/lib/confirm'
@@ -19,7 +20,6 @@ const session = useSession()
 const id = computed(() => String(route.params.id))
 
 const canEdit = computed(() => session.can(Cap.ServicesEdit))
-const error = ref('')
 
 function refresh() {
   qc.invalidateQueries({ queryKey: ['service'] })
@@ -27,13 +27,13 @@ function refresh() {
   qc.invalidateQueries({ queryKey: ['services'] })
 }
 
-async function run(fn: () => Promise<unknown>) {
-  error.value = ''
+async function run(fn: () => Promise<unknown>, ok: string) {
   try {
     await fn()
+    toast.ok(ok)
     refresh()
   } catch (e) {
-    error.value = e instanceof ApiError ? e.message : String(e)
+    toast.err(e, String(e))
   }
 }
 
@@ -59,7 +59,7 @@ async function applyScale() {
   }
 
   scaling.value = true
-  await run(() => daffa.scaleService(session.envId, id.value, n))
+  await run(() => daffa.scaleService(session.envId, id.value, n), 'Service scaled.')
   scaling.value = false
 }
 
@@ -67,16 +67,22 @@ async function applyScale() {
 // the registry. On a floating tag it is the only way to get the new bytes without editing anything.
 const redeploy = useMutation({
   mutationFn: () => daffa.redeployService(session.envId, id.value),
-  onSuccess: refresh,
-  onError: (e) => (error.value = e instanceof ApiError ? e.message : String(e)),
+  onSuccess: () => {
+    toast.ok('Service redeployed.')
+    refresh()
+  },
+  onError: (e) => toast.err(e, String(e)),
 })
 
 // ROLLBACK puts back the PREVIOUS spec, which swarm keeps for exactly this. It is the fastest way
 // out of a bad update, which is why it sits next to the thing that reports one.
 const rollback = useMutation({
   mutationFn: () => daffa.rollbackService(session.envId, id.value),
-  onSuccess: refresh,
-  onError: (e) => (error.value = e instanceof ApiError ? e.message : String(e)),
+  onSuccess: () => {
+    toast.ok('Service rolled back.')
+    refresh()
+  },
+  onError: (e) => toast.err(e, String(e)),
 })
 
 async function removeService() {
@@ -99,7 +105,7 @@ async function removeService() {
   await run(async () => {
     await daffa.removeService(session.envId, id.value)
     router.push({ name: 'services' })
-  })
+  }, 'Service removed.')
 }
 
 const { data: service } = useQuery({
@@ -214,8 +220,6 @@ function ago(ts: string): string {
         </template>
       </template>
     </PageHeader>
-
-    <p v-if="error" class="mb-4 text-sm" :style="{ color: 'var(--danger)' }">{{ error }}</p>
 
     <!--
       The rollback nobody else shows. Swarm tried the new spec, could not make it stick, and put

@@ -2,15 +2,18 @@
 import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
-import { ApiError, daffa, type Stack } from '@/lib/api'
+import { daffa, type Stack } from '@/lib/api'
 import { useSession } from '@/stores/session'
 import { Cap } from '@/lib/caps'
+import { toast } from '@/lib/toast'
 import { ago, shortSha } from '@/lib/format'
 import { stackStatus } from '@/lib/status'
 import AppIcon from '@/components/ui/AppIcon.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
+import ComboBox from '@/components/ui/ComboBox.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import PageHeader from '@/components/ui/PageHeader.vue'
+import Select from '@/components/ui/Select.vue'
 import SearchInput from '@/components/SearchInput.vue'
 import StatusPill from '@/components/ui/StatusPill.vue'
 import ComposeImages from '@/components/ComposeImages.vue'
@@ -54,10 +57,10 @@ const grouped = computed(() => {
     .map(([name, stacks]) => ({ name, stacks }))
 })
 
-// Existing groups, offered as a datalist so the second stack in a group is picked rather than
-// retyped — which is how you end up with "platform" and "Platform" side by side.
+// Existing groups, offered as ComboBox suggestions so the second stack in a group is picked
+// rather than retyped — which is how you end up with "platform" and "Platform" side by side.
 const knownGroups = computed(() =>
-  [...new Set(mine.value.map((s) => s.group_name?.trim()).filter(Boolean))].sort(),
+  [...new Set(mine.value.map((s) => s.group_name?.trim()).filter((g): g is string => !!g))].sort(),
 )
 
 const collapsed = ref(new Set<string>())
@@ -68,7 +71,6 @@ function toggle(name: string) {
 }
 
 const adding = ref(false)
-const error = ref('')
 
 const { data: gitCreds } = useQuery({ queryKey: ['gitcreds'], queryFn: daffa.gitCredentials })
 
@@ -167,12 +169,11 @@ const urlKindMismatch = computed(() => {
 const create = useMutation({
   mutationFn: () => daffa.createStack({ ...form.value, env_id: session.envId }),
   onSuccess: (stack: Stack) => {
+    toast.ok('Stack created.')
     qc.invalidateQueries({ queryKey: ['stacks'] })
     router.push({ name: 'stack', params: { id: stack.id } })
   },
-  onError: (e) => {
-    error.value = e instanceof ApiError ? e.message : 'Could not create the stack.'
-  },
+  onError: (e) => toast.err(e, 'Could not create the stack.'),
 })
 </script>
 
@@ -223,10 +224,10 @@ const create = useMutation({
         -->
         <div v-if="isSwarm">
           <label for="s-engine" class="mb-1.5 block text-sm font-medium">Engine</label>
-          <select id="s-engine" v-model="form.engine" class="field">
+          <Select id="s-engine" v-model="form.engine">
             <option value="swarm">Docker Swarm — the scheduler places it</option>
             <option value="compose">Docker Compose — you place it, on one node</option>
-          </select>
+          </Select>
           <p class="subtle mt-1 text-xs">
             On a Swarm this is the question of <em>who picks the machine</em>. Swarm schedules the
             services across the cluster; Compose runs them on the one node you choose, and only
@@ -237,10 +238,10 @@ const create = useMutation({
         <!-- Only when there is genuinely more than one answer. A single-node swarm has one. -->
         <div v-if="isSwarm && form.engine === 'compose' && nodeChoices.length > 1">
           <label for="s-node" class="mb-1.5 block text-sm font-medium">Node</label>
-          <select id="s-node" v-model="form.node_id" required class="field">
+          <Select id="s-node" v-model="form.node_id" required>
             <option value="" disabled>Choose the machine…</option>
             <option v-for="n in nodeChoices" :key="n.id" :value="n.id">{{ n.name }}</option>
-          </select>
+          </Select>
           <p class="subtle mt-1 text-xs">
             Its containers land here, and only here. A change of Swarm leadership will not move
             them.
@@ -249,10 +250,10 @@ const create = useMutation({
 
         <div>
           <label for="s-source" class="mb-1.5 block text-sm font-medium">Source</label>
-          <select id="s-source" v-model="form.source_kind" class="field">
+          <Select id="s-source" v-model="form.source_kind">
             <option value="git">Git repository</option>
             <option value="inline">Inline compose file</option>
-          </select>
+          </Select>
           <p class="subtle mt-1 text-xs">
             Git keeps the repository as the source of truth; Daffa only executes it.
           </p>
@@ -262,16 +263,7 @@ const create = useMutation({
           <label for="s-group" class="mb-1.5 block text-sm font-medium">
             Group <span class="subtle font-normal">(optional)</span>
           </label>
-          <input
-            id="s-group"
-            v-model="form.group_name"
-            list="stack-groups"
-            placeholder="platform"
-            class="field"
-          />
-          <datalist id="stack-groups">
-            <option v-for="g in knownGroups" :key="g" :value="g" />
-          </datalist>
+          <ComboBox id="s-group" v-model="form.group_name" :options="knownGroups" placeholder="platform" />
           <p class="subtle mt-1 text-xs">Just a label — the list collapses under it.</p>
         </div>
       </div>
@@ -301,12 +293,12 @@ const create = useMutation({
           </div>
           <div>
             <label for="s-cred" class="mb-1.5 block text-sm font-medium">Credential</label>
-            <select id="s-cred" v-model="form.git_credential_id" class="field">
+            <Select id="s-cred" v-model="form.git_credential_id">
               <option value="">None — public repository</option>
               <option v-for="c in gitCreds" :key="c.id" :value="c.id">
                 {{ c.name }} ({{ c.kind === 'ssh' ? 'SSH' : 'token' }})
               </option>
-            </select>
+            </Select>
             <p class="subtle mt-1 text-xs">
               <RouterLink
                 v-if="session.can(Cap.GitCredsView)"
@@ -375,8 +367,6 @@ const create = useMutation({
           @applied="form.inline_yaml = $event"
         />
       </div>
-
-      <p v-if="error" class="text-sm" :style="{ color: 'var(--danger)' }">{{ error }}</p>
 
       <BaseButton type="submit" intent="primary" size="md" :loading="create.isPending.value">
         Create stack

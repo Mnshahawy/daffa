@@ -2,7 +2,6 @@
 import { computed, ref } from 'vue'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import {
-  ApiError,
   daffa,
   type CertAuthority,
   type CertDelivery,
@@ -12,10 +11,12 @@ import {
 import { Cap } from '@/lib/caps'
 import { useSession } from '@/stores/session'
 import { confirm } from '@/lib/confirm'
+import { toast } from '@/lib/toast'
 import type { Status } from '@/lib/status'
 import AppIcon from '@/components/ui/AppIcon.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
+import Select from '@/components/ui/Select.vue'
 import StatusPill from '@/components/ui/StatusPill.vue'
 
 const session = useSession()
@@ -33,12 +34,7 @@ const { data: keys } = useQuery({
 })
 const { data: envs } = useQuery({ queryKey: ['environments'], queryFn: daffa.environments })
 
-const error = ref('')
-function fail(e: unknown, fallback: string) {
-  error.value = e instanceof ApiError ? e.message : fallback
-}
 function refresh() {
-  error.value = ''
   qc.invalidateQueries({ queryKey: ['cert-cas'] })
   qc.invalidateQueries({ queryKey: ['certs'] })
   qc.invalidateQueries({ queryKey: ['cert-deliveries'] })
@@ -79,9 +75,10 @@ const createCA = useMutation({
   onSuccess: () => {
     caForm.value = caBlank()
     addingCA.value = false
+    toast.ok('CA created.')
     refresh()
   },
-  onError: (e) => fail(e, 'Could not create the CA.'),
+  onError: (e) => toast.err(e, 'Could not create the CA.'),
 })
 
 function caStatus(ca: CertAuthority): Status {
@@ -99,8 +96,11 @@ function caStatus(ca: CertAuthority): Status {
 
 const rotateCA = useMutation({
   mutationFn: (id: string) => daffa.rotateCA(id, { overlap_days: 30 }),
-  onSuccess: refresh,
-  onError: (e) => fail(e, 'Could not stage the rotation.'),
+  onSuccess: () => {
+    toast.ok('Rotation staged.')
+    refresh()
+  },
+  onError: (e) => toast.err(e, 'Could not stage the rotation.'),
 })
 
 async function onRotate(ca: CertAuthority) {
@@ -115,8 +115,11 @@ async function onRotate(ca: CertAuthority) {
 
 const activateCA = useMutation({
   mutationFn: (id: string) => daffa.activateCA(id),
-  onSuccess: refresh,
-  onError: (e) => fail(e, 'Could not activate the CA.'),
+  onSuccess: () => {
+    toast.ok('CA activated.')
+    refresh()
+  },
+  onError: (e) => toast.err(e, 'Could not activate the CA.'),
 })
 
 async function onActivate(ca: CertAuthority) {
@@ -132,13 +135,16 @@ async function onActivate(ca: CertAuthority) {
 
 const removeCA = useMutation({
   mutationFn: (id: string) => daffa.deleteCA(id),
-  onSuccess: refresh,
-  onError: (e) => fail(e, 'Could not delete the CA.'),
+  onSuccess: () => {
+    toast.ok('CA deleted.')
+    refresh()
+  },
+  onError: (e) => toast.err(e, 'Could not delete the CA.'),
 })
 
 async function onRemoveCA(ca: CertAuthority) {
   if (ca.in_use > 0) {
-    error.value = `${ca.name} has ${ca.in_use} certificate${ca.in_use === 1 ? '' : 's'}. Delete or re-issue them first.`
+    toast.warn(`${ca.name} has ${ca.in_use} certificate${ca.in_use === 1 ? '' : 's'}. Delete or re-issue them first.`)
     return
   }
   const ok = await confirm({
@@ -171,9 +177,10 @@ const createCert = useMutation({
   onSuccess: () => {
     certForm.value = certBlank()
     addingCert.value = false
+    toast.ok('Certificate created.')
     refresh()
   },
-  onError: (e) => fail(e, 'Could not create the certificate.'),
+  onError: (e) => toast.err(e, 'Could not create the certificate.'),
 })
 
 function certStatus(c: Certificate): Status {
@@ -187,19 +194,25 @@ function certStatus(c: Certificate): Status {
 
 const renewCert = useMutation({
   mutationFn: (id: string) => daffa.renewCert(id),
-  onSuccess: refresh,
-  onError: (e) => fail(e, 'Could not renew the certificate.'),
+  onSuccess: () => {
+    toast.ok('Certificate renewed.')
+    refresh()
+  },
+  onError: (e) => toast.err(e, 'Could not renew the certificate.'),
 })
 
 const removeCert = useMutation({
   mutationFn: (id: string) => daffa.deleteCert(id),
-  onSuccess: refresh,
-  onError: (e) => fail(e, 'Could not delete the certificate.'),
+  onSuccess: () => {
+    toast.ok('Certificate deleted.')
+    refresh()
+  },
+  onError: (e) => toast.err(e, 'Could not delete the certificate.'),
 })
 
 async function onRemoveCert(c: Certificate) {
   if (c.in_use > 0) {
-    error.value = `${c.name} is carried by ${c.in_use} deliver${c.in_use === 1 ? 'y' : 'ies'}. Delete them first.`
+    toast.warn(`${c.name} is carried by ${c.in_use} deliver${c.in_use === 1 ? 'y' : 'ies'}. Delete them first.`)
     return
   }
   const ok = await confirm({
@@ -228,9 +241,10 @@ const createDelivery = useMutation({
   onSuccess: () => {
     deliveryForm.value = deliveryBlank()
     addingDelivery.value = false
+    toast.ok('Delivery created.')
     refresh()
   },
-  onError: (e) => fail(e, 'Could not create the delivery.'),
+  onError: (e) => toast.err(e, 'Could not create the delivery.'),
 })
 
 function deliveryStatus(d: CertDelivery): Status {
@@ -247,13 +261,17 @@ function deliveryStatus(d: CertDelivery): Status {
 const syncDelivery = useMutation({
   mutationFn: (id: string) => daffa.syncCertDelivery(id),
   onSettled: refresh,
-  onError: (e) => fail(e, 'Sync failed.'),
+  onSuccess: () => toast.ok('Delivery synced.'),
+  onError: (e) => toast.err(e, 'Sync failed.'),
 })
 
 const removeDelivery = useMutation({
   mutationFn: (id: string) => daffa.deleteCertDelivery(id),
-  onSuccess: refresh,
-  onError: (e) => fail(e, 'Could not delete the delivery.'),
+  onSuccess: () => {
+    toast.ok('Delivery deleted.')
+    refresh()
+  },
+  onError: (e) => toast.err(e, 'Could not delete the delivery.'),
 })
 
 async function onRemoveDelivery(d: CertDelivery) {
@@ -292,9 +310,10 @@ const createKey = useMutation({
     }
     keyForm.value = { name: '', recipient: '' }
     addingKey.value = false
+    toast.ok('Key created.')
     refresh()
   },
-  onError: (e) => fail(e, 'Could not create the key.'),
+  onError: (e) => toast.err(e, 'Could not create the key.'),
 })
 
 function downloadIdentity() {
@@ -311,13 +330,16 @@ function downloadIdentity() {
 
 const removeKey = useMutation({
   mutationFn: (id: string) => daffa.deleteKey(id),
-  onSuccess: refresh,
-  onError: (e) => fail(e, 'Could not delete the key.'),
+  onSuccess: () => {
+    toast.ok('Key deleted.')
+    refresh()
+  },
+  onError: (e) => toast.err(e, 'Could not delete the key.'),
 })
 
 async function onRemoveKey(k: EncryptionKey) {
   if (k.in_use > 0) {
-    error.value = `${k.name} is used by ${k.in_use} backup job${k.in_use === 1 ? '' : 's'}. Point them at another key first.`
+    toast.warn(`${k.name} is used by ${k.in_use} backup job${k.in_use === 1 ? '' : 's'}. Point them at another key first.`)
     return
   }
   const ok = await confirm({
@@ -332,8 +354,6 @@ async function onRemoveKey(k: EncryptionKey) {
 
 <template>
   <div class="space-y-10">
-    <p v-if="error" class="text-sm" :style="{ color: 'var(--danger)' }">{{ error }}</p>
-
     <!-- ── authorities ─────────────────────────────────────────────────────── -->
     <section>
       <div class="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2">
@@ -514,10 +534,10 @@ async function onRemoveKey(k: EncryptionKey) {
           <template v-if="!certUpload">
             <div>
               <label for="crt-ca" class="mb-1.5 block text-sm font-medium">Authority</label>
-              <select id="crt-ca" v-model="certForm.ca_id" required class="field">
+              <Select id="crt-ca" v-model="certForm.ca_id" required>
                 <option value="" disabled>Choose a CA…</option>
                 <option v-for="ca in signingCAs" :key="ca.id" :value="ca.id">{{ ca.name }}</option>
-              </select>
+              </Select>
             </div>
             <div>
               <label for="crt-sans" class="mb-1.5 block text-sm font-medium">SANs</label>
@@ -610,17 +630,17 @@ async function onRemoveKey(k: EncryptionKey) {
         <div class="grid gap-4 sm:grid-cols-4">
           <div>
             <label for="dlv-env" class="mb-1.5 block text-sm font-medium">Host</label>
-            <select id="dlv-env" v-model="deliveryForm.env_id" required class="field">
+            <Select id="dlv-env" v-model="deliveryForm.env_id" required>
               <option value="" disabled>Choose a host…</option>
               <option v-for="e in envs" :key="e.id" :value="e.id">{{ e.name }}</option>
-            </select>
+            </Select>
           </div>
           <div>
             <label for="dlv-cert" class="mb-1.5 block text-sm font-medium">Certificate</label>
-            <select id="dlv-cert" v-model="deliveryForm.cert_id" class="field">
+            <Select id="dlv-cert" v-model="deliveryForm.cert_id">
               <option value="">Trust bundle only</option>
               <option v-for="c in certs" :key="c.id" :value="c.id">{{ c.name }}</option>
-            </select>
+            </Select>
           </div>
           <div>
             <label for="dlv-volume" class="mb-1.5 block text-sm font-medium">Volume</label>

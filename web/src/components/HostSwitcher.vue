@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, nextTick, ref } from 'vue'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
-import { ApiError, daffa, type Environment } from '@/lib/api'
+import { daffa, type Environment } from '@/lib/api'
 import { useSession } from '@/stores/session'
 import { hostStatus } from '@/lib/status'
+import { toast } from '@/lib/toast'
 import DropdownMenu from './DropdownMenu.vue'
 import AppIcon from './ui/AppIcon.vue'
 import StatusPill from './ui/StatusPill.vue'
@@ -44,26 +45,22 @@ const current = computed(() => environments.value?.find((e) => e.id === session.
 // actually think in, so let them say so — inline, where the name already is.
 const editing = ref<string | null>(null)
 const draft = ref('')
-const error = ref('')
 const input = ref<HTMLInputElement>()
 
 const rename = useMutation({
   mutationFn: ({ id, name }: { id: string; name: string }) => daffa.renameEnvironment(id, name),
   onSuccess: () => {
+    toast.ok('Host renamed.')
     editing.value = null
-    error.value = ''
     qc.invalidateQueries({ queryKey: ['environments'] })
   },
-  onError: (e) => {
-    error.value = e instanceof ApiError ? e.message : 'Could not rename.'
-  },
+  onError: (e) => toast.err(e, 'Could not rename.'),
 })
 
 async function startEdit(env: Environment, e: Event) {
   e.stopPropagation() // do not let the click select the host and close the menu
   editing.value = env.id
   draft.value = env.name
-  error.value = ''
   await nextTick()
   input.value?.focus()
   input.value?.select()
@@ -172,8 +169,6 @@ function select(env: Environment) {
         </button>
       </template>
     </div>
-
-    <p v-if="error" class="px-2 py-1 text-xs" :style="{ color: 'var(--danger)' }">{{ error }}</p>
 
     <div class="mt-1 border-t pt-1" :style="{ borderColor: 'var(--border)' }">
       <RouterLink

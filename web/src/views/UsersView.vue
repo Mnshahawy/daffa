@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useQuery, useQueryClient } from '@tanstack/vue-query'
-import { ApiError, daffa, type Grant, type User } from '@/lib/api'
+import { daffa, type Grant, type User } from '@/lib/api'
 import { Cap } from '@/lib/caps'
 import { confirm } from '@/lib/confirm'
 import { useSession } from '@/stores/session'
+import { toast } from '@/lib/toast'
 import GrantPicker from '@/components/GrantPicker.vue'
 import AppIcon from '@/components/ui/AppIcon.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
@@ -29,7 +30,6 @@ const { data: roles } = useQuery({
 // access to a host you cannot see yourself.
 const { data: envs } = useQuery({ queryKey: ['environments'], queryFn: daffa.environments })
 
-const error = ref('')
 const busy = ref(false)
 const adding = ref(false)
 const editingRoles = ref<User | null>(null)
@@ -39,7 +39,6 @@ const selectedGrants = ref<Grant[]>([])
 // and it echoed the new password in plain text in a box you cannot mark as a password field.
 const settingPassword = ref<User | null>(null)
 const newPassword = ref('')
-const passwordNotice = ref('')
 
 const form = ref({ username: '', email: '', password: '', grants: [] as Grant[] })
 
@@ -52,14 +51,14 @@ async function afterChange() {
 
 async function create() {
   busy.value = true
-  error.value = ''
   try {
     await daffa.createUser(form.value)
     await afterChange()
     adding.value = false
     form.value = { username: '', email: '', password: '', grants: [] }
+    toast.ok('User created.')
   } catch (e) {
-    error.value = e instanceof ApiError ? e.message : 'Could not create the user.'
+    toast.err(e, 'Could not create the user.')
   } finally {
     busy.value = false
   }
@@ -68,7 +67,6 @@ async function create() {
 function startRoles(u: User) {
   editingRoles.value = editingRoles.value?.id === u.id ? null : u
   settingPassword.value = null
-  error.value = ''
   // Only the locally granted ones are ours to change. The provider's are re-synced from
   // its claims on every login.
   selectedGrants.value = u.roles
@@ -85,21 +83,19 @@ function describe(name: string, envName?: string): string {
 async function saveRoles() {
   if (!editingRoles.value) return
   busy.value = true
-  error.value = ''
   try {
     await daffa.setUserRoles(editingRoles.value.id, selectedGrants.value)
     await afterChange()
     editingRoles.value = null
+    toast.ok('Roles saved.')
   } catch (e) {
-    error.value = e instanceof ApiError ? e.message : 'Could not save the roles.'
+    toast.err(e, 'Could not save the roles.')
   } finally {
     busy.value = false
   }
 }
 
 async function toggleDisabled(u: User) {
-  error.value = ''
-
   // Enabling is safe and needs no ceremony. Disabling ends their session and locks them out —
   // recoverable, so amber rather than red, but not something to do by mis-clicking a row.
   if (!u.disabled) {
@@ -115,8 +111,9 @@ async function toggleDisabled(u: User) {
   try {
     await daffa.updateUser(u.id, { disabled: !u.disabled })
     await afterChange()
+    toast.ok('Account updated.')
   } catch (e) {
-    error.value = e instanceof ApiError ? e.message : 'Could not change the account.'
+    toast.err(e, 'Could not change the account.')
   }
 }
 
@@ -129,12 +126,12 @@ async function remove(u: User) {
   })
   if (!ok) return
 
-  error.value = ''
   try {
     await daffa.deleteUser(u.id)
     await afterChange()
+    toast.ok('User deleted.')
   } catch (e) {
-    error.value = e instanceof ApiError ? e.message : 'Could not delete the user.'
+    toast.err(e, 'Could not delete the user.')
   }
 }
 
@@ -142,24 +139,21 @@ function startPassword(u: User) {
   settingPassword.value = settingPassword.value?.id === u.id ? null : u
   editingRoles.value = null
   newPassword.value = ''
-  passwordNotice.value = ''
-  error.value = ''
 }
 
 async function resetPassword() {
   const u = settingPassword.value
   if (!u || !newPassword.value) return
   busy.value = true
-  error.value = ''
   try {
     await daffa.setUserPassword(u.id, newPassword.value)
     // Nothing on the row changes when a password is set, so without this the click looks
     // like it did nothing at all.
-    passwordNotice.value = `New password set for ${u.label}.`
+    toast.ok(`New password set for ${u.label}.`)
     settingPassword.value = null
     newPassword.value = ''
   } catch (e) {
-    error.value = e instanceof ApiError ? e.message : 'Could not set the password.'
+    toast.err(e, 'Could not set the password.')
   } finally {
     busy.value = false
   }
@@ -190,11 +184,6 @@ async function resetPassword() {
         </BaseButton>
       </div>
     </div>
-
-    <p v-if="error" class="mb-4 text-sm" :style="{ color: 'var(--danger)' }">{{ error }}</p>
-    <p v-if="passwordNotice" class="mb-4 text-sm" :style="{ color: 'var(--success)' }">
-      {{ passwordNotice }}
-    </p>
 
     <!-- New local user -->
     <form

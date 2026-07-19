@@ -508,17 +508,23 @@ func (s *Store) Evaluate(ctx context.Context, m *Monitor, at time.Time) ([]Breac
 	// false, and the monitor simply never fires. Which is the worst way for a monitor to fail.
 	args := []any{m.Threshold, from.UTC().Unix(), at.UTC().Unix()}
 
-	// Only the COLUMN and the OPERATOR are interpolated, and both come from the maps above —
-	// never from the request. The threshold is bound.
-	sel := fmt.Sprintf(`SUM(CASE WHEN %s %s ? THEN 1 ELSE 0 END)`, col, op)
+	// The unit a monitor watches is the SERVICE, not the container. A compose replica keeps a
+	// stable name across a redeploy, but a swarm task does not — its name carries the task id and
+	// is replaced on every reschedule, scale and rolling update. Keyed on the container, a swarm
+	// service's sustained window would reset the instant a replica was swapped, and a firing alert
+	// would resolve itself as "the container stopped reporting" the moment swarm moved it. So the
+	// target is the service (`com.docker.swarm.service.name` / `com.docker.compose.service`); a
+	// container with no service — a plain `docker run` — is its own target, by name, as before.
+	target := "COALESCE(NULLIF(service, ''), container_name)"
 
-	// Both extremes, because a firing alert and a resolving one want opposite ends of the
-	// window. For '>', the worst is the highest reading and the best is the lowest; for '<' it
-	// is the other way round. Reporting the maximum of a "CPU below 1%" alert would tell
-	// somebody the number they were least interested in.
-	worst, best := "MAX("+col+")", "MIN("+col+")"
+	// "Any replica breaching = the service is breaching." Replicas are collapsed to ONE value per
+	// timestamp first — the worst of them: for '>' the highest reading, for '<' the lowest — and
+	// the window is measured over those. This is what lets a service that stayed over the line the
+	// whole window fire even as the load moved between its replicas underneath, and it is what
+	// stops three replicas from counting as three times the coverage.
+	worstAgg := "MAX"
 	if op == "<" {
-		worst, best = best, worst
+		worstAgg = "MIN"
 	}
 
 	if m.EnvID != "" {
@@ -530,17 +536,37 @@ func (s *Store) Evaluate(ctx context.Context, m *Monitor, at time.Time) ([]Breac
 		args = append(args, m.Stack)
 	}
 	if m.Container != "" {
-		where = append(where, "container_name = ?")
-		args = append(args, m.Container)
+		// The stored value is a service name now (or a standalone container's own name). Match the
+		// target — but also the raw container_name, so a monitor saved against a specific container
+		// before this became service-first keeps matching instead of silently going quiet.
+		where = append(where, "("+target+" = ? OR container_name = ?)")
+		args = append(args, m.Container, m.Container)
+	}
+
+	// Breach count, worst and best are all over the per-timestamp service values from the inner
+	// query — the peak the service reached and the value it is at now, each already reduced across
+	// replicas. For '>', the worst is the highest reading and the best the lowest; for '<' the
+	// other way round. The threshold binds in the outer SELECT, which the reader reaches before the
+	// inner WHERE, so it stays the first argument exactly as the flat query had it.
+	sel := fmt.Sprintf(`SUM(CASE WHEN v %s ? THEN 1 ELSE 0 END)`, op)
+	worst, best := "MAX(v)", "MIN(v)"
+	if op == "<" {
+		worst, best = best, worst
 	}
 
 	q := fmt.Sprintf(`
-        SELECT env_id, container_name, MAX(container_id), MAX(stack),
+        SELECT env_id, target, MAX(cid), stack,
                COUNT(*), %s, %s, %s
-        FROM %s
-        WHERE %s
-        GROUP BY env_id, container_name`,
-		sel, worst, best, src, strings.Join(where, " AND "))
+        FROM (
+            SELECT env_id, stack, %s AS target, ts_unix,
+                   MAX(container_id) AS cid, %s(%s) AS v
+            FROM %s
+            WHERE %s
+            GROUP BY env_id, stack, %s, ts_unix
+        ) agg
+        GROUP BY env_id, stack, target`,
+		sel, worst, best,
+		target, worstAgg, col, src, strings.Join(where, " AND "), target)
 
 	rows, err := s.query(ctx, q, args...)
 	if err != nil {

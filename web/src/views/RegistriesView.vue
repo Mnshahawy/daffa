@@ -1,14 +1,14 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
-import { ApiError, daffa, type RegistryItem } from '@/lib/api'
+import { daffa, type RegistryItem } from '@/lib/api'
 import { confirm } from '@/lib/confirm'
+import { toast } from '@/lib/toast'
 import AppIcon from '@/components/ui/AppIcon.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 
 const qc = useQueryClient()
-const error = ref('')
 
 const { data: registries, isLoading } = useQuery({
   queryKey: ['registries'],
@@ -66,20 +66,17 @@ const create = useMutation({
     }
     form.value = { name: '', url: '', username: '', password: '' }
     chosenProvider.value = null
-    error.value = ''
+    toast.ok('Registry added.')
     qc.invalidateQueries({ queryKey: ['registries'] })
   },
-  onError: (e) => {
-    error.value = e instanceof ApiError ? e.message : 'Could not save the registry.'
-  },
+  onError: (e) => toast.err(e, 'Could not save the registry.'),
 })
 
 const remove = useMutation({
   mutationFn: (id: string) => daffa.deleteRegistry(id),
+  onSuccess: () => toast.ok('Registry removed.'),
   onSettled: () => qc.invalidateQueries({ queryKey: ['registries'] }),
-  onError: (e) => {
-    error.value = e instanceof ApiError ? e.message : 'Could not delete the registry.'
-  },
+  onError: (e) => toast.err(e, 'Could not delete the registry.'),
 })
 
 async function onRemove(r: RegistryItem) {
@@ -189,8 +186,6 @@ async function onRemove(r: RegistryItem) {
           Create one ↗
         </a>
       </p>
-
-      <p v-if="error" class="mt-3 text-sm" :style="{ color: 'var(--danger)' }">{{ error }}</p>
 
       <BaseButton
         type="submit"

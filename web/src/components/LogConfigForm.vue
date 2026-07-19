@@ -12,6 +12,7 @@ import { computed, ref, watch } from 'vue'
 import type { LogConfig, LogConfigRequest } from '@/lib/api'
 import AppIcon from '@/components/ui/AppIcon.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
+import Select from '@/components/ui/Select.vue'
 
 const props = defineProps<{
   /** The saved config this form edits, or null when unset. */
@@ -112,10 +113,10 @@ function dropRow(i: number) {
     <div class="grid gap-4 sm:grid-cols-3">
       <div>
         <label for="lc-driver" class="mb-1.5 block text-sm font-medium">Log driver</label>
-        <select id="lc-driver" v-model="driver" class="field" :disabled="disabled">
+        <Select id="lc-driver" v-model="driver" :disabled="disabled">
           <option v-for="d in KNOWN_DRIVERS" :key="d" :value="d">{{ d }}</option>
           <option value="custom">custom…</option>
-        </select>
+        </Select>
       </div>
 
       <div v-if="isCustom">

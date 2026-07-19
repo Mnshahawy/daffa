@@ -43,10 +43,31 @@ type Port struct {
 	IP      string `json:"ip,omitempty"`
 }
 
+// Compose stamps the first two; swarm stamps its own. A container's stack/service is read from
+// whichever engine created it — a swarm task carries no compose labels, so without the fallback
+// its stack and service both read as empty and it drops out of every stack- or service-grouped
+// view. `com.docker.stack.namespace` IS the stack name; `com.docker.swarm.service.name` is
+// `<stack>_<service>`, which is the service's stable identity across replica churn.
 const (
 	labelComposeProject = "com.docker.compose.project"
 	labelComposeService = "com.docker.compose.service"
+	labelSwarmStack     = "com.docker.stack.namespace"
+	labelSwarmService   = "com.docker.swarm.service.name"
 )
+
+func stackLabel(labels map[string]string) string {
+	if p := labels[labelComposeProject]; p != "" {
+		return p
+	}
+	return labels[labelSwarmStack]
+}
+
+func serviceLabel(labels map[string]string) string {
+	if s := labels[labelComposeService]; s != "" {
+		return s
+	}
+	return labels[labelSwarmService]
+}
 
 func (e *Node) ListContainers(ctx context.Context, all bool) ([]Container, error) {
 	list, err := e.Client.ContainerList(ctx, container.ListOptions{All: all})
@@ -63,8 +84,8 @@ func (e *Node) ListContainers(ctx context.Context, all bool) ([]Container, error
 			State:   c.State,
 			Status:  c.Status,
 			Created: c.Created,
-			Project: c.Labels[labelComposeProject],
-			Service: c.Labels[labelComposeService],
+			Project: stackLabel(c.Labels),
+			Service: serviceLabel(c.Labels),
 		}
 		for _, p := range c.Ports {
 			item.Ports = append(item.Ports, Port{

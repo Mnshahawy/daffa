@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import { ApiError, daffa, type VolumeSource, type VolumeSourceRequest } from '@/lib/api'
+import { toast } from '@/lib/toast'
 import { useSession } from '@/stores/session'
 import { Cap } from '@/lib/caps'
 import { confirm } from '@/lib/confirm'
@@ -9,8 +10,10 @@ import { ago, shortSha } from '@/lib/format'
 import { type Status } from '@/lib/status'
 import AppIcon from '@/components/ui/AppIcon.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
+import CopyButton from '@/components/ui/CopyButton.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import PageHeader from '@/components/ui/PageHeader.vue'
+import Select from '@/components/ui/Select.vue'
 import StatusPill from '@/components/ui/StatusPill.vue'
 
 const session = useSession()
@@ -71,7 +74,6 @@ const form = ref(blank())
 const open = ref(false)
 const editing = ref<VolumeSource | null>(null)
 const busy = ref(false)
-const error = ref('')
 
 // The secret is shown exactly once, when it is minted. It is sealed in the database
 // afterwards and there is no way to read it back — the stacks auto-deploy pattern verbatim.
@@ -84,7 +86,6 @@ function startAdd() {
   form.value.env_id = editableEnvs.value.some((e) => e.id === session.envId)
     ? session.envId
     : (editableEnvs.value[0]?.id ?? '')
-  error.value = ''
   open.value = true
 }
 
@@ -105,7 +106,6 @@ async function startEdit(s: VolumeSource) {
     restart_targets: s.restart_targets ?? '',
     auto_sync: s.auto_sync,
   }
-  error.value = ''
   open.value = true
   // The list omits file contents (they can be large); fetch them for the editor.
   if (form.value.source_kind === 'inline') {
@@ -129,7 +129,6 @@ function close() {
   open.value = false
   editing.value = null
   form.value = blank()
-  error.value = ''
 }
 
 // Stacks that could plausibly be linked: same host, or a deploy there could never mount
@@ -148,17 +147,20 @@ watch(
 
 async function save(rotate = false) {
   busy.value = true
-  error.value = ''
   try {
     const body: VolumeSourceRequest = { ...form.value, rotate }
-    const r = editing.value
-      ? await daffa.updateVolumeSource(editing.value.id, body)
+    const editingSource = editing.value
+    const r = editingSource
+      ? await daffa.updateVolumeSource(editingSource.id, body)
       : await daffa.createVolumeSource(body)
+    // A minted secret gets its own one-time reveal panel — that IS the success feedback, so a
+    // toast on top of it would be redundant. Otherwise, confirm the save landed.
     if (r.webhook_secret) minted.value = { source: r.source, secret: r.webhook_secret }
+    else toast.ok(editingSource ? 'Source saved.' : 'Source created.')
     await qc.invalidateQueries({ queryKey: ['volume-sources'] })
     close()
   } catch (e) {
-    error.value = e instanceof ApiError ? e.message : 'Could not save the volume source.'
+    toast.err(e, 'Could not save the volume source.')
   } finally {
     busy.value = false
   }
@@ -199,6 +201,8 @@ const sync = useMutation({
 
 const remove = useMutation({
   mutationFn: (id: string) => daffa.deleteVolumeSource(id),
+  onSuccess: () => toast.ok('Source deleted.'),
+  onError: (e) => toast.err(e, 'Could not delete the volume source.'),
   onSettled: () => qc.invalidateQueries({ queryKey: ['volume-sources'] }),
 })
 
@@ -244,9 +248,6 @@ function webhookUrl(id: string): string {
   return `${location.origin}/webhooks/volume-sources/${id}`
 }
 
-async function copy(text: string) {
-  await navigator.clipboard.writeText(text)
-}
 </script>
 
 <template>
@@ -296,10 +297,7 @@ async function copy(text: string) {
         :style="{ background: 'var(--surface)' }"
       >
         <code class="flex-1 break-all">{{ webhookUrl(minted.source.id) }}</code>
-        <BaseButton intent="ghost" size="xs" @click="copy(webhookUrl(minted.source.id))">
-          <AppIcon name="copy" class="size-3" />
-          Copy
-        </BaseButton>
+        <CopyButton intent="ghost" size="xs" :text="webhookUrl(minted.source.id)" />
       </div>
 
       <div
@@ -307,10 +305,7 @@ async function copy(text: string) {
         :style="{ background: 'var(--surface)' }"
       >
         <code class="flex-1 break-all">{{ minted.secret }}</code>
-        <BaseButton intent="ghost" size="xs" @click="copy(minted.secret)">
-          <AppIcon name="copy" class="size-3" />
-          Copy
-        </BaseButton>
+        <CopyButton intent="ghost" size="xs" :text="minted.secret" />
       </div>
       <p class="muted mt-1.5 text-xs">
         This is shown once. It is stored encrypted and cannot be read back — if you lose it, edit
@@ -334,18 +329,17 @@ async function copy(text: string) {
           <!-- Host and volume are what a source IS — retargeting one would strand the old
                volume with a manifest nothing owns. The server ignores them on update, so
                the form says so up front instead of silently dropping an edit. -->
-          <select
+          <Select
             id="vs-env"
             v-model="form.env_id"
             required
             :disabled="!!editing"
-            class="field"
           >
             <option value="" disabled>Choose a host…</option>
             <option v-for="e in editing ? (environments ?? []) : editableEnvs" :key="e.id" :value="e.id">
               {{ e.name }}
             </option>
-          </select>
+          </Select>
           <p v-if="editing" class="subtle mt-1 text-xs">
             Fixed. To move a source, delete it and create another — both halves explicit.
           </p>
@@ -370,10 +364,10 @@ async function copy(text: string) {
           <label for="vs-stack" class="mb-1.5 block text-sm font-medium">
             Linked stack <span class="subtle font-normal">(optional)</span>
           </label>
-          <select id="vs-stack" v-model="form.stack_id" class="field">
+          <Select id="vs-stack" v-model="form.stack_id">
             <option value="">None</option>
             <option v-for="s in stackChoices" :key="s.id" :value="s.id">{{ s.name }}</option>
-          </select>
+          </Select>
           <p class="subtle mt-1 text-xs">
             Linked, the stack's deploys sync this source first — and fail loudly if the sync fails,
             so a stack never comes up against config Daffa knows is stale.
@@ -383,10 +377,10 @@ async function copy(text: string) {
 
       <div>
         <label class="mb-1.5 block text-sm font-medium">Source</label>
-        <select v-model="form.source_kind" :disabled="!!editing" class="field">
+        <Select v-model="form.source_kind" :disabled="!!editing">
           <option value="git">Git repository — synced from a repo</option>
           <option value="inline">Inline — files authored here</option>
-        </select>
+        </Select>
         <p class="subtle mt-1 text-xs">
           Inline is for a volume with no repo behind it — Traefik's static config and dynamic
           middlewares, edited here and delivered on deploy. The kind is fixed after creation.
@@ -428,12 +422,12 @@ async function copy(text: string) {
           </div>
           <div>
             <label for="vs-cred" class="mb-1.5 block text-sm font-medium">Credential</label>
-            <select id="vs-cred" v-model="form.git_credential_id" class="field">
+            <Select id="vs-cred" v-model="form.git_credential_id">
               <option value="">None — public repository</option>
               <option v-for="c in gitCreds" :key="c.id" :value="c.id">
                 {{ c.name }} ({{ c.kind === 'ssh' ? 'SSH' : 'token' }})
               </option>
-            </select>
+            </Select>
             <p class="subtle mt-1 text-xs">
               <RouterLink
                 v-if="session.can(Cap.GitCredsView)"
@@ -548,8 +542,6 @@ async function copy(text: string) {
         </div>
       </div>
 
-      <p v-if="error" class="text-sm" :style="{ color: 'var(--danger)' }">{{ error }}</p>
-
       <div class="flex items-center gap-2">
         <BaseButton type="submit" intent="primary" size="md" :loading="busy">
           {{ editing ? 'Save' : 'Create source' }}
@@ -650,10 +642,7 @@ async function copy(text: string) {
                  it was shown once, when it was minted. -->
             <div v-if="s.auto_sync" class="mt-2 flex items-center gap-2 font-mono text-xs">
               <code class="subtle break-all">POST {{ webhookUrl(s.id) }}</code>
-              <BaseButton intent="ghost" size="xs" @click="copy(webhookUrl(s.id))">
-                <AppIcon name="copy" class="size-3" />
-                Copy
-              </BaseButton>
+              <CopyButton intent="ghost" size="xs" :text="webhookUrl(s.id)" />
             </div>
           </div>
 

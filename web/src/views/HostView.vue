@@ -6,7 +6,8 @@ import { useSession } from '@/stores/session'
 import { hostStatus, nodeStatus } from '@/lib/status'
 import { Cap } from '@/lib/caps'
 import { confirm } from '@/lib/confirm'
-import { ApiError, type ClusterNode, type JoinTokens, type LogConfigRequest } from '@/lib/api'
+import { type ClusterNode, type JoinTokens, type LogConfigRequest } from '@/lib/api'
+import { toast } from '@/lib/toast'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import PageHeader from '@/components/ui/PageHeader.vue'
 import StatusPill from '@/components/ui/StatusPill.vue'
@@ -50,18 +51,17 @@ const { data: nodes } = useQuery({
 
 const qc = useQueryClient()
 const canEditNodes = computed(() => session.can(Cap.NodesEdit))
-const nodeError = ref('')
 const busyNode = ref('')
 
 async function nodeOp(n: ClusterNode, body: { availability?: string; role?: string }) {
   if (!n.swarm_node_id) return
-  nodeError.value = ''
   busyNode.value = n.swarm_node_id
   try {
     await daffa.updateNode(session.envId, n.swarm_node_id, body)
+    toast.ok('Node updated.')
     await qc.invalidateQueries({ queryKey: ['cluster-nodes'] })
   } catch (e) {
-    nodeError.value = e instanceof ApiError ? e.message : String(e)
+    toast.err(e, 'Could not update the node.')
   }
   busyNode.value = ''
 }
@@ -124,13 +124,13 @@ async function initSwarm() {
   if (!ok) return
 
   swarmBusy.value = true
-  nodeError.value = ''
   try {
     await daffa.swarmInit(session.envId)
+    toast.ok('Swarm initialized.')
     await qc.invalidateQueries({ queryKey: ['environments'] })
     await qc.invalidateQueries({ queryKey: ['cluster-nodes'] })
   } catch (e) {
-    nodeError.value = e instanceof ApiError ? e.message : String(e)
+    toast.err(e, 'Could not initialize the swarm.')
   }
   swarmBusy.value = false
 }
@@ -140,11 +140,10 @@ async function initSwarm() {
 // demand, by an explicit act, rather than sitting on a page somebody left open — and reading one is
 // audited as an event in its own right.
 async function showTokens() {
-  nodeError.value = ''
   try {
     tokens.value = await daffa.joinTokens(session.envId)
   } catch (e) {
-    nodeError.value = e instanceof ApiError ? e.message : String(e)
+    toast.err(e, 'Could not load the join tokens.')
   }
 }
 
@@ -169,14 +168,14 @@ async function leaveSwarm() {
   if (!ok) return
 
   swarmBusy.value = true
-  nodeError.value = ''
   try {
     await daffa.swarmLeave(session.envId, true)
+    toast.ok('Left the swarm.')
     tokens.value = null
     await qc.invalidateQueries({ queryKey: ['environments'] })
     await qc.invalidateQueries({ queryKey: ['cluster-nodes'] })
   } catch (e) {
-    nodeError.value = e instanceof ApiError ? e.message : String(e)
+    toast.err(e, 'Could not leave the swarm.')
   }
   swarmBusy.value = false
 }
@@ -195,7 +194,6 @@ const { data: logConfig } = useQuery({
   enabled: computed(() => !!session.envId && canViewLogging.value),
 })
 
-const logError = ref('')
 const logBusy = ref(false)
 
 const logSource = computed(() => {
@@ -207,12 +205,12 @@ const logSource = computed(() => {
 
 async function saveLogConfig(body: LogConfigRequest) {
   logBusy.value = true
-  logError.value = ''
   try {
     await daffa.saveHostLogConfig(session.envId, body)
+    toast.ok('Logging configuration saved.')
     await qc.invalidateQueries({ queryKey: ['host-log-config'] })
   } catch (e) {
-    logError.value = e instanceof ApiError ? e.message : 'Could not save.'
+    toast.err(e, 'Could not save.')
   } finally {
     logBusy.value = false
   }
@@ -220,12 +218,12 @@ async function saveLogConfig(body: LogConfigRequest) {
 
 async function clearLogConfig() {
   logBusy.value = true
-  logError.value = ''
   try {
     await daffa.clearHostLogConfig(session.envId)
+    toast.ok('Logging reverted to defaults.')
     await qc.invalidateQueries({ queryKey: ['host-log-config'] })
   } catch (e) {
-    logError.value = e instanceof ApiError ? e.message : 'Could not revert.'
+    toast.err(e, 'Could not revert.')
   } finally {
     logBusy.value = false
   }
@@ -355,10 +353,6 @@ const instruments = computed<{ label: string; value: string; of?: string }[]>(()
         <h2 class="eyebrow mb-2">
           {{ host?.swarm ? `Nodes · ${nodes.length}` : 'Node' }}
         </h2>
-
-        <p v-if="nodeError" class="mb-2 text-sm" :style="{ color: 'var(--danger)' }">
-          {{ nodeError }}
-        </p>
 
         <div class="surface overflow-hidden rounded-[var(--radius-card)]">
           <table class="w-full text-sm">
@@ -559,10 +553,6 @@ const instruments = computed<{ label: string; value: string; of?: string }[]>(()
           services that don't declare their own
           <span class="font-mono text-xs">logging:</span>. Set here, it overrides the fleet
           default from Settings; applied at each service's next deploy.
-        </p>
-
-        <p v-if="logError" class="mb-3 text-sm" :style="{ color: 'var(--danger)' }">
-          {{ logError }}
         </p>
 
         <LogConfigForm
