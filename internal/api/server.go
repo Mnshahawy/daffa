@@ -48,6 +48,9 @@ type Server struct {
 	oidcStates *stateStore
 	// agents holds the tunnels of the agents currently connected.
 	agents *registry
+	// ssh manages the outbound SSH connections to remote clusters — the server-side mirror of
+	// the agents registry, since for SSH it is Daffa that dials out (docs/clusters.md §4).
+	ssh *sshManager
 	// sched runs backup jobs on their cron expressions.
 	sched *scheduler
 	// collector samples CPU and memory; retention expires the samples.
@@ -62,6 +65,9 @@ type Server struct {
 	// drains its workers instead of abandoning them mid-loop. See Start/Stop.
 	wg         sync.WaitGroup
 	stopWorker context.CancelFunc
+	// workerCtx is the background-worker context, set by Start. Handlers that spawn long-lived
+	// work (an SSH cluster's connect loop) parent it here so Stop winds it down too.
+	workerCtx context.Context
 }
 
 func NewServer(cfg *config.Config, st *store.Store, pool *dockerx.Pool, sealer *config.Sealer) *Server {
@@ -80,6 +86,7 @@ func NewServer(cfg *config.Config, st *store.Store, pool *dockerx.Pool, sealer *
 		limiter:    auth.NewLimiter(10, 15*time.Minute),
 		oidcStates: newStateStore(),
 		agents:     newRegistry(),
+		ssh:        newSSHManager(),
 		sched:      newScheduler(),
 		collector:  monitor.NewCollector(st, pool, slog.Default()),
 		retention:  monitor.NewRetention(st, slog.Default()),
@@ -113,6 +120,9 @@ func (s *Server) Start(ctx context.Context) {
 	// still looping. Deriving our own context (rather than only relying on the caller cancelling
 	// theirs) means Stop can wind the workers down even on a crash-exit path.
 	ctx, s.stopWorker = context.WithCancel(ctx)
+	// Handlers that spawn their own long-lived work (an added SSH cluster's connect loop) parent
+	// it on this, so it lives and dies with the worker set rather than with the request.
+	s.workerCtx = ctx
 
 	s.startScheduler(ctx)
 
@@ -132,6 +142,10 @@ func (s *Server) Start(ctx context.Context) {
 	// cron jobs from internal-setup, folded in. See cert_worker.go.
 	s.spawn(ctx, s.certWorker)
 	s.spawn(ctx, s.keyringWorker)
+
+	// Dial out to every persisted SSH cluster and keep the connections up — the server-side
+	// mirror of the agent connect loop (docs/clusters.md §4).
+	s.spawn(ctx, s.watchSSHClusters)
 }
 
 // spawn runs a background worker under the WaitGroup, so Stop can wait for it to return.
@@ -321,9 +335,25 @@ func (s *Server) apiRoutes() []route {
 		//oapi:summary List the clusters the caller may see, with live node status
 		//oapi:enum Environment.status online|offline
 		//oapi:enum Node.status online|offline
-		//oapi:enum Node.kind local|agent
+		//oapi:enum Node.kind local|agent|ssh
 		{pattern: "GET /api/clusters", cap: caps.ClustersView, scope: scopeAny, h: s.handleListEnvironments,
 			resp: []envView(nil), ts: "environments"},
+		// Adding a cluster brings a whole environment into existence over SSH, so — like enrolling
+		// an agent — it is clusters.edit taken globally, never a per-cluster grant. Test dials and
+		// reads the daemon without persisting; create dials, pins the host key, and persists.
+		//oapi:summary Test an SSH connection to a would-be cluster without saving it
+		//oapi:example req {"host": "10.0.0.9", "user": "daffa", "key_id": "sshkey_…"}
+		{pattern: "POST /api/clusters/test-connection", cap: caps.ClustersEdit, scope: scopeGlobal, h: s.handleTestSSHConnection,
+			req: sshClusterRequest{}, resp: sshTestResponse{}, ts: "testClusterConnection"},
+		//oapi:summary Add a cluster reached over SSH
+		//oapi:example req {"name": "prod-eu", "host": "10.0.0.9", "user": "daffa", "key_id": "sshkey_…"}
+		{pattern: "POST /api/clusters", cap: caps.ClustersEdit, scope: scopeGlobal, h: s.handleCreateSSHCluster,
+			req: sshClusterRequest{}, resp: sshClusterCreatedResponse{}, ts: "createCluster"},
+		// Removes an SSH cluster: stops its connection and deletes the environment. The local
+		// cluster and agent-backed ones are refused (409) — those are removed by other means.
+		//oapi:summary Remove a cluster added over SSH
+		{pattern: "DELETE /api/clusters/{cluster}", cap: caps.ClustersEdit, scope: scopeGlobal, h: s.handleDeleteCluster,
+			resp: map[string]string(nil), ts: "deleteCluster"},
 		//oapi:summary Read the Docker daemon's summary for one node
 		//oapi:query node string the target node id; required only when the cluster has more than one
 		{pattern: "GET /api/clusters/{cluster}/info", cap: caps.ClustersView, scope: scopeEnv, h: s.handleEnvInfo,

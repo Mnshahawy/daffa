@@ -170,8 +170,32 @@ export interface Environment {
 export interface Node {
   id: string
   name: string
-  kind: 'local' | 'agent'
+  kind: 'local' | 'agent' | 'ssh'
   status: 'online' | 'offline'
+}
+
+export interface SSHClusterRequest {
+  name?: string
+  host?: string
+  port?: number
+  user?: string
+  key_id?: string
+  endpoint?: string
+  host_key?: string
+}
+
+export interface SSHConnectionTest {
+  ok: boolean
+  error?: string
+  server_version?: string
+  os?: string
+  arch?: string
+  host_key?: string
+}
+
+export interface CreatedCluster {
+  id: string
+  node_id: string
 }
 
 export interface DockerInfo {
@@ -758,6 +782,7 @@ export interface GitCredential {
   name: string
   kind: 'token' | 'ssh'
   username?: string
+  ssh_key_name?: string
   pinned: boolean
   in_use: number
 }
@@ -772,8 +797,7 @@ export interface GitCredRequest {
   kind?: string
   username?: string
   token?: string
-  ssh_key?: string
-  passphrase?: string
+  ssh_key_id?: string
   host_key?: string
 }
 
@@ -1278,6 +1302,10 @@ export const daffa = {
   allTokens: () => api.get<APIToken[]>('/api/tokens/all'),
   capabilities: () => api.get<CapabilityRegistry>('/api/capabilities'),
   environments: () => api.get<Environment[]>('/api/clusters'),
+  testClusterConnection: (body: SSHClusterRequest) =>
+    api.post<SSHConnectionTest>('/api/clusters/test-connection', body),
+  createCluster: (body: SSHClusterRequest) => api.post<CreatedCluster>('/api/clusters', body),
+  deleteCluster: (cluster: string) => api.del<Record<string, string>>(`/api/clusters/${cluster}`),
   info: (cluster: string) => api.get<DockerInfo>(`/api/clusters/${cluster}/info`),
   df: (cluster: string) => api.get<DiskUsage>(`/api/clusters/${cluster}/df`),
   hostLogConfig: (cluster: string) => api.get<HostLogConfig>(`/api/clusters/${cluster}/logging`),

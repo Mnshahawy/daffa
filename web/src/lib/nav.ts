@@ -217,7 +217,7 @@ export const settingsGroups: { title: string; items: SettingsTab[] }[] = [
     title: 'Connections',
     items: [
       {
-        name: 'settings-agents',
+        name: 'settings-clusters',
         label: 'Clusters',
         hint: 'The clusters Daffa manages',
         cap: Cap.ClustersEdit,

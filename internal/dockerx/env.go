@@ -250,6 +250,48 @@ func (p *Pool) RegisterAgent(env *store.Environment, node *store.Node, dial Dial
 	return nil
 }
 
+// RegisterSSH wires a REMOTE node reached over SSH into the pool. It is RegisterAgent with a
+// different Dialer — the dialer opens a channel to the remote Docker socket over an ssh.Client
+// (internal/sshx) instead of a yamux stream over the agent tunnel. Everything downstream is the
+// same client.Client; the transport is the only thing that differs, which is dockerx's founding
+// idea (docs/clusters.md §2).
+func (p *Pool) RegisterSSH(env *store.Environment, node *store.Node, dial Dialer) error {
+	c, err := client.NewClientWithOpts(
+		// Placeholder host — the dialer decides where the bytes go, here to the remote socket.
+		client.WithHost("http://daffa-ssh"),
+		client.WithHTTPClient(&http.Client{Transport: &http.Transport{
+			DialContext: dial,
+			// Each request rides a fresh SSH channel; pooling HTTP connections on top would only
+			// hold channels open for nothing.
+			DisableKeepAlives: true,
+		}}),
+		client.WithAPIVersionNegotiation(),
+	)
+	if err != nil {
+		return fmt.Errorf("dockerx: building client for ssh node %s: %w", node.Name, err)
+	}
+	p.attach(env, node, c)
+	return nil
+}
+
+// Probe builds a throwaway client on a dialer and reads the daemon's Info once, without touching
+// the pool — used to test a connection (an SSH cluster, say) before persisting it.
+func Probe(ctx context.Context, dial Dialer) (*Info, error) {
+	c, err := client.NewClientWithOpts(
+		client.WithHost("http://daffa-probe"),
+		client.WithHTTPClient(&http.Client{Transport: &http.Transport{
+			DialContext:       dial,
+			DisableKeepAlives: true,
+		}}),
+		client.WithAPIVersionNegotiation(),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("dockerx: building probe client: %w", err)
+	}
+	defer c.Close()
+	return (&Node{Name: "probe", Client: c}).Info(ctx)
+}
+
 func (p *Pool) attach(env *store.Environment, node *store.Node, c *client.Client) {
 	p.mu.Lock()
 	defer p.mu.Unlock()

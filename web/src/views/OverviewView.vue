@@ -83,7 +83,7 @@ const concerns = computed<Concern[]>(() => {
         tone: 'danger',
         title: e.name,
         detail: 'Cluster unreachable — nothing can be deployed or operated here',
-        to: { name: 'settings-agents' },
+        to: { name: 'settings-clusters' },
       })
     }
   }
@@ -134,7 +134,7 @@ const instruments = computed(() => [
     label: 'Clusters online',
     value: `${hostsOnline.value.length}/${environments.value?.length ?? 0}`,
     bad: hostsOnline.value.length < (environments.value?.length ?? 0),
-    to: { name: 'settings-agents' },
+    to: { name: 'settings-clusters' },
     show: true,
   },
   {

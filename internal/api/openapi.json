@@ -343,7 +343,7 @@
           "API tokens"
         ],
         "summary": "List every user's API tokens",
-        "description": "The users.edit oversight list: every token, with owners. Oversight without impersonation — the secret is unrecoverable even here.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "The users.edit oversight list: every token, with owners. Oversight without impersonation — the secret is unrecoverable even here.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "users.edit",
         "x-daffa-scope": "global",
         "responses": {
@@ -400,7 +400,7 @@
           "capability registry"
         ],
         "summary": "Read the capability registry — the areas and capabilities, as data",
-        "description": "The role editor renders its matrix from this. Anyone who can see a role can see what the bits in it mean.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "The role editor renders its matrix from this. Anyone who can see a role can see what the bits in it mean.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "roles.view",
         "x-daffa-scope": "global",
         "responses": {
@@ -490,7 +490,7 @@
           "clusters"
         ],
         "summary": "List the clusters the caller may see, with live node status",
-        "description": "Listing clusters is clusters.view rather than open: without it the console has no cluster to point at, so a role that omits it coherently sees nothing at all. The list is filtered, not gated: each cluster appears only to a caller who holds clusters.view there (or globally). Node status is probed live, per node.\n\nSatisfied by the capability held globally or on any host; list responses are filtered to what the caller may see.",
+        "description": "Listing clusters is clusters.view rather than open: without it the console has no cluster to point at, so a role that omits it coherently sees nothing at all. The list is filtered, not gated: each cluster appears only to a caller who holds clusters.view there (or globally). Node status is probed live, per node.\n\nSatisfied by the capability held globally or on any cluster; list responses are filtered to what the caller may see.",
         "x-daffa-capability": "clusters.view",
         "x-daffa-scope": "any",
         "responses": {
@@ -538,36 +538,50 @@
             }
           }
         }
-      }
-    },
-    "/api/clusters/{cluster}/info": {
-      "get": {
-        "operationId": "info",
+      },
+      "post": {
+        "operationId": "createCluster",
         "tags": [
           "clusters"
         ],
-        "summary": "Read the Docker daemon's summary for one node",
-        "description": "Requires the capability at the host named in the path.",
-        "x-daffa-capability": "clusters.view",
-        "x-daffa-scope": "env",
-        "parameters": [
-          {
-            "name": "node",
-            "in": "query",
-            "required": false,
-            "description": "the target node id; required only when the cluster has more than one",
-            "schema": {
-              "type": "string"
+        "summary": "Add a cluster reached over SSH",
+        "description": "Requires the capability granted globally — a cluster-scoped grant does not satisfy it.",
+        "x-daffa-capability": "clusters.edit",
+        "x-daffa-scope": "global",
+        "requestBody": {
+          "description": "Request bodies are capped at 1 MiB; unknown fields are refused.",
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SSHClusterRequest"
+              },
+              "example": {
+                "name": "prod-eu",
+                "host": "10.0.0.9",
+                "user": "daffa",
+                "key_id": "sshkey_…"
+              }
             }
           }
-        ],
+        },
         "responses": {
           "200": {
             "description": "OK.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DockerInfo"
+                  "$ref": "#/components/schemas/CreatedCluster"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is wrong, and the message says how to fix it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
                 }
               }
             }
@@ -584,16 +598,6 @@
           },
           "403": {
             "description": "Signed in, but the capability is not held at the required scope.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Nothing lives at that id.",
             "content": {
               "application/json": {
                 "schema": {
@@ -615,34 +619,49 @@
         }
       }
     },
-    "/api/clusters/{cluster}/df": {
-      "get": {
-        "operationId": "df",
+    "/api/clusters/test-connection": {
+      "post": {
+        "operationId": "testClusterConnection",
         "tags": [
           "clusters"
         ],
-        "summary": "Read one node's disk usage, split by what could reclaim it",
-        "description": "Requires the capability at the host named in the path.",
-        "x-daffa-capability": "clusters.view",
-        "x-daffa-scope": "env",
-        "parameters": [
-          {
-            "name": "node",
-            "in": "query",
-            "required": false,
-            "description": "the target node id; required only when the cluster has more than one",
-            "schema": {
-              "type": "string"
+        "summary": "Test an SSH connection to a would-be cluster without saving it",
+        "description": "Adding a cluster brings a whole environment into existence over SSH, so — like enrolling an agent — it is clusters.edit taken globally, never a per-cluster grant. Test dials and reads the daemon without persisting; create dials, pins the host key, and persists.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
+        "x-daffa-capability": "clusters.edit",
+        "x-daffa-scope": "global",
+        "requestBody": {
+          "description": "Request bodies are capped at 1 MiB; unknown fields are refused.",
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SSHClusterRequest"
+              },
+              "example": {
+                "host": "10.0.0.9",
+                "user": "daffa",
+                "key_id": "sshkey_…"
+              }
             }
           }
-        ],
+        },
         "responses": {
           "200": {
             "description": "OK.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DiskUsage"
+                  "$ref": "#/components/schemas/SSHConnectionTest"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is wrong, and the message says how to fix it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
                 }
               }
             }
@@ -659,16 +678,6 @@
           },
           "403": {
             "description": "Signed in, but the capability is not held at the required scope.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Nothing lives at that id.",
             "content": {
               "application/json": {
                 "schema": {
@@ -691,13 +700,78 @@
       }
     },
     "/api/clusters/{cluster}": {
+      "delete": {
+        "operationId": "deleteCluster",
+        "tags": [
+          "clusters"
+        ],
+        "summary": "Remove a cluster added over SSH",
+        "description": "Removes an SSH cluster: stops its connection and deletes the environment. The local cluster and agent-backed ones are refused (409) — those are removed by other means.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
+        "x-daffa-capability": "clusters.edit",
+        "x-daffa-scope": "global",
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No live session or valid token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but the capability is not held at the required scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Nothing lives at that id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something went wrong on the server; the audit log has the details.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
       "patch": {
         "operationId": "patchClustersByCluster",
         "tags": [
           "clusters"
         ],
         "summary": "Rename a cluster",
-        "description": "Names the cluster the way an operator thinks of it. Refused (409) when another cluster already answers to the name — two identical entries in the switcher is a way to restart the wrong machine.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "Names the cluster the way an operator thinks of it. Refused (409) when another cluster already answers to the name — two identical entries in the switcher is a way to restart the wrong machine.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "clusters.edit",
         "x-daffa-scope": "global",
         "requestBody": {
@@ -778,6 +852,156 @@
         }
       }
     },
+    "/api/clusters/{cluster}/info": {
+      "get": {
+        "operationId": "info",
+        "tags": [
+          "clusters"
+        ],
+        "summary": "Read the Docker daemon's summary for one node",
+        "description": "Requires the capability at the cluster named in the path.",
+        "x-daffa-capability": "clusters.view",
+        "x-daffa-scope": "env",
+        "parameters": [
+          {
+            "name": "node",
+            "in": "query",
+            "required": false,
+            "description": "the target node id; required only when the cluster has more than one",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DockerInfo"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No live session or valid token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but the capability is not held at the required scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Nothing lives at that id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something went wrong on the server; the audit log has the details.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/clusters/{cluster}/df": {
+      "get": {
+        "operationId": "df",
+        "tags": [
+          "clusters"
+        ],
+        "summary": "Read one node's disk usage, split by what could reclaim it",
+        "description": "Requires the capability at the cluster named in the path.",
+        "x-daffa-capability": "clusters.view",
+        "x-daffa-scope": "env",
+        "parameters": [
+          {
+            "name": "node",
+            "in": "query",
+            "required": false,
+            "description": "the target node id; required only when the cluster has more than one",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiskUsage"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No live session or valid token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but the capability is not held at the required scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Nothing lives at that id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something went wrong on the server; the audit log has the details.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/clusters/{cluster}/logging": {
       "get": {
         "operationId": "hostLogConfig",
@@ -785,7 +1009,7 @@
           "clusters"
         ],
         "summary": "Read this cluster's container log defaults",
-        "description": "A cluster's container log defaults. Env-scoped on purpose — the SRE who runs staging sets staging's log rotation; the FLEET default is the /api/settings trio below with the same capability taken globally.\n\nRequires the capability at the host named in the path.",
+        "description": "A cluster's container log defaults. Env-scoped on purpose — the SRE who runs staging sets staging's log rotation; the FLEET default is the /api/settings trio below with the same capability taken globally.\n\nRequires the capability at the cluster named in the path.",
         "x-daffa-capability": "logging.view",
         "x-daffa-scope": "env",
         "responses": {
@@ -847,7 +1071,7 @@
           "clusters"
         ],
         "summary": "Set this cluster's container log override",
-        "description": "Applied to services that do not declare their own logging:, at their next deploy.\n\nRequires the capability at the host named in the path.",
+        "description": "Applied to services that do not declare their own logging:, at their next deploy.\n\nRequires the capability at the cluster named in the path.",
         "x-daffa-capability": "logging.edit",
         "x-daffa-scope": "env",
         "requestBody": {
@@ -936,7 +1160,7 @@
           "clusters"
         ],
         "summary": "Revert this cluster to the fleet's log defaults",
-        "description": "Deleting the override reverts the cluster to the fleet default. Idempotent.\n\nRequires the capability at the host named in the path.",
+        "description": "Deleting the override reverts the cluster to the fleet default. Idempotent.\n\nRequires the capability at the cluster named in the path.",
         "x-daffa-capability": "logging.edit",
         "x-daffa-scope": "env",
         "responses": {
@@ -993,7 +1217,7 @@
           "clusters"
         ],
         "summary": "List enrolled agents and their connection state",
-        "description": "Enrolling an agent adds a machine Daffa can reach, and the enrolment token is a credential. That is clusters.edit, not clusters.view.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "Enrolling an agent adds a machine Daffa can reach, and the enrolment token is a credential. That is clusters.edit, not clusters.view.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "clusters.edit",
         "x-daffa-scope": "global",
         "responses": {
@@ -1048,7 +1272,7 @@
           "clusters"
         ],
         "summary": "Create an agent and mint its one-time join token",
-        "description": "Declares an agent and mints its one-time join token. The token is in this response and never anywhere else — it exists only in the operator's clipboard.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "Declares an agent and mints its one-time join token. The token is in this response and never anywhere else — it exists only in the operator's clipboard.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "clusters.edit",
         "x-daffa-scope": "global",
         "requestBody": {
@@ -1126,7 +1350,7 @@
           "clusters"
         ],
         "summary": "Delete an agent and disconnect its tunnel",
-        "description": "Cuts the tunnel first, then forgets the agent — and the environment with it, if that node was the last one in it.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "Cuts the tunnel first, then forgets the agent — and the environment with it, if that node was the last one in it.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "clusters.edit",
         "x-daffa-scope": "global",
         "responses": {
@@ -1190,7 +1414,7 @@
           "containers"
         ],
         "summary": "List containers across every node of the cluster",
-        "description": "Fans out across every node of a swarm; each row carries the node it lives on, because a container id is unique per DAEMON, not per cluster.\n\nRequires the capability at the host named in the path.",
+        "description": "Fans out across every node of a swarm; each row carries the node it lives on, because a container id is unique per DAEMON, not per cluster.\n\nRequires the capability at the cluster named in the path.",
         "x-daffa-capability": "containers.view",
         "x-daffa-scope": "env",
         "parameters": [
@@ -1268,7 +1492,7 @@
           "containers"
         ],
         "summary": "Inspect a container (raw Docker inspect payload)",
-        "description": "The response is Docker's own inspect object, passed through — its shape follows the daemon's API version and is not stable enough to promise fields from.\n\nRequires the capability at the host named in the path.",
+        "description": "The response is Docker's own inspect object, passed through — its shape follows the daemon's API version and is not stable enough to promise fields from.\n\nRequires the capability at the cluster named in the path.",
         "x-daffa-capability": "containers.view",
         "x-daffa-scope": "env",
         "parameters": [
@@ -1343,7 +1567,7 @@
           "containers"
         ],
         "summary": "Stream a container's logs as server-sent events",
-        "description": "SSE. Each `log` event is one line; `end` marks a non-followed tail as complete, `error` carries a mid-stream failure.\n\nRequires the capability at the host named in the path.",
+        "description": "SSE. Each `log` event is one line; `end` marks a non-followed tail as complete, `error` carries a mid-stream failure.\n\nRequires the capability at the cluster named in the path.",
         "x-daffa-capability": "containers.view",
         "x-daffa-scope": "env",
         "parameters": [
@@ -1436,7 +1660,7 @@
           "containers"
         ],
         "summary": "Stream one container's resource usage as server-sent events",
-        "description": "SSE. Follows ONE container — the one on screen — with a `stats` event per sample.\n\nRequires the capability at the host named in the path.",
+        "description": "SSE. Follows ONE container — the one on screen — with a `stats` event per sample.\n\nRequires the capability at the cluster named in the path.",
         "x-daffa-capability": "containers.view",
         "x-daffa-scope": "env",
         "parameters": [
@@ -1511,7 +1735,7 @@
           "containers"
         ],
         "summary": "Sample resource usage for the named containers, once",
-        "description": "One sample per named container. The CLIENT says which — it knows what is on screen, and sampling a container nobody is looking at is work spent for nothing.\n\nRequires the capability at the host named in the path.",
+        "description": "One sample per named container. The CLIENT says which — it knows what is on screen, and sampling a container nobody is looking at is work spent for nothing.\n\nRequires the capability at the cluster named in the path.",
         "x-daffa-capability": "containers.view",
         "x-daffa-scope": "env",
         "parameters": [
@@ -1598,7 +1822,7 @@
           "containers"
         ],
         "summary": "Stream the Docker daemon's events as server-sent events",
-        "description": "SSE. Relays the daemon's container/image/volume/network events as `docker` events, so the UI invalidates exactly what changed instead of polling.\n\nRequires the capability at the host named in the path.",
+        "description": "SSE. Relays the daemon's container/image/volume/network events as `docker` events, so the UI invalidates exactly what changed instead of polling.\n\nRequires the capability at the cluster named in the path.",
         "x-daffa-capability": "containers.view",
         "x-daffa-scope": "env",
         "parameters": [
@@ -1673,7 +1897,7 @@
           "containers"
         ],
         "summary": "Run a lifecycle action on a container",
-        "description": "Requires the capability at the host named in the path.",
+        "description": "Requires the capability at the cluster named in the path.",
         "x-daffa-capability": "containers.edit",
         "x-daffa-scope": "env",
         "parameters": [
@@ -1821,7 +2045,7 @@
           "images, networks, volumes"
         ],
         "summary": "List the cluster's services with live task counts",
-        "description": "Swarm. Cluster-wide, every one of them: these handlers reach their daemon through s.control(), which is a manager, and never through s.node(). The node table is the exception that proves it — it is a JOIN of what the swarm says exists against what Daffa can reach, so it needs both, and it is gated on clusters.view because a node is what a cluster is MADE of rather than a resource of its own.\n\nRequires the capability at the host named in the path.",
+        "description": "Swarm. Cluster-wide, every one of them: these handlers reach their daemon through s.control(), which is a manager, and never through s.node(). The node table is the exception that proves it — it is a JOIN of what the swarm says exists against what Daffa can reach, so it needs both, and it is gated on clusters.view because a node is what a cluster is MADE of rather than a resource of its own.\n\nRequires the capability at the cluster named in the path.",
         "x-daffa-capability": "services.view",
         "x-daffa-scope": "env",
         "responses": {
@@ -1888,7 +2112,7 @@
           "images, networks, volumes"
         ],
         "summary": "Read one service",
-        "description": "Requires the capability at the host named in the path.",
+        "description": "Requires the capability at the cluster named in the path.",
         "x-daffa-capability": "services.view",
         "x-daffa-scope": "env",
         "responses": {
@@ -1950,7 +2174,7 @@
           "images, networks, volumes"
         ],
         "summary": "Remove a service from the cluster",
-        "description": "Requires the capability at the host named in the path.",
+        "description": "Requires the capability at the cluster named in the path.",
         "x-daffa-capability": "services.edit",
         "x-daffa-scope": "env",
         "responses": {
@@ -2014,7 +2238,7 @@
           "images, networks, volumes"
         ],
         "summary": "List a service's tasks — the rows that say WHY a replica is not running",
-        "description": "The task is the point: a service saying 0/3 tells you nothing, the task's error says why. Each row also says whether Daffa can reach the node it runs on.\n\nRequires the capability at the host named in the path.",
+        "description": "The task is the point: a service saying 0/3 tells you nothing, the task's error says why. Each row also says whether Daffa can reach the node it runs on.\n\nRequires the capability at the cluster named in the path.",
         "x-daffa-capability": "services.view",
         "x-daffa-scope": "env",
         "responses": {
@@ -2081,7 +2305,7 @@
           "images, networks, volumes"
         ],
         "summary": "Stream a service's logs from every node as server-sent events",
-        "description": "SSE. The one cluster-wide stream Docker proxies for us: the manager collects from every node running a task, so it works with no agent on the workers at all.\n\nRequires the capability at the host named in the path.",
+        "description": "SSE. The one cluster-wide stream Docker proxies for us: the manager collects from every node running a task, so it works with no agent on the workers at all.\n\nRequires the capability at the cluster named in the path.",
         "x-daffa-capability": "services.view",
         "x-daffa-scope": "env",
         "parameters": [
@@ -2165,7 +2389,7 @@
           "images, networks, volumes"
         ],
         "summary": "List the cluster's machines: swarm membership joined against Daffa reachability",
-        "description": "Requires the capability at the host named in the path.",
+        "description": "Requires the capability at the cluster named in the path.",
         "x-daffa-capability": "clusters.view",
         "x-daffa-scope": "env",
         "responses": {
@@ -2232,7 +2456,7 @@
           "images, networks, volumes"
         ],
         "summary": "Scale a service to an exact replica count",
-        "description": "`replicas` is a pointer on purpose: scaling to 0 is a real instruction, a missing field is not, and only a nullable field can tell them apart.\n\nRequires the capability at the host named in the path.",
+        "description": "`replicas` is a pointer on purpose: scaling to 0 is a real instruction, a missing field is not, and only a nullable field can tell them apart.\n\nRequires the capability at the cluster named in the path.",
         "x-daffa-capability": "services.edit",
         "x-daffa-scope": "env",
         "requestBody": {
@@ -2320,7 +2544,7 @@
           "images, networks, volumes"
         ],
         "summary": "Force-redeploy a service, re-resolving its image",
-        "description": "`docker service update --force`: recreate every task, re-resolving the image against the registry — the only way to get new bytes for a floating tag without editing anything.\n\nRequires the capability at the host named in the path.",
+        "description": "`docker service update --force`: recreate every task, re-resolving the image against the registry — the only way to get new bytes for a floating tag without editing anything.\n\nRequires the capability at the cluster named in the path.",
         "x-daffa-capability": "services.edit",
         "x-daffa-scope": "env",
         "responses": {
@@ -2384,7 +2608,7 @@
           "images, networks, volumes"
         ],
         "summary": "Roll a service back to its previous spec",
-        "description": "Puts back the service's PREVIOUS spec, which swarm keeps for exactly this. Rolls back ONE service — a stack rollback re-applies a stored compose file and lives on the deployment.\n\nRequires the capability at the host named in the path.",
+        "description": "Puts back the service's PREVIOUS spec, which swarm keeps for exactly this. Rolls back ONE service — a stack rollback re-applies a stored compose file and lives on the deployment.\n\nRequires the capability at the cluster named in the path.",
         "x-daffa-capability": "services.edit",
         "x-daffa-scope": "env",
         "responses": {
@@ -2448,7 +2672,7 @@
           "images, networks, volumes"
         ],
         "summary": "Change a machine's availability or role in the swarm",
-        "description": "Node operations are their own capability. Draining a machine moves EVERYBODY's workload; scaling one service moves one. An operator trusted with the second has not thereby been trusted with the first. Say what to change: an availability (active|pause|drain) or a role (manager|worker) — one per request.\n\nRequires the capability at the host named in the path.",
+        "description": "Node operations are their own capability. Draining a machine moves EVERYBODY's workload; scaling one service moves one. An operator trusted with the second has not thereby been trusted with the first. Say what to change: an availability (active|pause|drain) or a role (manager|worker) — one per request.\n\nRequires the capability at the cluster named in the path.",
         "x-daffa-capability": "nodes.edit",
         "x-daffa-scope": "env",
         "parameters": [
@@ -2545,7 +2769,7 @@
           "images, networks, volumes"
         ],
         "summary": "Remove a machine from the swarm's records",
-        "description": "Removes the swarm's RECORD of a machine; it does not reach the machine itself (`docker swarm leave` is what a node runs on itself). For the one already gone.\n\nRequires the capability at the host named in the path.",
+        "description": "Removes the swarm's RECORD of a machine; it does not reach the machine itself (`docker swarm leave` is what a node runs on itself). For the one already gone.\n\nRequires the capability at the cluster named in the path.",
         "x-daffa-capability": "nodes.edit",
         "x-daffa-scope": "env",
         "parameters": [
@@ -2629,7 +2853,7 @@
           "images, networks, volumes"
         ],
         "summary": "Turn a standalone host into a single-node Swarm",
-        "description": "Swarm secrets and configs are retired: a secret is a STACK's sealed sub-resource now (GET/PUT /api/stacks/{id}/secrets, docs/secrets.md), and config lives in git behind a volume source (docs/volumes.md). The cluster's own existence. The join tokens are a CREDENTIAL — anybody holding one can add a machine to the cluster — so they are served by exactly one route, which requires swarm.edit, and they appear in no other payload anywhere.\n\nRequires the capability at the host named in the path.",
+        "description": "Swarm secrets and configs are retired: a secret is a STACK's sealed sub-resource now (GET/PUT /api/stacks/{id}/secrets, docs/secrets.md), and config lives in git behind a volume source (docs/volumes.md). The cluster's own existence. The join tokens are a CREDENTIAL — anybody holding one can add a machine to the cluster — so they are served by exactly one route, which requires swarm.edit, and they appear in no other payload anywhere.\n\nRequires the capability at the cluster named in the path.",
         "x-daffa-capability": "swarm.edit",
         "x-daffa-scope": "env",
         "parameters": [
@@ -2728,7 +2952,7 @@
           "images, networks, volumes"
         ],
         "summary": "Read the swarm's join tokens — the credentials that admit a machine",
-        "description": "Reading these is reading a credential, and it is audited as such.\n\nRequires the capability at the host named in the path.",
+        "description": "Reading these is reading a credential, and it is audited as such.\n\nRequires the capability at the cluster named in the path.",
         "x-daffa-capability": "swarm.edit",
         "x-daffa-scope": "env",
         "responses": {
@@ -2792,7 +3016,7 @@
           "images, networks, volumes"
         ],
         "summary": "Take a node out of its Swarm",
-        "description": "For the last manager this dissolves the cluster — the raft store goes, and with it every service definition — which is why Docker demands force, and so do we.\n\nRequires the capability at the host named in the path.",
+        "description": "For the last manager this dissolves the cluster — the raft store goes, and with it every service definition — which is why Docker demands force, and so do we.\n\nRequires the capability at the cluster named in the path.",
         "x-daffa-capability": "swarm.edit",
         "x-daffa-scope": "env",
         "parameters": [
@@ -2876,7 +3100,7 @@
           "images, networks, volumes"
         ],
         "summary": "List images across every node, biggest first, with in-use flags",
-        "description": "Fans out across every node; each row says whether a container (running or stopped) still pins the image, because \"can I delete this?\" is the only question anyone opens the list to answer.\n\nRequires the capability at the host named in the path.",
+        "description": "Fans out across every node; each row says whether a container (running or stopped) still pins the image, because \"can I delete this?\" is the only question anyone opens the list to answer.\n\nRequires the capability at the cluster named in the path.",
         "x-daffa-capability": "images.view",
         "x-daffa-scope": "env",
         "responses": {
@@ -2943,7 +3167,7 @@
           "images, networks, volumes"
         ],
         "summary": "Remove an image from one node",
-        "description": "Requires the capability at the host named in the path.",
+        "description": "Requires the capability at the cluster named in the path.",
         "x-daffa-capability": "images.edit",
         "x-daffa-scope": "env",
         "parameters": [
@@ -3027,7 +3251,7 @@
           "images, networks, volumes"
         ],
         "summary": "List networks across every node, overlays deduplicated",
-        "description": "Fans out and deduplicates by id: an overlay network is cluster-wide and every node reports it, but nobody needs to see it three times.\n\nRequires the capability at the host named in the path.",
+        "description": "Fans out and deduplicates by id: an overlay network is cluster-wide and every node reports it, but nobody needs to see it three times.\n\nRequires the capability at the cluster named in the path.",
         "x-daffa-capability": "networks.view",
         "x-daffa-scope": "env",
         "responses": {
@@ -3094,7 +3318,7 @@
           "images, networks, volumes"
         ],
         "summary": "Remove a network from one node",
-        "description": "bridge, host and none are Docker's own — system networks, marked as such in the list and refused here with a 400 (code system_network), never forwarded to the daemon.\n\nRequires the capability at the host named in the path.",
+        "description": "bridge, host and none are Docker's own — system networks, marked as such in the list and refused here with a 400 (code system_network), never forwarded to the daemon.\n\nRequires the capability at the cluster named in the path.",
         "x-daffa-capability": "networks.edit",
         "x-daffa-scope": "env",
         "parameters": [
@@ -3169,7 +3393,7 @@
           "images, networks, volumes"
         ],
         "summary": "List volumes across every node, with the containers that mount them",
-        "description": "Each volume is annotated with the containers that mount it — the archaeology you otherwise do by hand before daring to delete one. Orphans sort first.\n\nRequires the capability at the host named in the path.",
+        "description": "Each volume is annotated with the containers that mount it — the archaeology you otherwise do by hand before daring to delete one. Orphans sort first.\n\nRequires the capability at the cluster named in the path.",
         "x-daffa-capability": "volumes.view",
         "x-daffa-scope": "env",
         "responses": {
@@ -3236,7 +3460,7 @@
           "images, networks, volumes"
         ],
         "summary": "Remove a volume from one node",
-        "description": "Refused (409) while anything Daffa manages depends on the volume — a volume source that would rewrite it on the next sync, or a backup job that would fail every night from then on.\n\nRequires the capability at the host named in the path.",
+        "description": "Refused (409) while anything Daffa manages depends on the volume — a volume source that would rewrite it on the next sync, or a backup job that would fail every night from then on.\n\nRequires the capability at the cluster named in the path.",
         "x-daffa-capability": "volumes.edit",
         "x-daffa-scope": "env",
         "parameters": [
@@ -3320,7 +3544,7 @@
           "images, networks, volumes"
         ],
         "summary": "Prune unused resources on one node, in bulk",
-        "description": "Prune is host-wide, bulk and irreversible. Removing one image and sweeping every unused one are not the same decision, so they are not the same permission. `volumes` deletes ANONYMOUS unused volumes only — a named volume is data, removed one at a time, on purpose, by a human.\n\nRequires the capability at the host named in the path.",
+        "description": "Prune is host-wide, bulk and irreversible. Removing one image and sweeping every unused one are not the same decision, so they are not the same permission. `volumes` deletes ANONYMOUS unused volumes only — a named volume is data, removed one at a time, on purpose, by a human.\n\nRequires the capability at the cluster named in the path.",
         "x-daffa-capability": "system.prune",
         "x-daffa-scope": "env",
         "parameters": [
@@ -3411,7 +3635,7 @@
           "stacks"
         ],
         "summary": "List every stack the caller may view",
-        "description": "The action buttons render FROM the actions list — the engines do not agree on the verbs, and a hardcoded list would ship dead buttons.\n\nSatisfied by the capability held globally or on any host; list responses are filtered to what the caller may see.",
+        "description": "The action buttons render FROM the actions list — the engines do not agree on the verbs, and a hardcoded list would ship dead buttons.\n\nSatisfied by the capability held globally or on any cluster; list responses are filtered to what the caller may see.",
         "x-daffa-capability": "stacks.view",
         "x-daffa-scope": "any",
         "responses": {
@@ -3466,7 +3690,7 @@
           "stacks"
         ],
         "summary": "Create a stack (recorded, not yet deployed)",
-        "description": "Creating does not deploy: the stack is a record until its first `up`. On a multi-node swarm a Compose stack must name node_id — the machine its containers land on; a Swarm stack must not, because placement is the scheduler's.\n\nThe target environment arrives in the request body; the handler checks the capability there after decoding.",
+        "description": "Creating does not deploy: the stack is a record until its first `up`. On a multi-node swarm a Compose stack must name node_id — the machine its containers land on; a Swarm stack must not, because placement is the scheduler's.\n\nThe target cluster arrives in the request body; the handler checks the capability there after decoding.",
         "x-daffa-capability": "stacks.edit",
         "x-daffa-scope": "body",
         "requestBody": {
@@ -3540,7 +3764,7 @@
           "stacks"
         ],
         "summary": "Read one stack: source, declared services, live status, warnings",
-        "description": "The source, the declared services, the live status and the swarm warnings, in one answer. A broken source still returns the stack, with source_error saying why — that is precisely when someone needs to open the page and fix it.\n\nRequires the capability at the stack's owning host. An unknown id and an unauthorized one both answer 404 — outsiders cannot distinguish them.",
+        "description": "The source, the declared services, the live status and the swarm warnings, in one answer. A broken source still returns the stack, with source_error saying why — that is precisely when someone needs to open the page and fix it.\n\nRequires the capability at the stack's owning cluster. An unknown id and an unauthorized one both answer 404 — outsiders cannot distinguish them.",
         "x-daffa-capability": "stacks.view",
         "x-daffa-scope": "stack",
         "responses": {
@@ -3592,7 +3816,7 @@
           "stacks"
         ],
         "summary": "Update a stack's source (the engine cannot change)",
-        "description": "The engine is immutable: the containers it already made carry the old engine's labels, and the new one would never find them. Create a new stack instead.\n\nRequires the capability at the stack's owning host. An unknown id and an unauthorized one both answer 404 — outsiders cannot distinguish them.",
+        "description": "The engine is immutable: the containers it already made carry the old engine's labels, and the new one would never find them. Create a new stack instead.\n\nRequires the capability at the stack's owning cluster. An unknown id and an unauthorized one both answer 404 — outsiders cannot distinguish them.",
         "x-daffa-capability": "stacks.edit",
         "x-daffa-scope": "stack",
         "requestBody": {
@@ -3665,7 +3889,7 @@
           "stacks"
         ],
         "summary": "Delete a stack and what it deployed",
-        "description": "Removes the stack's containers and network, then its record. Refused (409) while a deploy runs, and when the teardown fails — a stack Daffa cannot clean up is one it must not forget, unless ?force says to.\n\nRequires the capability at the stack's owning host. An unknown id and an unauthorized one both answer 404 — outsiders cannot distinguish them.",
+        "description": "Removes the stack's containers and network, then its record. Refused (409) while a deploy runs, and when the teardown fails — a stack Daffa cannot clean up is one it must not forget, unless ?force says to.\n\nRequires the capability at the stack's owning cluster. An unknown id and an unauthorized one both answer 404 — outsiders cannot distinguish them.",
         "x-daffa-capability": "stacks.edit",
         "x-daffa-scope": "stack",
         "parameters": [
@@ -3739,7 +3963,7 @@
           "stacks"
         ],
         "summary": "List one stack's deployment history, newest first",
-        "description": "The list rows carry no logs; the log streams from /api/deployments/{id}/logs.\n\nRequires the capability at the stack's owning host. An unknown id and an unauthorized one both answer 404 — outsiders cannot distinguish them.",
+        "description": "The list rows carry no logs; the log streams from /api/deployments/{id}/logs.\n\nRequires the capability at the stack's owning cluster. An unknown id and an unauthorized one both answer 404 — outsiders cannot distinguish them.",
         "x-daffa-capability": "stacks.view",
         "x-daffa-scope": "stack",
         "responses": {
@@ -3796,7 +4020,7 @@
           "stacks"
         ],
         "summary": "List a stack's env vars — values only for stacks.edit, secret values never",
-        "description": "stacks.view lists the KEYS; the handler reveals non-secret VALUES only to stacks.edit, and secret ones to nobody. Field-level, so it cannot live here.\n\nRequires the capability at the stack's owning host. An unknown id and an unauthorized one both answer 404 — outsiders cannot distinguish them.",
+        "description": "stacks.view lists the KEYS; the handler reveals non-secret VALUES only to stacks.edit, and secret ones to nobody. Field-level, so it cannot live here.\n\nRequires the capability at the stack's owning cluster. An unknown id and an unauthorized one both answer 404 — outsiders cannot distinguish them.",
         "x-daffa-capability": "stacks.view",
         "x-daffa-scope": "stack",
         "responses": {
@@ -3851,7 +4075,7 @@
           "stacks"
         ],
         "summary": "Replace a stack's environment variables",
-        "description": "Replaces the whole set. A secret sent with an empty value means \"unchanged\" — the client never had the plaintext to send back.\n\nRequires the capability at the stack's owning host. An unknown id and an unauthorized one both answer 404 — outsiders cannot distinguish them.",
+        "description": "Replaces the whole set. A secret sent with an empty value means \"unchanged\" — the client never had the plaintext to send back.\n\nRequires the capability at the stack's owning cluster. An unknown id and an unauthorized one both answer 404 — outsiders cannot distinguish them.",
         "x-daffa-capability": "stacks.edit",
         "x-daffa-scope": "stack",
         "requestBody": {
@@ -3926,7 +4150,7 @@
           "stacks"
         ],
         "summary": "List a stack's secret names — the bytes are write-only",
-        "description": "Stack secrets: names are listed to stacks.view; a secret's BYTES are never in the response at all — it is write-only, sealed on the way in and read back by nobody.\n\nRequires the capability at the stack's owning host. An unknown id and an unauthorized one both answer 404 — outsiders cannot distinguish them.",
+        "description": "Stack secrets: names are listed to stacks.view; a secret's BYTES are never in the response at all — it is write-only, sealed on the way in and read back by nobody.\n\nRequires the capability at the stack's owning cluster. An unknown id and an unauthorized one both answer 404 — outsiders cannot distinguish them.",
         "x-daffa-capability": "stacks.view",
         "x-daffa-scope": "stack",
         "responses": {
@@ -3981,7 +4205,7 @@
           "stacks"
         ],
         "summary": "Replace a stack's secrets",
-        "description": "Replaces the whole set. Empty content means \"unchanged\", same as env vars.\n\nRequires the capability at the stack's owning host. An unknown id and an unauthorized one both answer 404 — outsiders cannot distinguish them.",
+        "description": "Replaces the whole set. Empty content means \"unchanged\", same as env vars.\n\nRequires the capability at the stack's owning cluster. An unknown id and an unauthorized one both answer 404 — outsiders cannot distinguish them.",
         "x-daffa-capability": "stacks.edit",
         "x-daffa-scope": "stack",
         "requestBody": {
@@ -4056,7 +4280,7 @@
           "stacks"
         ],
         "summary": "Turn auto-deploy on or off; the webhook secret is returned once",
-        "description": "The webhook secret is in the response exactly once, when it is minted — on first enable, or when rotate asks for a fresh one.\n\nRequires the capability at the stack's owning host. An unknown id and an unauthorized one both answer 404 — outsiders cannot distinguish them.",
+        "description": "The webhook secret is in the response exactly once, when it is minted — on first enable, or when rotate asks for a fresh one.\n\nRequires the capability at the stack's owning cluster. An unknown id and an unauthorized one both answer 404 — outsiders cannot distinguish them.",
         "x-daffa-capability": "stacks.edit",
         "x-daffa-scope": "stack",
         "requestBody": {
@@ -4136,7 +4360,7 @@
           "stacks"
         ],
         "summary": "Run a stack action; answers with the deployment id to follow",
-        "description": "Which actions exist is the engine's business — the stack's `actions` list says which of these this stack supports (swarm has no pull and no stop).\n\nRequires the capability at the stack's owning host. An unknown id and an unauthorized one both answer 404 — outsiders cannot distinguish them.",
+        "description": "Which actions exist is the engine's business — the stack's `actions` list says which of these this stack supports (swarm has no pull and no stop).\n\nRequires the capability at the stack's owning cluster. An unknown id and an unauthorized one both answer 404 — outsiders cannot distinguish them.",
         "x-daffa-capability": "stacks.edit",
         "x-daffa-scope": "stack",
         "parameters": [
@@ -4209,7 +4433,7 @@
           "inline-compose image upgrades"
         ],
         "summary": "Parse a compose file into its unique images, classified for tag upgrades",
-        "description": "The Images tab reads the YAML in the editor and helps bump tags. These are NOT under /api/stacks/{id}/… on purpose: that would collide with the {id}/{action} route above (\"preview\" would parse as a stack id). See .ai/image-upgrades.md. All body-scoped (the env travels in the payload) — their handlers call mayUseEnv.\n\nThe target environment arrives in the request body; the handler checks the capability there after decoding.",
+        "description": "The Images tab reads the YAML in the editor and helps bump tags. These are NOT under /api/stacks/{id}/… on purpose: that would collide with the {id}/{action} route above (\"preview\" would parse as a stack id). See .ai/image-upgrades.md. All body-scoped (the env travels in the payload) — their handlers call mayUseEnv.\n\nThe target cluster arrives in the request body; the handler checks the capability there after decoding.",
         "x-daffa-capability": "stacks.view",
         "x-daffa-scope": "body",
         "requestBody": {
@@ -4274,7 +4498,7 @@
           "inline-compose image upgrades"
         ],
         "summary": "Check whether an image tag exists in its registry",
-        "description": "Validation is the reliable path: one manifest read answers \"does this tag exist\".\n\nThe target environment arrives in the request body; the handler checks the capability there after decoding.",
+        "description": "Validation is the reliable path: one manifest read answers \"does this tag exist\".\n\nThe target cluster arrives in the request body; the handler checks the capability there after decoding.",
         "x-daffa-capability": "stacks.view",
         "x-daffa-scope": "body",
         "requestBody": {
@@ -4339,7 +4563,7 @@
           "inline-compose image upgrades"
         ],
         "summary": "Suggest the newest tag that shares an image's version format",
-        "description": "Best-effort \"the newest looks like…\" hint. Never fails, so it never blocks the row.\n\nThe target environment arrives in the request body; the handler checks the capability there after decoding.",
+        "description": "Best-effort \"the newest looks like…\" hint. Never fails, so it never blocks the row.\n\nThe target cluster arrives in the request body; the handler checks the capability there after decoding.",
         "x-daffa-capability": "stacks.view",
         "x-daffa-scope": "body",
         "requestBody": {
@@ -4404,7 +4628,7 @@
           "inline-compose image upgrades"
         ],
         "summary": "Rewrite image tags in a compose file, returning the updated YAML",
-        "description": "Apply: swap the chosen tags into the YAML and hand it back. Rewriting the definition is an edit, so unlike the reads above this one takes StacksEdit.\n\nThe target environment arrives in the request body; the handler checks the capability there after decoding.",
+        "description": "Apply: swap the chosen tags into the YAML and hand it back. Rewriting the definition is an edit, so unlike the reads above this one takes StacksEdit.\n\nThe target cluster arrives in the request body; the handler checks the capability there after decoding.",
         "x-daffa-capability": "stacks.edit",
         "x-daffa-scope": "body",
         "requestBody": {
@@ -4469,7 +4693,7 @@
           "volume sources"
         ],
         "summary": "List every volume source the caller may view",
-        "description": "Config from git into named volumes. See docs/volumes.md. The list is scopeAny with visible() filtering, the stacks precedent; create is body-scoped (the env arrives in the payload) and its handler calls mayUseEnv — the pinned list.\n\nSatisfied by the capability held globally or on any host; list responses are filtered to what the caller may see.",
+        "description": "Config from git into named volumes. See docs/volumes.md. The list is scopeAny with visible() filtering, the stacks precedent; create is body-scoped (the env arrives in the payload) and its handler calls mayUseEnv — the pinned list.\n\nSatisfied by the capability held globally or on any cluster; list responses are filtered to what the caller may see.",
         "x-daffa-capability": "volsources.view",
         "x-daffa-scope": "any",
         "responses": {
@@ -4524,7 +4748,7 @@
           "volume sources"
         ],
         "summary": "Create a volume source; the first sync starts in the background",
-        "description": "The first sync starts in the background; the source row records its outcome. The webhook secret (when auto_sync mints one) is in the response exactly once.\n\nThe target environment arrives in the request body; the handler checks the capability there after decoding.",
+        "description": "The first sync starts in the background; the source row records its outcome. The webhook secret (when auto_sync mints one) is in the response exactly once.\n\nThe target cluster arrives in the request body; the handler checks the capability there after decoding.",
         "x-daffa-capability": "volsources.edit",
         "x-daffa-scope": "body",
         "requestBody": {
@@ -4597,7 +4821,7 @@
           "volume sources"
         ],
         "summary": "Read one volume source",
-        "description": "Requires the capability at the host the volume source delivers to. Unknown and unauthorized ids both answer 404.",
+        "description": "Requires the capability at the cluster the volume source delivers to. Unknown and unauthorized ids both answer 404.",
         "x-daffa-capability": "volsources.view",
         "x-daffa-scope": "volumeSource",
         "responses": {
@@ -4649,7 +4873,7 @@
           "volume sources"
         ],
         "summary": "Update a volume source (its host and volume cannot change)",
-        "description": "env_id and volume are immutable — retargeting a source would strand the old volume with a manifest nothing owns. Delete and recreate, so both halves are explicit; the request's env/volume fields are ignored here.\n\nRequires the capability at the host the volume source delivers to. Unknown and unauthorized ids both answer 404.",
+        "description": "env_id and volume are immutable — retargeting a source would strand the old volume with a manifest nothing owns. Delete and recreate, so both halves are explicit; the request's env/volume fields are ignored here.\n\nRequires the capability at the cluster the volume source delivers to. Unknown and unauthorized ids both answer 404.",
         "x-daffa-capability": "volsources.edit",
         "x-daffa-scope": "volumeSource",
         "requestBody": {
@@ -4722,7 +4946,7 @@
           "volume sources"
         ],
         "summary": "Delete a volume source, leaving the volume and its contents alone",
-        "description": "The volume and its contents are left in place — it becomes an ordinary volume, removable through volumes.edit when the operator decides.\n\nRequires the capability at the host the volume source delivers to. Unknown and unauthorized ids both answer 404.",
+        "description": "The volume and its contents are left in place — it becomes an ordinary volume, removable through volumes.edit when the operator decides.\n\nRequires the capability at the cluster the volume source delivers to. Unknown and unauthorized ids both answer 404.",
         "x-daffa-capability": "volsources.edit",
         "x-daffa-scope": "volumeSource",
         "responses": {
@@ -4776,7 +5000,7 @@
           "volume sources"
         ],
         "summary": "Sync a volume source now; answers with the outcome",
-        "description": "Synchronous, and forced: \"sync now\" is the button an operator presses while looking at a red status, and it answers with the outcome, not with \"started\".\n\nRequires the capability at the host the volume source delivers to. Unknown and unauthorized ids both answer 404.",
+        "description": "Synchronous, and forced: \"sync now\" is the button an operator presses while looking at a red status, and it answers with the outcome, not with \"started\".\n\nRequires the capability at the cluster the volume source delivers to. Unknown and unauthorized ids both answer 404.",
         "x-daffa-capability": "volsources.edit",
         "x-daffa-scope": "volumeSource",
         "responses": {
@@ -4830,7 +5054,7 @@
           "deployments"
         ],
         "summary": "List recent deployments across every stack, newest first",
-        "description": "Addressed by their own id rather than nested under their stack, so a deployment has ONE canonical URL — the thing you can paste into a message. The cross-stack feed and the per-stack history both link to the same page.\n\nNo new capability: reading a deploy log is reading the stack, and rolling one back or killing one is changing the stack. Inventing bits for them would imply an authority that can roll back but not deploy, which is not a thing anyone wants.\n\nSatisfied by the capability held globally or on any host; list responses are filtered to what the caller may see.",
+        "description": "Addressed by their own id rather than nested under their stack, so a deployment has ONE canonical URL — the thing you can paste into a message. The cross-stack feed and the per-stack history both link to the same page.\n\nNo new capability: reading a deploy log is reading the stack, and rolling one back or killing one is changing the stack. Inventing bits for them would imply an authority that can roll back but not deploy, which is not a thing anyone wants.\n\nSatisfied by the capability held globally or on any cluster; list responses are filtered to what the caller may see.",
         "x-daffa-capability": "stacks.view",
         "x-daffa-scope": "any",
         "parameters": [
@@ -4945,7 +5169,7 @@
           "deployments"
         ],
         "summary": "Read one deployment",
-        "description": "The page you can send to somebody. Its log is not in here — it comes over SSE from the logs route, which serves a live deploy and a finished one alike.\n\nRequires the capability at the deployment's stack's host. Unknown and unauthorized ids both answer 404.",
+        "description": "The page you can send to somebody. Its log is not in here — it comes over SSE from the logs route, which serves a live deploy and a finished one alike.\n\nRequires the capability at the deployment's stack's cluster. Unknown and unauthorized ids both answer 404.",
         "x-daffa-capability": "stacks.view",
         "x-daffa-scope": "deployment",
         "responses": {
@@ -4999,7 +5223,7 @@
           "deployments"
         ],
         "summary": "Follow a deployment's log over SSE, live or replayed",
-        "description": "Streams the runner's output while the deploy runs and replays the recorded log once it is over, so the same URL works during the deploy and a week later. Events: `log` {text, replace?}, `end` {status, exit_code}, `error` {message}.\n\nRequires the capability at the deployment's stack's host. Unknown and unauthorized ids both answer 404.",
+        "description": "Streams the runner's output while the deploy runs and replays the recorded log once it is over, so the same URL works during the deploy and a week later. Events: `log` {text, replace?}, `end` {status, exit_code}, `error` {message}.\n\nRequires the capability at the deployment's stack's cluster. Unknown and unauthorized ids both answer 404.",
         "x-daffa-capability": "stacks.view",
         "x-daffa-scope": "deployment",
         "responses": {
@@ -5049,7 +5273,7 @@
           "deployments"
         ],
         "summary": "Cancel a running deployment",
-        "description": "Kills a deploy that is not going to finish. It does not undo what it already did; the answer is {\"status\": \"cancelling\"} and the watcher records the final state.\n\nRequires the capability at the deployment's stack's host. Unknown and unauthorized ids both answer 404.",
+        "description": "Kills a deploy that is not going to finish. It does not undo what it already did; the answer is {\"status\": \"cancelling\"} and the watcher records the final state.\n\nRequires the capability at the deployment's stack's cluster. Unknown and unauthorized ids both answer 404.",
         "x-daffa-capability": "stacks.edit",
         "x-daffa-scope": "deployment",
         "responses": {
@@ -5103,7 +5327,7 @@
           "deployments"
         ],
         "summary": "Put an earlier deployment back",
-        "description": "Re-applies the compose file STORED ON THAT DEPLOYMENT — it does not go back to git, so a moved branch or an unreachable repo cannot stop you restoring what worked. Only a succeeded up/pull whose file Daffa still has (`redeployable`).\n\nRequires the capability at the deployment's stack's host. Unknown and unauthorized ids both answer 404.",
+        "description": "Re-applies the compose file STORED ON THAT DEPLOYMENT — it does not go back to git, so a moved branch or an unreachable repo cannot stop you restoring what worked. Only a succeeded up/pull whose file Daffa still has (`redeployable`).\n\nRequires the capability at the deployment's stack's cluster. Unknown and unauthorized ids both answer 404.",
         "x-daffa-capability": "stacks.edit",
         "x-daffa-scope": "deployment",
         "responses": {
@@ -5157,7 +5381,7 @@
           "backups"
         ],
         "summary": "List every backup job the caller may view",
-        "description": "Nothing sealed is ever in the list: not the S3 secret, not the DB password. The encryption KEYS appear by name deliberately — an operator needs to know which key a restore will demand.\n\nSatisfied by the capability held globally or on any host; list responses are filtered to what the caller may see.",
+        "description": "Nothing sealed is ever in the list: not the S3 secret, not the DB password. The encryption KEYS appear by name deliberately — an operator needs to know which key a restore will demand.\n\nSatisfied by the capability held globally or on any cluster; list responses are filtered to what the caller may see.",
         "x-daffa-capability": "backups.view",
         "x-daffa-scope": "any",
         "responses": {
@@ -5212,7 +5436,7 @@
           "backups"
         ],
         "summary": "Create a backup job",
-        "description": "The DB password is sealed on the way in and write-only from then on. Encryption references named keys (see /api/keys), never raw age recipients.\n\nThe target environment arrives in the request body; the handler checks the capability there after decoding.",
+        "description": "The DB password is sealed on the way in and write-only from then on. Encryption references named keys (see /api/keys), never raw age recipients.\n\nThe target cluster arrives in the request body; the handler checks the capability there after decoding.",
         "x-daffa-capability": "backups.edit",
         "x-daffa-scope": "body",
         "requestBody": {
@@ -5296,7 +5520,7 @@
           "backups"
         ],
         "summary": "List a job's recent runs, newest first",
-        "description": "Requires the capability at the backup job's owning host. Unknown and unauthorized ids both answer 404.",
+        "description": "Requires the capability at the backup job's owning cluster. Unknown and unauthorized ids both answer 404.",
         "x-daffa-capability": "backups.view",
         "x-daffa-scope": "job",
         "responses": {
@@ -5353,7 +5577,7 @@
           "backups"
         ],
         "summary": "List the snapshots actually in the job's bucket",
-        "description": "What is actually in the bucket — the only honest answer to \"do I have a backup?\", since a run record only says what Daffa believes it did.\n\nRequires the capability at the backup job's owning host. Unknown and unauthorized ids both answer 404.",
+        "description": "What is actually in the bucket — the only honest answer to \"do I have a backup?\", since a run record only says what Daffa believes it did.\n\nRequires the capability at the backup job's owning cluster. Unknown and unauthorized ids both answer 404.",
         "x-daffa-capability": "backups.view",
         "x-daffa-scope": "job",
         "responses": {
@@ -5410,7 +5634,7 @@
           "backups"
         ],
         "summary": "Delete a backup job, leaving its snapshots in the bucket",
-        "description": "Deleting a job stops FUTURE backups. The snapshots already in the bucket are the whole point, and Daffa will not touch them.\n\nRequires the capability at the backup job's owning host. Unknown and unauthorized ids both answer 404.",
+        "description": "Deleting a job stops FUTURE backups. The snapshots already in the bucket are the whole point, and Daffa will not touch them.\n\nRequires the capability at the backup job's owning cluster. Unknown and unauthorized ids both answer 404.",
         "x-daffa-capability": "backups.edit",
         "x-daffa-scope": "job",
         "responses": {
@@ -5467,7 +5691,7 @@
           "backups"
         ],
         "summary": "Flip a job's schedule on or off",
-        "description": "Requires the capability at the backup job's owning host. Unknown and unauthorized ids both answer 404.",
+        "description": "Requires the capability at the backup job's owning cluster. Unknown and unauthorized ids both answer 404.",
         "x-daffa-capability": "backups.edit",
         "x-daffa-scope": "job",
         "responses": {
@@ -5524,7 +5748,7 @@
           "backups"
         ],
         "summary": "Start a backup run now, without waiting for the schedule",
-        "description": "Answers 202 and runs in the background: a dump can take hours, and an HTTP request is not a place to wait for one.\n\nRequires the capability at the backup job's owning host. Unknown and unauthorized ids both answer 404.",
+        "description": "Answers 202 and runs in the background: a dump can take hours, and an HTTP request is not a place to wait for one.\n\nRequires the capability at the backup job's owning cluster. Unknown and unauthorized ids both answer 404.",
         "x-daffa-capability": "backups.edit",
         "x-daffa-scope": "job",
         "responses": {
@@ -5578,7 +5802,7 @@
           "backups"
         ],
         "summary": "Download a snapshot, still encrypted",
-        "description": "A snapshot is the encrypted dump of an entire database, and a restore overwrites a live one. Neither is implied by \"can manage backup jobs\".\n\nThe download streams the snapshot back still encrypted (application/octet-stream): the server holds no age key and cannot decrypt what it stores — decryption happens in the CLI on the operator's machine.\n\nRequires the capability at the backup job's owning host. Unknown and unauthorized ids both answer 404.",
+        "description": "A snapshot is the encrypted dump of an entire database, and a restore overwrites a live one. Neither is implied by \"can manage backup jobs\".\n\nThe download streams the snapshot back still encrypted (application/octet-stream): the server holds no age key and cannot decrypt what it stores — decryption happens in the CLI on the operator's machine.\n\nRequires the capability at the backup job's owning cluster. Unknown and unauthorized ids both answer 404.",
         "x-daffa-capability": "backups.download",
         "x-daffa-scope": "job",
         "parameters": [
@@ -5639,7 +5863,7 @@
           "backups"
         ],
         "summary": "Restore a snapshot by streaming a decrypted dump as the request body",
-        "description": "The restore takes the ALREADY-DECRYPTED dump as the raw request body — the CLI decrypts on the operator's machine and streams the plaintext here, because the server is the only thing that can reach the container and the key stays with the person. Overwrites the live database, so the job's name must be echoed back.\n\nRequires the capability at the backup job's owning host. Unknown and unauthorized ids both answer 404.",
+        "description": "The restore takes the ALREADY-DECRYPTED dump as the raw request body — the CLI decrypts on the operator's machine and streams the plaintext here, because the server is the only thing that can reach the container and the key stays with the person. Overwrites the live database, so the job's name must be echoed back.\n\nRequires the capability at the backup job's owning cluster. Unknown and unauthorized ids both answer 404.",
         "x-daffa-capability": "backups.restore",
         "x-daffa-scope": "job",
         "parameters": [
@@ -5707,7 +5931,7 @@
           "storage, registries, git credentials"
         ],
         "summary": "List storage targets — endpoints, buckets and key ids, never the secret",
-        "description": "The list endpoints carry names and kinds, never secrets — an operator picks a target when creating a job, so they must be able to see the list.\n\nSatisfied by the capability held globally or on any host; list responses are filtered to what the caller may see.",
+        "description": "The list endpoints carry names and kinds, never secrets — an operator picks a target when creating a job, so they must be able to see the list.\n\nSatisfied by the capability held globally or on any cluster; list responses are filtered to what the caller may see.",
         "x-daffa-capability": "storage.view",
         "x-daffa-scope": "any",
         "responses": {
@@ -5762,7 +5986,7 @@
           "storage, registries, git credentials"
         ],
         "summary": "Create a storage target, testing the bucket first",
-        "description": "The bucket is proved reachable BEFORE it is saved — an unreachable one is not a configuration, it is a future 3am surprise. The secret is sealed and write-only from then on.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "The bucket is proved reachable BEFORE it is saved — an unreachable one is not a configuration, it is a future 3am surprise. The secret is sealed and write-only from then on.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "storage.edit",
         "x-daffa-scope": "global",
         "requestBody": {
@@ -5848,7 +6072,7 @@
           "storage, registries, git credentials"
         ],
         "summary": "Update a storage target; an empty secret keeps the current one",
-        "description": "An empty secret means \"keep the current one\" — the UI cannot show it back, so requiring it on every edit would mean re-typing a credential to change a bucket name, and people would paste the wrong one.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "An empty secret means \"keep the current one\" — the UI cannot show it back, so requiring it on every edit would mean re-typing a credential to change a bucket name, and people would paste the wrong one.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "storage.edit",
         "x-daffa-scope": "global",
         "requestBody": {
@@ -5934,7 +6158,7 @@
           "storage, registries, git credentials"
         ],
         "summary": "Delete a storage target no backup job uses",
-        "description": "Refused while backup jobs still point at it — a job whose bucket vanished fails at its next run, the worst possible moment to learn about it.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "Refused while backup jobs still point at it — a job whose bucket vanished fails at its next run, the worst possible moment to learn about it.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "storage.edit",
         "x-daffa-scope": "global",
         "responses": {
@@ -6001,7 +6225,7 @@
           "storage, registries, git credentials"
         ],
         "summary": "List registry credentials — URLs and usernames, never the password",
-        "description": "Satisfied by the capability held globally or on any host; list responses are filtered to what the caller may see.",
+        "description": "Satisfied by the capability held globally or on any cluster; list responses are filtered to what the caller may see.",
         "x-daffa-capability": "registries.view",
         "x-daffa-scope": "any",
         "responses": {
@@ -6056,7 +6280,7 @@
           "storage, registries, git credentials"
         ],
         "summary": "Create a registry credential, testing the login first (advisory — save-anyway on unreachable)",
-        "description": "The credential is proved against the registry before it is saved; the password is sealed and never readable again, not even by the admin who typed it.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "The credential is proved against the registry before it is saved; the password is sealed and never readable again, not even by the admin who typed it.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "registries.edit",
         "x-daffa-scope": "global",
         "requestBody": {
@@ -6137,7 +6361,7 @@
           "storage, registries, git credentials"
         ],
         "summary": "Delete a registry credential",
-        "description": "Requires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "Requires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "registries.edit",
         "x-daffa-scope": "global",
         "responses": {
@@ -6204,7 +6428,7 @@
           "storage, registries, git credentials"
         ],
         "summary": "List git credentials — kinds and usernames, never a token or key",
-        "description": "Satisfied by the capability held globally or on any host; list responses are filtered to what the caller may see.",
+        "description": "Satisfied by the capability held globally or on any cluster; list responses are filtered to what the caller may see.",
         "x-daffa-capability": "gitcreds.view",
         "x-daffa-scope": "any",
         "responses": {
@@ -6259,7 +6483,7 @@
           "storage, registries, git credentials"
         ],
         "summary": "Create a git credential — an access token or an SSH deploy key",
-        "description": "The token or private key is sealed on arrival and never leaves the server again. An SSH key is parsed (with its passphrase) before it is accepted, so a mangled paste fails while the key is still in the clipboard.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "The token or private key is sealed on arrival and never leaves the server again. An SSH key is parsed (with its passphrase) before it is accepted, so a mangled paste fails while the key is still in the clipboard.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "gitcreds.edit",
         "x-daffa-scope": "global",
         "requestBody": {
@@ -6343,7 +6567,7 @@
           "storage, registries, git credentials"
         ],
         "summary": "Fetch a git host's SSH keys so the credential form can pin them",
-        "description": "Editing takes GitCredsEdit: it makes the server open an outbound SSH connection, so it is not a read anyone with a login should be able to trigger. verified is true only for hosts whose keys come from an authenticated endpoint (github.com); the rest are trust-on-first-use.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "Editing takes GitCredsEdit: it makes the server open an outbound SSH connection, so it is not a read anyone with a login should be able to trigger. verified is true only for hosts whose keys come from an authenticated endpoint (github.com); the rest are trust-on-first-use.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "gitcreds.edit",
         "x-daffa-scope": "global",
         "parameters": [
@@ -6408,7 +6632,7 @@
           "storage, registries, git credentials"
         ],
         "summary": "Test a git credential against a repository URL (ls-remote, no clone)",
-        "description": "Reaches out with the sealed credential (ls-remote), so it is GitCredsEdit like create. The result is a diagnostic payload, not an API status: a failed test is still a 200.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "Reaches out with the sealed credential (ls-remote), so it is GitCredsEdit like create. The result is a diagnostic payload, not an API status: a failed test is still a 200.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "gitcreds.edit",
         "x-daffa-scope": "global",
         "requestBody": {
@@ -6496,7 +6720,7 @@
           "storage, registries, git credentials"
         ],
         "summary": "Delete a git credential no stack uses",
-        "description": "Refused while stacks still use it — a stack whose credential vanished fails at its next deploy, which is a bad time to find out.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "Refused while stacks still use it — a stack whose credential vanished fails at its next deploy, which is a bad time to find out.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "gitcreds.edit",
         "x-daffa-scope": "global",
         "responses": {
@@ -6563,7 +6787,7 @@
           "ssh keys"
         ],
         "summary": "List SSH keys — names, algorithms, fingerprints and public keys, never a private key",
-        "description": "The credential-store pattern again: view is env-grantable and secret-free (names, fingerprints and the PUBLIC key, via scopeAny), edit is global-only, because holding the sealed private half — the thing Daffa dials out with — is a fleet-wide power.\n\nSatisfied by the capability held globally or on any host; list responses are filtered to what the caller may see.",
+        "description": "The credential-store pattern again: view is env-grantable and secret-free (names, fingerprints and the PUBLIC key, via scopeAny), edit is global-only, because holding the sealed private half — the thing Daffa dials out with — is a fleet-wide power.\n\nSatisfied by the capability held globally or on any cluster; list responses are filtered to what the caller may see.",
         "x-daffa-capability": "sshkeys.view",
         "x-daffa-scope": "any",
         "responses": {
@@ -6618,7 +6842,7 @@
           "ssh keys"
         ],
         "summary": "Create an SSH key — generate a keypair or import a private key",
-        "description": "Generate a fresh keypair or import an existing private key. Either way the private half is sealed on arrival and never returned; the response carries the PUBLIC key so the operator can paste it into the target's authorized_keys straight away.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "Generate a fresh keypair or import an existing private key. Either way the private half is sealed on arrival and never returned; the response carries the PUBLIC key so the operator can paste it into the target's authorized_keys straight away.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "sshkeys.edit",
         "x-daffa-scope": "global",
         "requestBody": {
@@ -6698,7 +6922,7 @@
           "ssh keys"
         ],
         "summary": "Delete an SSH key nothing uses",
-        "description": "Refused while a cluster or node still authenticates with it — that reference is added in a later phase; today nothing does, so the guard is wired but always passes.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "Refused while a cluster or node still authenticates with it — that reference is added in a later phase; today nothing does, so the guard is wired but always passes.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "sshkeys.edit",
         "x-daffa-scope": "global",
         "responses": {
@@ -6765,7 +6989,7 @@
           "certificates \u0026 encryption keys"
         ],
         "summary": "List certificate authorities — subjects and expiry, never key material",
-        "description": "The same shape as the other credential stores: view is env-grantable and lists names, SANs and expiry (never key material) via scopeAny; edit is global-only, because a CA Daffa signs with is fleet trust, not a host setting — so the mutating routes need no per-env check at all.\n\nSatisfied by the capability held globally or on any host; list responses are filtered to what the caller may see.",
+        "description": "The same shape as the other credential stores: view is env-grantable and lists names, SANs and expiry (never key material) via scopeAny; edit is global-only, because a CA Daffa signs with is fleet trust, not a host setting — so the mutating routes need no per-env check at all.\n\nSatisfied by the capability held globally or on any cluster; list responses are filtered to what the caller may see.",
         "x-daffa-capability": "certs.view",
         "x-daffa-scope": "any",
         "responses": {
@@ -6820,7 +7044,7 @@
           "certificates \u0026 encryption keys"
         ],
         "summary": "Create a CA — generate a root, or upload an existing one",
-        "description": "Generate a fresh root (cert_pem absent), or upload an existing one. A cert uploaded WITHOUT its key is accepted deliberately: a trust-only anchor Daffa can bundle and deliver but never sign with. An uploaded key is sealed at rest.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "Generate a fresh root (cert_pem absent), or upload an existing one. A cert uploaded WITHOUT its key is accepted deliberately: a trust-only anchor Daffa can bundle and deliver but never sign with. An uploaded key is sealed at rest.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "certs.edit",
         "x-daffa-scope": "global",
         "requestBody": {
@@ -6900,7 +7124,7 @@
           "certificates \u0026 encryption keys"
         ],
         "summary": "Stage a successor root beside an active CA",
-        "description": "PHASE 1 of the two-phase rotation (docs/certs.md): stage a successor alongside the incumbent. Nothing is re-signed and nothing can break — the new root simply starts appearing in the trust bundle so distribution can begin.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "PHASE 1 of the two-phase rotation (docs/certs.md): stage a successor alongside the incumbent. Nothing is re-signed and nothing can break — the new root simply starts appearing in the trust bundle so distribution can begin.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "certs.edit",
         "x-daffa-scope": "global",
         "requestBody": {
@@ -6988,7 +7212,7 @@
           "certificates \u0026 encryption keys"
         ],
         "summary": "Activate a staged successor, re-signing every leaf of the old root",
-        "description": "PHASE 2: promote the staged successor and re-sign every leaf of the old root. This is the step that breaks anything that never installed the new root, so it demands confirm: true and never fires on a timer.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "PHASE 2: promote the staged successor and re-sign every leaf of the old root. This is the step that breaks anything that never installed the new root, so it demands confirm: true and never fires on a timer.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "certs.edit",
         "x-daffa-scope": "global",
         "requestBody": {
@@ -7076,7 +7300,7 @@
           "certificates \u0026 encryption keys"
         ],
         "summary": "Delete a CA that signed nothing still tracked",
-        "description": "Refused while certificates it signed still exist — a leaf whose CA vanished can never renew again, and the day you find out is the day it expires.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "Refused while certificates it signed still exist — a leaf whose CA vanished can never renew again, and the day you find out is the day it expires.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "certs.edit",
         "x-daffa-scope": "global",
         "responses": {
@@ -7143,7 +7367,7 @@
           "certificates \u0026 encryption keys"
         ],
         "summary": "Download the trust bundle — every root a client should currently trust, as PEM",
-        "description": "The bundle is public key material, but it is served like everything else — machines get it via deliveries, humans via the UI, nobody anonymously. A PEM file, not JSON, so no client method is generated for it.\n\nSatisfied by the capability held globally or on any host; list responses are filtered to what the caller may see.",
+        "description": "The bundle is public key material, but it is served like everything else — machines get it via deliveries, humans via the UI, nobody anonymously. A PEM file, not JSON, so no client method is generated for it.\n\nSatisfied by the capability held globally or on any cluster; list responses are filtered to what the caller may see.",
         "x-daffa-capability": "certs.view",
         "x-daffa-scope": "any",
         "responses": {
@@ -7193,7 +7417,7 @@
           "certificates \u0026 encryption keys"
         ],
         "summary": "List certificates — names, SANs and expiry, never the private key",
-        "description": "Satisfied by the capability held globally or on any host; list responses are filtered to what the caller may see.",
+        "description": "Satisfied by the capability held globally or on any cluster; list responses are filtered to what the caller may see.",
         "x-daffa-capability": "certs.view",
         "x-daffa-scope": "any",
         "responses": {
@@ -7248,7 +7472,7 @@
           "certificates \u0026 encryption keys"
         ],
         "summary": "Create a certificate — issue from a CA, or upload an existing pair",
-        "description": "Issue from a signing CA (ca_id + sans), or upload a cert_pem/chain_pem/key_pem set. An uploaded pair is tracked, delivered and alerted on — but only its owner can renew it. Private keys are sealed at rest and never served back.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "Issue from a signing CA (ca_id + sans), or upload a cert_pem/chain_pem/key_pem set. An uploaded pair is tracked, delivered and alerted on — but only its owner can renew it. Private keys are sealed at rest and never served back.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "certs.edit",
         "x-daffa-scope": "global",
         "requestBody": {
@@ -7331,7 +7555,7 @@
           "certificates \u0026 encryption keys"
         ],
         "summary": "Update a certificate — SANs, renewal window, or a re-uploaded pair",
-        "description": "Edits what is editable. For an ISSUED certificate that includes its SANs — the edit re-issues immediately with the same key; for an UPLOADED one a fresh cert_pem/key_pem pair is renewal by re-upload. The name is immutable: it is the filename deliveries have already written into volumes.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "Edits what is editable. For an ISSUED certificate that includes its SANs — the edit re-issues immediately with the same key; for an UPLOADED one a fresh cert_pem/key_pem pair is renewal by re-upload. The name is immutable: it is the filename deliveries have already written into volumes.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "certs.edit",
         "x-daffa-scope": "global",
         "requestBody": {
@@ -7414,7 +7638,7 @@
           "certificates \u0026 encryption keys"
         ],
         "summary": "Delete a certificate no delivery carries",
-        "description": "Refused while deliveries still carry it.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "Refused while deliveries still carry it.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "certs.edit",
         "x-daffa-scope": "global",
         "responses": {
@@ -7481,7 +7705,7 @@
           "certificates \u0026 encryption keys"
         ],
         "summary": "Renew an issued certificate now",
-        "description": "Renew now, without waiting for the renewal window. rotate_key also generates a fresh private key — the deliberate version of what renewal deliberately avoids.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "Renew now, without waiting for the renewal window. rotate_key also generates a fresh private key — the deliberate version of what renewal deliberately avoids.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "certs.edit",
         "x-daffa-scope": "global",
         "requestBody": {
@@ -7566,7 +7790,7 @@
           "certificates \u0026 encryption keys"
         ],
         "summary": "List cert deliveries and their sync state",
-        "description": "A delivery keeps certificate material current inside a named volume on a host, where a container mounts it read-only. Private keys land 0600; the trust bundle rides along in every volume.\n\nSatisfied by the capability held globally or on any host; list responses are filtered to what the caller may see.",
+        "description": "A delivery keeps certificate material current inside a named volume on a host, where a container mounts it read-only. Private keys land 0600; the trust bundle rides along in every volume.\n\nSatisfied by the capability held globally or on any cluster; list responses are filtered to what the caller may see.",
         "x-daffa-capability": "certs.view",
         "x-daffa-scope": "any",
         "responses": {
@@ -7621,7 +7845,7 @@
           "certificates \u0026 encryption keys"
         ],
         "summary": "Create a delivery of a certificate into a volume",
-        "description": "The first sync runs in the background right away — creating a delivery should not hang the request on a volume write, but it should go green within seconds.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "The first sync runs in the background right away — creating a delivery should not hang the request on a volume write, but it should go green within seconds.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "certs.edit",
         "x-daffa-scope": "global",
         "requestBody": {
@@ -7702,7 +7926,7 @@
           "certificates \u0026 encryption keys"
         ],
         "summary": "Sync a delivery now and answer with the outcome",
-        "description": "Synchronous, and forced: \"sync now\" is the button an operator presses while looking at a red status, and it answers with the outcome, not with \"started\".\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "Synchronous, and forced: \"sync now\" is the button an operator presses while looking at a red status, and it answers with the outcome, not with \"started\".\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "certs.edit",
         "x-daffa-scope": "global",
         "responses": {
@@ -7766,7 +7990,7 @@
           "certificates \u0026 encryption keys"
         ],
         "summary": "Delete a delivery, leaving the volume's files in place",
-        "description": "The volume and its contents are left in place: the consumer may still be serving with them, and deleting key material out from under a running proxy is a worse surprise than a stale file.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "The volume and its contents are left in place: the consumer may still be serving with them, and deleting key material out from under a running proxy is a worse surprise than a stale file.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "certs.edit",
         "x-daffa-scope": "global",
         "responses": {
@@ -7833,7 +8057,7 @@
           "certificates \u0026 encryption keys"
         ],
         "summary": "List encryption keys — public age recipients only",
-        "description": "Backup encryption keys. The one response in Daffa that ever carries a private key is the generate response, once — see handleCreateKey.\n\nSatisfied by the capability held globally or on any host; list responses are filtered to what the caller may see.",
+        "description": "Backup encryption keys. The one response in Daffa that ever carries a private key is the generate response, once — see handleCreateKey.\n\nSatisfied by the capability held globally or on any cluster; list responses are filtered to what the caller may see.",
         "x-daffa-capability": "keys.view",
         "x-daffa-scope": "any",
         "responses": {
@@ -7888,7 +8112,7 @@
           "certificates \u0026 encryption keys"
         ],
         "summary": "Create an encryption key; generation returns the private half exactly once",
-        "description": "Generate an age keypair (recipient absent), or import a public recipient — a pasted PRIVATE key is refused. Generation returns identity_file exactly once: created in memory, never stored, download it or lose it. The box cannot read its own backups, and that is the point.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "Generate an age keypair (recipient absent), or import a public recipient — a pasted PRIVATE key is refused. Generation returns identity_file exactly once: created in memory, never stored, download it or lose it. The box cannot read its own backups, and that is the point.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "keys.edit",
         "x-daffa-scope": "global",
         "requestBody": {
@@ -7966,7 +8190,7 @@
           "certificates \u0026 encryption keys"
         ],
         "summary": "Delete an encryption key no backup job encrypts to",
-        "description": "Refused while backup jobs still encrypt to it: removing a recipient silently narrows who can restore, and the day that matters is the worst possible day.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "Refused while backup jobs still encrypt to it: removing a recipient silently narrows who can restore, and the day that matters is the worst possible day.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "keys.edit",
         "x-daffa-scope": "global",
         "responses": {
@@ -8033,7 +8257,7 @@
           "keyrings"
         ],
         "summary": "List keyrings and their version timelines — kids, states and ages, never material",
-        "description": "The credential-store split once more: one fleet-shared list, view env-grantable and secret-free (a version is a kid, a state and an age — the material never leaves a delivery volume), edit global-only because rotating or retiring changes what every consumer on every host can decrypt. See docs/keyrings.md.\n\nSatisfied by the capability held globally or on any host; list responses are filtered to what the caller may see.",
+        "description": "The credential-store split once more: one fleet-shared list, view env-grantable and secret-free (a version is a kid, a state and an age — the material never leaves a delivery volume), edit global-only because rotating or retiring changes what every consumer on every host can decrypt. See docs/keyrings.md.\n\nSatisfied by the capability held globally or on any cluster; list responses are filtered to what the caller may see.",
         "x-daffa-capability": "keyrings.view",
         "x-daffa-scope": "any",
         "responses": {
@@ -8088,7 +8312,7 @@
           "keyrings"
         ],
         "summary": "Create a keyring, seeded with its first active version",
-        "description": "The first version is minted and sealed immediately — a keyring with nothing to encrypt with is an invalid state, and every delivery of it would fail.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "The first version is minted and sealed immediately — a keyring with nothing to encrypt with is an invalid state, and every delivery of it would fail.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "keyrings.edit",
         "x-daffa-scope": "global",
         "requestBody": {
@@ -8167,7 +8391,7 @@
           "keyrings"
         ],
         "summary": "Set a keyring's rotation schedule (0 = manual only)",
-        "description": "Only the schedule is editable. The name is the filename deliveries write, and a rename would leave every volume holding a stale file that looks current.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "Only the schedule is editable. The name is the filename deliveries write, and a rename would leave every volume holding a stale file that looks current.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "keyrings.edit",
         "x-daffa-scope": "global",
         "requestBody": {
@@ -8250,7 +8474,7 @@
           "keyrings"
         ],
         "summary": "Delete a keyring no delivery carries",
-        "description": "Refused while deliveries still carry it. The sealed rows here are the ONLY durable copy of the material — the delivered volumes keep their last-written files, but they will never rotate again.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "Refused while deliveries still carry it. The sealed rows here are the ONLY durable copy of the material — the delivered volumes keep their last-written files, but they will never rotate again.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "keyrings.edit",
         "x-daffa-scope": "global",
         "responses": {
@@ -8317,7 +8541,7 @@
           "keyrings"
         ],
         "summary": "Rotate a keyring — mint, seal and activate a new version",
-        "description": "The previous active version drops to decrypt_only and every delivery resyncs — consumers see the new version within seconds.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "The previous active version drops to decrypt_only and every delivery resyncs — consumers see the new version within seconds.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "keyrings.edit",
         "x-daffa-scope": "global",
         "responses": {
@@ -8381,7 +8605,7 @@
           "keyrings"
         ],
         "summary": "Retire a decrypt-only version, dropping it from every delivery",
-        "description": "Retirement IS the version vanishing from every delivered volume at the next sync: data encrypted under it stops being decryptable there. Only a decrypt_only version can retire — the active one must be rotated away first.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "Retirement IS the version vanishing from every delivered volume at the next sync: data encrypted under it stops being decryptable there. Only a decrypt_only version can retire — the active one must be rotated away first.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "keyrings.edit",
         "x-daffa-scope": "global",
         "responses": {
@@ -8445,7 +8669,7 @@
           "keyrings"
         ],
         "summary": "List keyring deliveries and their sync state",
-        "description": "The cert-delivery machinery with a different payload: \u003cname\u003e.json (every live version, and which is current) and \u003cname\u003e.current.key (the active version's raw bytes), 0600, inside a named volume the consumer mounts read-only.\n\nSatisfied by the capability held globally or on any host; list responses are filtered to what the caller may see.",
+        "description": "The cert-delivery machinery with a different payload: \u003cname\u003e.json (every live version, and which is current) and \u003cname\u003e.current.key (the active version's raw bytes), 0600, inside a named volume the consumer mounts read-only.\n\nSatisfied by the capability held globally or on any cluster; list responses are filtered to what the caller may see.",
         "x-daffa-capability": "keyrings.view",
         "x-daffa-scope": "any",
         "responses": {
@@ -8500,7 +8724,7 @@
           "keyrings"
         ],
         "summary": "Create a delivery of a keyring into a volume",
-        "description": "The first sync runs in the background right away — creating a delivery should not hang the request on a volume write, but it should go green within seconds.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "The first sync runs in the background right away — creating a delivery should not hang the request on a volume write, but it should go green within seconds.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "keyrings.edit",
         "x-daffa-scope": "global",
         "requestBody": {
@@ -8580,7 +8804,7 @@
           "keyrings"
         ],
         "summary": "Sync a delivery now and answer with the outcome",
-        "description": "Synchronous, and forced: \"sync now\" is the button an operator presses while looking at a red status, and it answers with the outcome, not with \"started\".\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "Synchronous, and forced: \"sync now\" is the button an operator presses while looking at a red status, and it answers with the outcome, not with \"started\".\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "keyrings.edit",
         "x-daffa-scope": "global",
         "responses": {
@@ -8644,7 +8868,7 @@
           "keyrings"
         ],
         "summary": "Delete a delivery, leaving the volume's files in place",
-        "description": "The volume and its contents are left in place — deleting key material out from under a running application is a worse surprise than a stale file, and there is no re-issuing the data the app encrypted with it.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "The volume and its contents are left in place — deleting key material out from under a running application is a worse surprise than a stale file, and there is no re-issuing the data the app encrypted with it.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "keyrings.edit",
         "x-daffa-scope": "global",
         "responses": {
@@ -8711,7 +8935,7 @@
           "users"
         ],
         "summary": "List users, with the roles each one holds",
-        "description": "Requires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "Requires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "users.view",
         "x-daffa-scope": "global",
         "responses": {
@@ -8766,7 +8990,7 @@
           "users"
         ],
         "summary": "Create a local user with at least one role",
-        "description": "Creates a LOCAL user. OIDC users are not created here — they appear on first successful sign-in, with the roles their claims map to.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "Creates a LOCAL user. OIDC users are not created here — they appear on first successful sign-in, with the roles their claims map to.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "users.edit",
         "x-daffa-scope": "global",
         "requestBody": {
@@ -8852,7 +9076,7 @@
           "users"
         ],
         "summary": "Update a user's email, or enable/disable the account",
-        "description": "Absent fields are left alone; disabling the last administrator is refused.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "Absent fields are left alone; disabling the last administrator is refused.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "users.edit",
         "x-daffa-scope": "global",
         "requestBody": {
@@ -8935,7 +9159,7 @@
           "users"
         ],
         "summary": "Delete a user; deleting the last administrator is refused",
-        "description": "Requires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "Requires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "users.edit",
         "x-daffa-scope": "global",
         "responses": {
@@ -8999,7 +9223,7 @@
           "users"
         ],
         "summary": "Set a local user's password",
-        "description": "Local accounts only — an OIDC account's password lives at its provider. Token callers are refused: a token that can change a password re-keys an account it will outlive. No ts: the handwritten client wraps the bare string itself.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "Local accounts only — an OIDC account's password lives at its provider. Token callers are refused: a token that can change a password re-keys an account it will outlive. No ts: the handwritten client wraps the bare string itself.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "users.edit",
         "x-daffa-scope": "global",
         "requestBody": {
@@ -9084,7 +9308,7 @@
           "users"
         ],
         "summary": "Replace a user's locally granted roles",
-        "description": "Replaces the LOCALLY granted roles with exactly these grants; roles the identity provider granted are untouched — they are re-synced on every login. No ts: the handwritten client wraps the grants array itself.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "Replaces the LOCALLY granted roles with exactly these grants; roles the identity provider granted are untouched — they are re-synced on every login. No ts: the handwritten client wraps the grants array itself.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "users.edit",
         "x-daffa-scope": "global",
         "requestBody": {
@@ -9169,7 +9393,7 @@
           "roles"
         ],
         "summary": "List roles, with effective capabilities and member counts",
-        "description": "roles.edit is administrative in the fullest sense: anyone holding it can grant themselves every capability in any role they can touch.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "roles.edit is administrative in the fullest sense: anyone holding it can grant themselves every capability in any role they can touch.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "roles.view",
         "x-daffa-scope": "global",
         "responses": {
@@ -9224,7 +9448,7 @@
           "roles"
         ],
         "summary": "Create a role from capability names",
-        "description": "Capabilities are addressed by NAME on the wire, never by a raw bitmask — names can only ever mean what the server says they mean.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "Capabilities are addressed by NAME on the wire, never by a raw bitmask — names can only ever mean what the server says they mean.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "roles.edit",
         "x-daffa-scope": "global",
         "requestBody": {
@@ -9309,7 +9533,7 @@
           "roles"
         ],
         "summary": "Rename a role or replace its capabilities",
-        "description": "Requires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "Requires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "roles.edit",
         "x-daffa-scope": "global",
         "requestBody": {
@@ -9392,7 +9616,7 @@
           "roles"
         ],
         "summary": "Delete a role; the built-in Admin role and the last admin grant are refused",
-        "description": "Requires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "Requires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "roles.edit",
         "x-daffa-scope": "global",
         "responses": {
@@ -9456,7 +9680,7 @@
           "resource monitors"
         ],
         "summary": "Read a CPU/memory time series for charts",
-        "description": "The SAMPLES are containers.view at the host: a container's history is no more sensitive than the live stats panel that capability already grants.\n\nThe MONITORS are their own capability, and it is env-scopable — see the note in caps.go for why they are not folded into settings.*. Downsampled to at most ~240 points per series — a chart, not an export. The client method stays handwritten (it builds the query string).\n\nRequires the capability at the host named in the path.",
+        "description": "The SAMPLES are containers.view at the host: a container's history is no more sensitive than the live stats panel that capability already grants.\n\nThe MONITORS are their own capability, and it is env-scopable — see the note in caps.go for why they are not folded into settings.*. Downsampled to at most ~240 points per series — a chart, not an export. The client method stays handwritten (it builds the query string).\n\nRequires the capability at the cluster named in the path.",
         "x-daffa-capability": "containers.view",
         "x-daffa-scope": "env",
         "parameters": [
@@ -9552,7 +9776,7 @@
           "resource monitors"
         ],
         "summary": "List every monitor the caller may view",
-        "description": "A host-scoped holder sees the monitors pinned to their hosts — not the fleet-wide ones, which watch hosts they have no standing on.\n\nSatisfied by the capability held globally or on any host; list responses are filtered to what the caller may see.",
+        "description": "A host-scoped holder sees the monitors pinned to their hosts — not the fleet-wide ones, which watch hosts they have no standing on.\n\nSatisfied by the capability held globally or on any cluster; list responses are filtered to what the caller may see.",
         "x-daffa-capability": "monitors.view",
         "x-daffa-scope": "any",
         "responses": {
@@ -9607,7 +9831,7 @@
           "resource monitors"
         ],
         "summary": "Create a resource monitor",
-        "description": "The host is in the BODY — and an absent one means \"every host\". The handler checks; nothing else can. This is the third such route, and TestBodyScopedRoutesAreKnown exists precisely so that adding it had to be a decision.\n\nThe target environment arrives in the request body; the handler checks the capability there after decoding.",
+        "description": "The host is in the BODY — and an absent one means \"every host\". The handler checks; nothing else can. This is the third such route, and TestBodyScopedRoutesAreKnown exists precisely so that adding it had to be a decision.\n\nThe target cluster arrives in the request body; the handler checks the capability there after decoding.",
         "x-daffa-capability": "monitors.edit",
         "x-daffa-scope": "body",
         "requestBody": {
@@ -9681,7 +9905,7 @@
           "resource monitors"
         ],
         "summary": "List alerts, firing first",
-        "description": "Firing first, then recent history; filtered to the hosts the caller may see.\n\nSatisfied by the capability held globally or on any host; list responses are filtered to what the caller may see.",
+        "description": "Firing first, then recent history; filtered to the hosts the caller may see.\n\nSatisfied by the capability held globally or on any cluster; list responses are filtered to what the caller may see.",
         "x-daffa-capability": "monitors.view",
         "x-daffa-scope": "any",
         "parameters": [
@@ -9749,7 +9973,7 @@
           "resource monitors"
         ],
         "summary": "Update a resource monitor",
-        "description": "Requires the capability at the host the monitor watches; a monitor watching every host requires it globally. Unknown and unauthorized ids both answer 404.",
+        "description": "Requires the capability at the cluster the monitor watches; a monitor watching every cluster requires it globally. Unknown and unauthorized ids both answer 404.",
         "x-daffa-capability": "monitors.edit",
         "x-daffa-scope": "monitor",
         "requestBody": {
@@ -9822,7 +10046,7 @@
           "resource monitors"
         ],
         "summary": "Delete a resource monitor",
-        "description": "Its alert history goes with it.\n\nRequires the capability at the host the monitor watches; a monitor watching every host requires it globally. Unknown and unauthorized ids both answer 404.",
+        "description": "Its alert history goes with it.\n\nRequires the capability at the cluster the monitor watches; a monitor watching every cluster requires it globally. Unknown and unauthorized ids both answer 404.",
         "x-daffa-capability": "monitors.edit",
         "x-daffa-scope": "monitor",
         "responses": {
@@ -9869,7 +10093,7 @@
           "resource monitors"
         ],
         "summary": "Read the sampling settings, limits and current disk usage",
-        "description": "Sampling interval and retention are one setting for the whole fleet, so they take the capability globally rather than on a host.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "Sampling interval and retention are one setting for the whole fleet, so they take the capability globally rather than on a host.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "monitors.view",
         "x-daffa-scope": "global",
         "responses": {
@@ -9921,7 +10145,7 @@
           "resource monitors"
         ],
         "summary": "Set the sampling interval and retention",
-        "description": "Requires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "Requires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "monitors.edit",
         "x-daffa-scope": "global",
         "requestBody": {
@@ -10001,7 +10225,7 @@
           "container log defaults"
         ],
         "summary": "Read the fleet-wide container log defaults",
-        "description": "The fleet default is one setting, so it takes logging.* globally (the monitoring-settings precedent); a host's override takes it at that host — see the /api/clusters/{cluster}/logging trio.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "The fleet default is one setting, so it takes logging.* globally (the monitoring-settings precedent); a host's override takes it at that host — see the /api/clusters/{cluster}/logging trio.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "logging.view",
         "x-daffa-scope": "global",
         "responses": {
@@ -10060,7 +10284,7 @@
           "container log defaults"
         ],
         "summary": "Set the fleet-wide container log defaults",
-        "description": "Injected into every deployed service that does not declare its own logging: block. Rotation (max-size/max-file) IS the retention mechanism.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "Injected into every deployed service that does not declare its own logging: block. Rotation (max-size/max-file) IS the retention mechanism.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "logging.edit",
         "x-daffa-scope": "global",
         "requestBody": {
@@ -10140,7 +10364,7 @@
           "container log defaults"
         ],
         "summary": "Unset the fleet-wide container log defaults",
-        "description": "Unset means \"inject nothing\" — the daemon's own default applies. Idempotent.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "Unset means \"inject nothing\" — the daemon's own default applies. Idempotent.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "logging.edit",
         "x-daffa-scope": "global",
         "responses": {
@@ -10187,7 +10411,7 @@
           "identity providers"
         ],
         "summary": "List identity providers",
-        "description": "Responses carry has_secret, never the client secret: it is sealed with the master key and there is no endpoint that reads it back.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "Responses carry has_secret, never the client secret: it is sealed with the master key and there is no endpoint that reads it back.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "settings.view",
         "x-daffa-scope": "global",
         "responses": {
@@ -10242,7 +10466,7 @@
           "identity providers"
         ],
         "summary": "Add an identity provider",
-        "description": "Requires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "Requires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "settings.edit",
         "x-daffa-scope": "global",
         "requestBody": {
@@ -10317,7 +10541,7 @@
           "identity providers"
         ],
         "summary": "Update an identity provider",
-        "description": "An empty client_secret means \"keep the stored one\", so an edit form that does not resend it cannot blank it by omission.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "An empty client_secret means \"keep the stored one\", so an edit form that does not resend it cannot blank it by omission.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "settings.edit",
         "x-daffa-scope": "global",
         "requestBody": {
@@ -10400,7 +10624,7 @@
           "identity providers"
         ],
         "summary": "Delete an identity provider",
-        "description": "Requires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "Requires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "settings.edit",
         "x-daffa-scope": "global",
         "responses": {
@@ -10464,7 +10688,7 @@
           "identity providers"
         ],
         "summary": "Test a provider by fetching its discovery document",
-        "description": "Fetches the discovery document: the cheap version of \"does this actually work\", answered on the settings page instead of at somebody's failed login.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "Fetches the discovery document: the cheap version of \"does this actually work\", answered on the settings page instead of at somebody's failed login.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "settings.edit",
         "x-daffa-scope": "global",
         "responses": {
@@ -10528,7 +10752,7 @@
           "identity providers"
         ],
         "summary": "List a provider's claim-to-role mappings",
-        "description": "Requires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "Requires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "settings.view",
         "x-daffa-scope": "global",
         "responses": {
@@ -10593,7 +10817,7 @@
           "identity providers"
         ],
         "summary": "Map a claim value to a role, everywhere or on one host",
-        "description": "Takes effect at each user's next sign-in, when their provider roles re-sync.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "Takes effect at each user's next sign-in, when their provider roles re-sync.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "settings.edit",
         "x-daffa-scope": "global",
         "requestBody": {
@@ -10678,7 +10902,7 @@
           "identity providers"
         ],
         "summary": "Delete a claim-to-role mapping",
-        "description": "Requires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "Requires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "settings.edit",
         "x-daffa-scope": "global",
         "responses": {
@@ -10742,7 +10966,7 @@
           "notifications"
         ],
         "summary": "Read the SMTP settings",
-        "description": "Same capability as the identity providers: this is Settings, and the SMTP password is a secret of exactly the same kind as an OIDC client secret. Responses carry has_password, never the password: it is sealed with the master key and there is no endpoint that reads it back.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "Same capability as the identity providers: this is Settings, and the SMTP password is a secret of exactly the same kind as an OIDC client secret. Responses carry has_password, never the password: it is sealed with the master key and there is no endpoint that reads it back.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "settings.view",
         "x-daffa-scope": "global",
         "responses": {
@@ -10794,7 +11018,7 @@
           "notifications"
         ],
         "summary": "Save the SMTP settings",
-        "description": "An empty password means \"keep the stored one\" — the OIDC client secret rule.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "An empty password means \"keep the stored one\" — the OIDC client secret rule.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "settings.edit",
         "x-daffa-scope": "global",
         "requestBody": {
@@ -10879,7 +11103,7 @@
           "notifications"
         ],
         "summary": "Send a test email to your own address",
-        "description": "Sends one real email to the caller's own address, synchronously, bypassing the outbox — a queued test that fails silently later answers nothing. ok says whether it worked; error carries the SMTP server's own words.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "Sends one real email to the caller's own address, synchronously, bypassing the outbox — a queued test that fails silently later answers nothing. ok says whether it worked; error carries the SMTP server's own words.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "settings.edit",
         "x-daffa-scope": "global",
         "responses": {
@@ -10933,7 +11157,7 @@
           "notifications"
         ],
         "summary": "List every event a notification rule can route",
-        "description": "Requires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "Requires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "settings.view",
         "x-daffa-scope": "global",
         "responses": {
@@ -10990,7 +11214,7 @@
           "notifications"
         ],
         "summary": "Preview an event's rendered notification",
-        "description": "Renders the event with plausible data — the only way to see what one looks like without breaking something first.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "Renders the event with plausible data — the only way to see what one looks like without breaking something first.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "settings.view",
         "x-daffa-scope": "global",
         "parameters": [
@@ -11065,7 +11289,7 @@
           "notifications"
         ],
         "summary": "List recently failed notifications",
-        "description": "The dead-letter list: an alert that failed to send and then vanished would leave you believing nothing went wrong.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "The dead-letter list: an alert that failed to send and then vanished would leave you believing nothing went wrong.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "settings.view",
         "x-daffa-scope": "global",
         "responses": {
@@ -11122,7 +11346,7 @@
           "notifications"
         ],
         "summary": "List the notification routing rules",
-        "description": "Requires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "Requires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "settings.view",
         "x-daffa-scope": "global",
         "responses": {
@@ -11177,7 +11401,7 @@
           "notifications"
         ],
         "summary": "Route an event to a role, an address, or a channel",
-        "description": "A rule routes one event to exactly one target: a role, an email address, or a channel.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "A rule routes one event to exactly one target: a role, an email address, or a channel.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "settings.edit",
         "x-daffa-scope": "global",
         "requestBody": {
@@ -11258,7 +11482,7 @@
           "notifications"
         ],
         "summary": "Delete a notification routing rule",
-        "description": "Requires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "Requires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "settings.edit",
         "x-daffa-scope": "global",
         "responses": {
@@ -11322,7 +11546,7 @@
           "notifications"
         ],
         "summary": "List notification channels",
-        "description": "Chat/webhook channels. A channel URL is a bearer credential, so editing them is SettingsEdit and the URL is sealed and never read back — the same treatment as the SMTP password two blocks up.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "Chat/webhook channels. A channel URL is a bearer credential, so editing them is SettingsEdit and the URL is sealed and never read back — the same treatment as the SMTP password two blocks up.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "settings.view",
         "x-daffa-scope": "global",
         "responses": {
@@ -11377,7 +11601,7 @@
           "notifications"
         ],
         "summary": "Add a channel, proving the webhook answers before saving it",
-        "description": "The server POSTs a real \"connected\" message before saving — a webhook that 404s is not a configuration, it is a future silent failure.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "The server POSTs a real \"connected\" message before saving — a webhook that 404s is not a configuration, it is a future silent failure.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "settings.edit",
         "x-daffa-scope": "global",
         "requestBody": {
@@ -11452,7 +11676,7 @@
           "notifications"
         ],
         "summary": "Re-post the connected message to a saved channel",
-        "description": "Requires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "Requires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "settings.edit",
         "x-daffa-scope": "global",
         "responses": {
@@ -11516,7 +11740,7 @@
           "notifications"
         ],
         "summary": "Delete a channel; its routing rules cascade away",
-        "description": "Requires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "description": "Requires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "settings.edit",
         "x-daffa-scope": "global",
         "responses": {
@@ -11580,7 +11804,7 @@
           "audit"
         ],
         "summary": "List audit entries, newest first",
-        "description": "Its own capability. Who tried what, and was refused, is exactly the sort of thing you do not hand to everyone with a login by default. Entries with no host — users, roles, identity providers — are shown only to a GLOBAL audit.view holder.\n\nSatisfied by the capability held globally or on any host; list responses are filtered to what the caller may see.",
+        "description": "Its own capability. Who tried what, and was refused, is exactly the sort of thing you do not hand to everyone with a login by default. Entries with no host — users, roles, identity providers — are shown only to a GLOBAL audit.view holder.\n\nSatisfied by the capability held globally or on any cluster; list responses are filtered to what the caller may see.",
         "x-daffa-capability": "audit.view",
         "x-daffa-scope": "any",
         "parameters": [
@@ -11992,7 +12216,8 @@
             "type": "string",
             "enum": [
               "local",
-              "agent"
+              "agent",
+              "ssh"
             ]
           },
           "status": {
@@ -12008,6 +12233,74 @@
           "name",
           "kind",
           "status"
+        ]
+      },
+      "SSHClusterRequest": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "host": {
+            "type": "string"
+          },
+          "port": {
+            "type": "integer"
+          },
+          "user": {
+            "type": "string"
+          },
+          "key_id": {
+            "type": "string"
+          },
+          "endpoint": {
+            "type": "string"
+          },
+          "host_key": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SSHConnectionTest": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "error": {
+            "type": "string"
+          },
+          "server_version": {
+            "type": "string"
+          },
+          "os": {
+            "type": "string"
+          },
+          "arch": {
+            "type": "string"
+          },
+          "host_key": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "ok"
+        ]
+      },
+      "CreatedCluster": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "node_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "node_id"
         ]
       },
       "DockerInfo": {
@@ -14005,6 +14298,9 @@
           "username": {
             "type": "string"
           },
+          "ssh_key_name": {
+            "type": "string"
+          },
           "pinned": {
             "type": "boolean"
           },
@@ -14050,10 +14346,7 @@
           "token": {
             "type": "string"
           },
-          "ssh_key": {
-            "type": "string"
-          },
-          "passphrase": {
+          "ssh_key_id": {
             "type": "string"
           },
           "host_key": {

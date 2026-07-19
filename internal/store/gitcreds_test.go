@@ -13,7 +13,7 @@ func TestGitCredentialInUseCountsVolumeSources(t *testing.T) {
 		ctx := context.Background()
 		env := oneHost(t, s)
 
-		cred := &GitCredential{Name: "deploy-key", Kind: GitSSH, SSHKeyEnc: "sealed"}
+		cred := &GitCredential{Name: "deploy-key", Kind: GitSSH, SSHKeyID: "sshkey_deploy"}
 		if err := s.CreateGitCredential(ctx, cred); err != nil {
 			t.Fatal(err)
 		}

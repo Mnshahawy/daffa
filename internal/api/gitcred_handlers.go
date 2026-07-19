@@ -18,6 +18,8 @@ type gitCredView struct {
 	Name     string `json:"name"`
 	Kind     string `json:"kind"` // token | ssh
 	Username string `json:"username,omitempty"`
+	// SSHKeyName is the name of the key an SSH credential draws from the shared store, for display.
+	SSHKeyName string `json:"ssh_key_name,omitempty"`
 	// Pinned says whether the SSH host key is verified. Shown because an unpinned
 	// credential is a real (accepted) weakening and the operator should be able to see
 	// which ones are which.
@@ -36,10 +38,16 @@ func (s *Server) handleListGitCredentials(w http.ResponseWriter, r *http.Request
 	out := make([]gitCredView, 0, len(creds))
 	for _, c := range creds {
 		n, _ := s.store.GitCredentialInUse(r.Context(), c.ID)
-		out = append(out, gitCredView{
+		v := gitCredView{
 			ID: c.ID, Name: c.Name, Kind: c.Kind, Username: c.Username,
 			Pinned: c.HostKey != "", InUse: n,
-		})
+		}
+		if c.SSHKeyID != "" {
+			if k, err := s.store.SSHKeyByID(r.Context(), c.SSHKeyID); err == nil {
+				v.SSHKeyName = k.Name
+			}
+		}
+		out = append(out, v)
 	}
 	httpx.JSON(w, http.StatusOK, out)
 }
@@ -111,7 +119,7 @@ func (s *Server) handleTestGitCredential(w http.ResponseWriter, r *http.Request)
 		httpx.Error(w, r, err)
 		return
 	}
-	auth, err := s.openGitCred(c)
+	auth, err := s.openGitCred(r.Context(), c)
 	if err != nil {
 		httpx.Error(w, r, err)
 		return
@@ -126,13 +134,14 @@ func (s *Server) handleTestGitCredential(w http.ResponseWriter, r *http.Request)
 }
 
 type gitCredRequest struct {
-	Name       string `json:"name"`
-	Kind       string `json:"kind"`
-	Username   string `json:"username"`
-	Token      string `json:"token"`
-	SSHKey     string `json:"ssh_key"`
-	Passphrase string `json:"passphrase"`
-	HostKey    string `json:"host_key"`
+	Name     string `json:"name"`
+	Kind     string `json:"kind"`
+	Username string `json:"username"`
+	Token    string `json:"token"`
+	// SSHKeyID picks a key from the shared SSH-key store — git credentials no longer carry their
+	// own key material (its management moved to Settings → SSH keys).
+	SSHKeyID string `json:"ssh_key_id"`
+	HostKey  string `json:"host_key"`
 }
 
 func (s *Server) handleCreateGitCredential(w http.ResponseWriter, r *http.Request) {
@@ -167,36 +176,20 @@ func (s *Server) handleCreateGitCredential(w http.ResponseWriter, r *http.Reques
 		cred.TokenEnc = sealed
 
 	case store.GitSSH:
-		key := strings.TrimSpace(req.SSHKey)
-		if key == "" {
-			httpx.BadRequest(w, r, "An SSH private key is required.")
+		// The key material lives in the shared SSH-key store now; a git credential only points at
+		// one. Confirm it exists so a dangling reference cannot be saved.
+		if req.SSHKeyID == "" {
+			httpx.BadRequest(w, r, "Choose an SSH key. Generate or import one under Settings → SSH keys first.")
 			return
 		}
-		if strings.HasPrefix(key, "ssh-") || strings.HasPrefix(key, "ecdsa-") {
-			httpx.BadRequest(w, r,
-				"That is an SSH PUBLIC key. Paste the PRIVATE key (the file without .pub) — "+
-					"the public half is what you add to the repository as a deploy key.")
+		if _, err := s.store.SSHKeyByID(r.Context(), req.SSHKeyID); errors.Is(err, store.ErrNotFound) {
+			httpx.BadRequest(w, r, "That SSH key no longer exists.")
 			return
-		}
-
-		// Parse it now, with the passphrase, so a wrong passphrase or a mangled paste is
-		// an error the person sees while they still have the key in their clipboard.
-		if err := stacks.CheckSSHKey(key, req.Passphrase, cred.HostKey); err != nil {
-			httpx.Fail(w, r, http.StatusBadRequest, "bad_key", err.Error())
-			return
-		}
-
-		sealedKey, err := s.sealer.Seal(key + "\n")
-		if err != nil {
+		} else if err != nil {
 			httpx.Error(w, r, err)
 			return
 		}
-		sealedPass, err := s.sealer.Seal(req.Passphrase)
-		if err != nil {
-			httpx.Error(w, r, err)
-			return
-		}
-		cred.SSHKeyEnc, cred.PassphraseEnc = sealedKey, sealedPass
+		cred.SSHKeyID = req.SSHKeyID
 
 	default:
 		httpx.BadRequest(w, r, "The credential must be a token or an ssh key.")
@@ -266,25 +259,42 @@ func (s *Server) gitAuth(ctx context.Context, credID string) (*stacks.GitAuth, e
 	if err != nil {
 		return nil, err
 	}
-	return s.openGitCred(c)
+	return s.openGitCred(ctx, c)
 }
 
-func (s *Server) openGitCred(c *store.GitCredential) (*stacks.GitAuth, error) {
+// openGitCred resolves a credential to the plaintext auth material, just in time. A token comes
+// from the credential itself; an SSH key comes from the shared key store the credential points at
+// (its private half lives there, never on the credential). Everything exists in memory only for
+// the length of the clone.
+func (s *Server) openGitCred(ctx context.Context, c *store.GitCredential) (*stacks.GitAuth, error) {
 	token, err := s.sealer.Open(c.TokenEnc)
 	if err != nil {
 		return nil, errors.New("could not decrypt the git token (was the master key replaced?)")
 	}
-	key, err := s.sealer.Open(c.SSHKeyEnc)
-	if err != nil {
-		return nil, errors.New("could not decrypt the SSH key (was the master key replaced?)")
-	}
-	pass, err := s.sealer.Open(c.PassphraseEnc)
-	if err != nil {
-		return nil, errors.New("could not decrypt the key passphrase (was the master key replaced?)")
+
+	auth := &stacks.GitAuth{Kind: c.Kind, Username: c.Username, Token: token, HostKey: c.HostKey}
+
+	if c.Kind == store.GitSSH {
+		if c.SSHKeyID == "" {
+			return nil, errors.New("this SSH git credential has no key — re-select one under Settings → SSH keys")
+		}
+		key, err := s.store.SSHKeyByID(ctx, c.SSHKeyID)
+		if errors.Is(err, store.ErrNotFound) {
+			return nil, errors.New("the SSH key this credential uses no longer exists")
+		}
+		if err != nil {
+			return nil, err
+		}
+		priv, err := s.sealer.Open(key.PrivateKeyEnc)
+		if err != nil {
+			return nil, errors.New("could not decrypt the SSH key (was the master key replaced?)")
+		}
+		pass, err := s.sealer.Open(key.PassphraseEnc)
+		if err != nil {
+			return nil, errors.New("could not decrypt the SSH key passphrase (was the master key replaced?)")
+		}
+		auth.SSHKey, auth.Passphrase = priv, pass
 	}
 
-	return &stacks.GitAuth{
-		Kind: c.Kind, Username: c.Username, Token: token,
-		SSHKey: key, Passphrase: pass, HostKey: c.HostKey,
-	}, nil
+	return auth, nil
 }

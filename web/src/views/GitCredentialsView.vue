@@ -6,6 +6,7 @@ import { confirm } from '@/lib/confirm'
 import { toast } from '@/lib/toast'
 import { useSession } from '@/stores/session'
 import { Cap } from '@/lib/caps'
+import { RouterLink } from 'vue-router'
 import AppIcon from '@/components/ui/AppIcon.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
@@ -24,13 +25,17 @@ const { data: creds, isLoading } = useQuery({
   queryFn: daffa.gitCredentials,
 })
 
+// SSH credentials draw their key from the shared SSH-key store — git creds no longer hold key
+// material of their own. The form offers a selection of those keys, not a paste box.
+const { data: sshKeys } = useQuery({ queryKey: ['ssh-keys'], queryFn: daffa.sshKeys })
+const hasKeys = computed(() => (sshKeys.value?.length ?? 0) > 0)
+
 const blank = () => ({
   name: '',
   kind: 'token' as 'token' | 'ssh',
   username: '',
   token: '',
-  ssh_key: '',
-  passphrase: '',
+  ssh_key_id: '',
   host_key: '',
 })
 const form = ref(blank())
@@ -305,34 +310,23 @@ async function onRemove(c: GitCredential) {
       <!-- ssh -->
       <template v-else>
         <div>
-          <label for="g-key" class="mb-1.5 block text-sm font-medium">Private key</label>
-          <textarea
-            id="g-key"
-            v-model="form.ssh_key"
-            required
-            rows="6"
-            spellcheck="false"
-            placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
-            class="field font-mono text-xs"
-            data-cursor="text"
-          />
-          <p class="subtle mt-1 text-xs">
-            The private key — the file <em>without</em> <code class="font-mono">.pub</code>. Add its
-            public half to the repository as a deploy key.
+          <label for="g-key" class="mb-1.5 block text-sm font-medium">SSH key</label>
+          <p v-if="!hasKeys" class="text-sm" :style="{ color: 'var(--warn)' }">
+            You have no SSH keys yet.
+            <RouterLink :to="{ name: 'settings-ssh' }" class="underline">Add one under SSH keys</RouterLink>,
+            then add its public half to the repository as a deploy key.
           </p>
-        </div>
-
-        <div class="grid gap-4 sm:grid-cols-2">
-          <div>
-            <label for="g-pass" class="mb-1.5 block text-sm font-medium">Passphrase</label>
-            <input
-              id="g-pass"
-              v-model="form.passphrase"
-              type="password"
-              placeholder="if the key has one"
-              class="field"
-            />
-          </div>
+          <template v-else>
+            <Select id="g-key" v-model="form.ssh_key_id">
+              <option value="" disabled>Choose a key…</option>
+              <option v-for="k in sshKeys" :key="k.id" :value="k.id">{{ k.name }} ({{ k.algo }})</option>
+            </Select>
+            <p class="subtle mt-1 text-xs">
+              Keys are managed under
+              <RouterLink :to="{ name: 'settings-ssh' }" class="underline">SSH keys</RouterLink>. Add the
+              chosen key's public half to the repository as a deploy key.
+            </p>
+          </template>
         </div>
 
         <div>
@@ -386,7 +380,13 @@ async function onRemove(c: GitCredential) {
         </p>
       </template>
 
-      <BaseButton type="submit" intent="primary" size="md" :loading="create.isPending.value">
+      <BaseButton
+        type="submit"
+        intent="primary"
+        size="md"
+        :loading="create.isPending.value"
+        :disabled="form.kind === 'ssh' && !form.ssh_key_id"
+      >
         Save credential
       </BaseButton>
     </form>
@@ -427,7 +427,10 @@ async function onRemove(c: GitCredential) {
               <td class="py-3 pl-4 pr-4">
                 <div class="font-medium">{{ c.name }}</div>
                 <div class="subtle mt-0.5 text-xs">
-                  {{ c.kind === 'ssh' ? 'SSH key' : 'Access token' }}
+                  <template v-if="c.kind === 'ssh'">
+                    SSH key<template v-if="c.ssh_key_name"> · {{ c.ssh_key_name }}</template>
+                  </template>
+                  <template v-else>Access token</template>
                   <span v-if="c.kind === 'ssh' && !c.pinned" :style="{ color: 'var(--warn)' }">
                     · host key not pinned
                   </span>

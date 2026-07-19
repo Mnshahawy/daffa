@@ -45,20 +45,20 @@ func (k scopeKind) String() string {
 // scopeNotes is the sentence each scope contributes to an operation's description — the
 // authorization semantics a caller cannot infer from the capability name alone.
 var scopeNotes = map[scopeKind]string{
-	scopeGlobal: "Requires the capability granted globally — a host-scoped grant does not satisfy it.",
-	scopeEnv:    "Requires the capability at the host named in the path.",
-	scopeStack: "Requires the capability at the stack's owning host. An unknown id and an " +
+	scopeGlobal: "Requires the capability granted globally — a cluster-scoped grant does not satisfy it.",
+	scopeEnv:    "Requires the capability at the cluster named in the path.",
+	scopeStack: "Requires the capability at the stack's owning cluster. An unknown id and an " +
 		"unauthorized one both answer 404 — outsiders cannot distinguish them.",
-	scopeJob: "Requires the capability at the backup job's owning host. Unknown and " +
+	scopeJob: "Requires the capability at the backup job's owning cluster. Unknown and " +
 		"unauthorized ids both answer 404.",
-	scopeDeployment: "Requires the capability at the deployment's stack's host. Unknown and " +
+	scopeDeployment: "Requires the capability at the deployment's stack's cluster. Unknown and " +
 		"unauthorized ids both answer 404.",
-	scopeMonitor: "Requires the capability at the host the monitor watches; a monitor watching " +
-		"every host requires it globally. Unknown and unauthorized ids both answer 404.",
-	scopeVolumeSource: "Requires the capability at the host the volume source delivers to. " +
+	scopeMonitor: "Requires the capability at the cluster the monitor watches; a monitor watching " +
+		"every cluster requires it globally. Unknown and unauthorized ids both answer 404.",
+	scopeVolumeSource: "Requires the capability at the cluster the volume source delivers to. " +
 		"Unknown and unauthorized ids both answer 404.",
-	scopeAny:  "Satisfied by the capability held globally or on any host; list responses are filtered to what the caller may see.",
-	scopeBody: "The target environment arrives in the request body; the handler checks the capability there after decoding.",
+	scopeAny:  "Satisfied by the capability held globally or on any cluster; list responses are filtered to what the caller may see.",
+	scopeBody: "The target cluster arrives in the request body; the handler checks the capability there after decoding.",
 }
 
 // tsNames overrides the generated component/interface name for Go types whose wire name
@@ -110,6 +110,9 @@ var tsNames = map[reflect.Type]string{
 	reflect.TypeOf(sshKeyView{}):           "SSHKey",
 	reflect.TypeOf(sshKeyRequest{}):        "SSHKeyRequest",
 	reflect.TypeOf(sshKeyCreateResponse{}): "CreatedSSHKey",
+	reflect.TypeOf(sshClusterRequest{}):         "SSHClusterRequest",
+	reflect.TypeOf(sshTestResponse{}):           "SSHConnectionTest",
+	reflect.TypeOf(sshClusterCreatedResponse{}): "CreatedCluster",
 	// session, tokens, users, roles, identity providers, notifications, audit — the
 	// handwritten interface names these views were written against.
 	reflect.TypeOf(tokenView{}):              "APIToken",

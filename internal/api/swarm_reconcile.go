@@ -6,6 +6,7 @@ import (
 	"log/slog"
 
 	"github.com/Mnshahawy/daffa/internal/dockerx"
+	"github.com/Mnshahawy/daffa/internal/sshx"
 	"github.com/Mnshahawy/daffa/internal/store"
 	"github.com/Mnshahawy/daffa/internal/tunnel"
 )
@@ -307,6 +308,19 @@ func (s *Server) reconnectNode(ctx context.Context, env *store.Environment, node
 	if err != nil {
 		return
 	}
+
+	// An SSH node carries its own live client (not an agent tunnel), so re-register it from the
+	// SSH manager rather than the agents registry. Same idea, different transport.
+	if node.Kind == "ssh" {
+		if client, ok := s.ssh.client(nodeID); ok {
+			dial := sshx.SocketDialer(client, node.SSHEndpoint)
+			if err := s.pool.RegisterSSH(env, node, dial); err != nil {
+				slog.Error("re-registering a moved ssh node", "node", node.Name, "err", err)
+			}
+		}
+		return
+	}
+
 	if node.AgentID == "" {
 		return
 	}

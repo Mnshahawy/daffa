@@ -11,13 +11,14 @@ import (
 // GitCredential is how Daffa authenticates to a git server: an access token over HTTPS,
 // or a private key over SSH.
 type GitCredential struct {
-	ID            string
-	Name          string
-	Kind          string // token | ssh
-	Username      string
-	TokenEnc      string
-	SSHKeyEnc     string
-	PassphraseEnc string
+	ID       string
+	Name     string
+	Kind     string // token | ssh
+	Username string
+	TokenEnc string
+	// SSHKeyID references a key in the shared SSH-key store (ssh_keys) for kind == "ssh". A git
+	// credential carries no key material of its own — that management moved to the key store.
+	SSHKeyID string
 	// HostKey pins the server's SSH host key (one line of ssh-keyscan output). Empty
 	// means unpinned — which works, but means a substituted server would be trusted.
 	HostKey   string
@@ -30,15 +31,15 @@ const (
 	GitSSH   = "ssh"
 )
 
-const gitCredCols = `id, name, kind, username, token_enc, ssh_key_enc, passphrase_enc,
+const gitCredCols = `id, name, kind, username, token_enc, ssh_key_id,
     host_key, created_at, created_by`
 
 func scanGitCred(sc interface{ Scan(...any) error }) (*GitCredential, error) {
 	var c GitCredential
 	var createdBy sql.NullString
 	var createdAt string
-	err := sc.Scan(&c.ID, &c.Name, &c.Kind, &c.Username, &c.TokenEnc, &c.SSHKeyEnc,
-		&c.PassphraseEnc, &c.HostKey, &createdAt, &createdBy)
+	err := sc.Scan(&c.ID, &c.Name, &c.Kind, &c.Username, &c.TokenEnc, &c.SSHKeyID,
+		&c.HostKey, &createdAt, &createdBy)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -56,8 +57,8 @@ func (s *Store) CreateGitCredential(ctx context.Context, c *GitCredential) error
 	}
 	c.CreatedAt = now()
 	_, err := s.exec(ctx, `INSERT INTO git_credentials (`+gitCredCols+`)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		c.ID, c.Name, c.Kind, c.Username, c.TokenEnc, c.SSHKeyEnc, c.PassphraseEnc,
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		c.ID, c.Name, c.Kind, c.Username, c.TokenEnc, c.SSHKeyID,
 		c.HostKey, ts(c.CreatedAt), nullStr(c.CreatedBy))
 	if err != nil {
 		return fmt.Errorf("store: creating git credential: %w", err)

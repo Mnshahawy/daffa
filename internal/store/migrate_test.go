@@ -81,6 +81,60 @@ func TestMigrate0004PreservesOlderBackupJobs(t *testing.T) {
 	}
 }
 
+// 0007 adds the key-store reference and DROPS the old inline key columns unconditionally. A
+// credential that predates it must survive the migration — its identity intact, its key reference
+// empty (the material cannot be auto-migrated, so it is re-selected under Settings → SSH keys).
+// This proves the DROP COLUMN runs against a POPULATED table and does not take the row with it.
+func TestMigrate0007DropsGitCredKeyColumns(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	url := "sqlite://" + filepath.Join(dir, "test.db")
+
+	stopAfter = "0006_ssh_nodes"
+	defer func() { stopAfter = "" }()
+
+	s, err := Open(ctx, url)
+	if err != nil {
+		t.Fatalf("open at 0006: %v", err)
+	}
+	defer s.Close()
+
+	// A 0006-era SSH credential: it carries its own sealed key in the columns 0007 removes.
+	if _, err := s.db.ExecContext(ctx, s.rebind(`INSERT INTO git_credentials
+        (id, name, kind, username, token_enc, ssh_key_enc, passphrase_enc, host_key, created_at, created_by)
+        VALUES ('gc_legacy', 'legacy-deploy', 'ssh', '', '', 'sealed-key', 'sealed-pass', '', ?, NULL)`),
+		ts(now())); err != nil {
+		t.Fatalf("insert 0006-era row: %v", err)
+	}
+
+	stopAfter = ""
+	if err := s.migrate(ctx); err != nil {
+		t.Fatalf("migrating to 0007: %v", err)
+	}
+
+	// The row reads back through the store (scanGitCred no longer scans the dropped columns), with
+	// its identity intact and no key reference — the state the UI surfaces as "re-select a key".
+	got, err := s.GitCredentialByID(ctx, "gc_legacy")
+	if err != nil {
+		t.Fatalf("reading migrated row: %v", err)
+	}
+	if got.Name != "legacy-deploy" || got.Kind != "ssh" {
+		t.Errorf("migration lost the credential's identity: %+v", got)
+	}
+	if got.SSHKeyID != "" {
+		t.Errorf("migrated row SSHKeyID = %q; want empty", got.SSHKeyID)
+	}
+
+	// A credential created after the migration round-trips its key reference.
+	fresh := &GitCredential{Name: "fresh", Kind: GitSSH, SSHKeyID: "sshkey_x"}
+	if err := s.CreateGitCredential(ctx, fresh); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.GitCredentialByID(ctx, fresh.ID); err != nil || got.SSHKeyID != "sshkey_x" {
+		t.Fatalf("fresh cred SSHKeyID = %q, err %v; want sshkey_x", got.SSHKeyID, err)
+	}
+}
+
 // A capability mask must be able to hold a HIGH BIT on Postgres, and this test is Postgres-only
 // because that is the entire point.
 //

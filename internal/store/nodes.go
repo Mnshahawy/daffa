@@ -19,9 +19,19 @@ type Node struct {
 	ID         string
 	EnvID      string
 	Name       string
-	Kind       string // local | agent
+	Kind       string // local | agent | ssh
 	DockerHost string
 	AgentID    string
+
+	// SSH connection config — set only when Kind == "ssh". It says how the server dials OUT to
+	// the remote daemon (docs/clusters.md §4); the daemon behind it is managed like any other.
+	// SSHKeyID references an ssh_keys row; SSHHostKey is the pinned host key (TOFU, §7).
+	SSHHost     string
+	SSHPort     int
+	SSHUser     string
+	SSHKeyID    string
+	SSHEndpoint string // remote Docker endpoint, e.g. unix:///var/run/docker.sock
+	SSHHostKey  string
 
 	SwarmNodeID string
 	SwarmRole   string // none | worker | manager
@@ -37,6 +47,7 @@ type Node struct {
 func (n *Node) Manager() bool { return n.SwarmRole == "manager" }
 
 const nodeCols = `id, env_id, name, kind, docker_host, agent_id,
+    ssh_host, ssh_port, ssh_user, ssh_key_id, ssh_endpoint, ssh_host_key,
     swarm_node_id, swarm_role, is_leader, status, last_seen_at`
 
 func scanNode(sc interface{ Scan(...any) error }) (*Node, error) {
@@ -44,6 +55,7 @@ func scanNode(sc interface{ Scan(...any) error }) (*Node, error) {
 	var agentID, lastSeen sql.NullString
 	var isLeader int
 	if err := sc.Scan(&n.ID, &n.EnvID, &n.Name, &n.Kind, &n.DockerHost, &agentID,
+		&n.SSHHost, &n.SSHPort, &n.SSHUser, &n.SSHKeyID, &n.SSHEndpoint, &n.SSHHostKey,
 		&n.SwarmNodeID, &n.SwarmRole, &isLeader, &n.Status, &lastSeen); err != nil {
 		return nil, err
 	}
@@ -65,9 +77,13 @@ func (s *Store) CreateNode(ctx context.Context, n *Node) error {
 	if n.SwarmRole == "" {
 		n.SwarmRole = "none"
 	}
+	if n.SSHPort == 0 {
+		n.SSHPort = 22
+	}
 	_, err := s.exec(ctx, `INSERT INTO nodes (`+nodeCols+`)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		n.ID, n.EnvID, n.Name, n.Kind, n.DockerHost, nullStr(n.AgentID),
+		n.SSHHost, n.SSHPort, n.SSHUser, n.SSHKeyID, n.SSHEndpoint, n.SSHHostKey,
 		n.SwarmNodeID, n.SwarmRole, boolInt(n.IsLeader), n.Status, nullTS(n.LastSeenAt))
 	if err != nil {
 		return fmt.Errorf("store: creating node: %w", err)
@@ -161,6 +177,66 @@ func (s *Store) UpsertAgentNode(ctx context.Context, agentID, name string) (*Env
 	}
 }
 
+// CreateSSHNode creates a new standalone environment and the SSH node that reaches it — the
+// "add a cluster over SSH" path (docs/clusters.md §4). Like an agent node it lands in its own
+// standalone environment; swarm membership is discovered afterwards by reconcile from what the
+// remote daemon reports, never asserted here. n carries the SSH connection config (host, port,
+// user, key, endpoint); this fills in the rest.
+func (s *Store) CreateSSHNode(ctx context.Context, name string, n *Node) (*Environment, *Node, error) {
+	env := &Environment{ID: NewID(), Name: name, Status: "unknown", CreatedAt: now()}
+	if err := s.CreateEnvironment(ctx, env); err != nil {
+		return nil, nil, err
+	}
+	n.ID = ""
+	n.EnvID = env.ID
+	n.Name = name
+	n.Kind = "ssh"
+	n.Status = "unknown"
+	if err := s.CreateNode(ctx, n); err != nil {
+		return nil, nil, err
+	}
+	return env, n, nil
+}
+
+// SSHNodes returns every node reached over SSH. The reconnect worker dials each at boot and
+// re-dials the ones that drop — the server-side mirror of the agent's connect loop, because for
+// SSH it is Daffa that dials OUT (docs/clusters.md §4).
+func (s *Store) SSHNodes(ctx context.Context) ([]*Node, error) {
+	return s.nodesWhere(ctx, `SELECT `+nodeCols+` FROM nodes WHERE kind = 'ssh' ORDER BY name`)
+}
+
+// SetNodeHostKey records the SSH host key pinned on the first successful dial. A later dial that
+// sees a different key is refused rather than re-pinned silently (docs/clusters.md §7).
+func (s *Store) SetNodeHostKey(ctx context.Context, nodeID, hostKey string) error {
+	_, err := s.exec(ctx, `UPDATE nodes SET ssh_host_key = ? WHERE id = ?`, hostKey, nodeID)
+	return err
+}
+
+// DeleteNode removes a node by id and, if that empties its environment, the environment too —
+// the generic form of DeleteNodeByAgent, used to remove an SSH cluster. The empty environment
+// must go for the same reason: it is what grants are scoped to.
+func (s *Store) DeleteNode(ctx context.Context, nodeID string) error {
+	node, err := s.NodeByID(ctx, nodeID)
+	if errors.Is(err, ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if _, err := s.exec(ctx, `DELETE FROM nodes WHERE id = ?`, nodeID); err != nil {
+		return fmt.Errorf("store: deleting node: %w", err)
+	}
+	rest, err := s.NodesByEnv(ctx, node.EnvID)
+	if err != nil {
+		return err
+	}
+	if len(rest) > 0 {
+		return nil
+	}
+	_, err = s.exec(ctx, `DELETE FROM environments WHERE id = ?`, node.EnvID)
+	return err
+}
+
 // SetNodeSwarm records what the daemon said about itself. The daemon is authoritative and this row
 // is a cache: when they disagree, this is the function that makes the row agree, and the caller
 // audits the correction.
@@ -221,6 +297,16 @@ func (s *Store) MoveNode(ctx context.Context, nodeID, toEnvID string) error {
 	}
 	_, err = s.exec(ctx, `DELETE FROM environments WHERE id = ?`, from)
 	return err
+}
+
+// DeleteEnvironment removes an environment and, by the ON DELETE CASCADE on nodes.env_id, its
+// nodes with it. Used to remove an SSH cluster; the caller stops any connect loops and deregisters
+// the pool first, so nothing is left dialing a cluster that no longer exists.
+func (s *Store) DeleteEnvironment(ctx context.Context, id string) error {
+	if _, err := s.exec(ctx, `DELETE FROM environments WHERE id = ?`, id); err != nil {
+		return fmt.Errorf("store: deleting environment: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) SetNodeStatus(ctx context.Context, nodeID, status string) error {

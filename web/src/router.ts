@@ -185,9 +185,9 @@ export const router = createRouter({
               meta: { cap: Cap.LoggingView },
             },
             {
-              path: 'agents',
-              name: 'settings-agents',
-              component: () => import('./views/AgentsView.vue'),
+              path: 'clusters',
+              name: 'settings-clusters',
+              component: () => import('./views/ClustersView.vue'),
               meta: { cap: Cap.ClustersEdit },
             },
             {

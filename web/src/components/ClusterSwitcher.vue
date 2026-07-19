@@ -173,7 +173,7 @@ function select(env: Environment) {
     <div class="mt-1 border-t pt-1" :style="{ borderColor: 'var(--border)' }">
       <RouterLink
         v-if="session.can(Cap.ClustersEdit)"
-        :to="{ name: 'settings-agents' }"
+        :to="{ name: 'settings-clusters' }"
         class="muted flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm transition hover:bg-[var(--surface-sunken)] hover:text-[var(--text)]"
       >
         <AppIcon name="plus" class="size-3.5" />

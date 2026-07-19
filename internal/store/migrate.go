@@ -977,6 +977,38 @@ CREATE TABLE ssh_keys (
     created_by      TEXT
 );
 `},
+
+	// A node reached over SSH is the third transport, after the local socket and the agent tunnel
+	// (docs/clusters.md §2). The daemon it points at is managed identically to any other — these
+	// columns only say how Daffa DIALS it. They are empty on a local or agent node; kind gains the
+	// value 'ssh'.
+	//
+	// ssh_host_key is the pinned host-key line: empty until the first successful dial records it
+	// (trust on first use), and thereafter a changed key is refused, not re-pinned silently
+	// (docs/clusters.md §7). ssh_key_id is an FK-by-convention to ssh_keys — no ON DELETE, because
+	// the SSH-key store refuses to delete a key a node still references (store.SSHKeyInUse).
+	{name: "0006_ssh_nodes", sql: `
+ALTER TABLE nodes ADD COLUMN ssh_host     TEXT NOT NULL DEFAULT '';
+ALTER TABLE nodes ADD COLUMN ssh_port     INTEGER NOT NULL DEFAULT 22;
+ALTER TABLE nodes ADD COLUMN ssh_user     TEXT NOT NULL DEFAULT '';
+ALTER TABLE nodes ADD COLUMN ssh_key_id   TEXT NOT NULL DEFAULT '';
+ALTER TABLE nodes ADD COLUMN ssh_endpoint TEXT NOT NULL DEFAULT '';
+ALTER TABLE nodes ADD COLUMN ssh_host_key TEXT NOT NULL DEFAULT '';
+`},
+
+	// An SSH git credential now REFERENCES a key in the shared SSH-key store rather than carrying
+	// its own copy: one place to generate, rotate and audit keys, and a git deploy key that is the
+	// same object as a cluster key. ssh_key_id is an FK-by-convention to ssh_keys (the store's
+	// SSHKeyInUse refuses to delete a key a credential still points at).
+	//
+	// The inline key columns are dropped unconditionally — a git credential holds no key material
+	// of its own anymore, and openGitCred reads it from the key store instead. DROP COLUMN is
+	// common-subset (SQLite ≥ 3.35, Postgres).
+	{name: "0007_gitcred_ssh_key_ref", sql: `
+ALTER TABLE git_credentials ADD COLUMN ssh_key_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE git_credentials DROP COLUMN ssh_key_enc;
+ALTER TABLE git_credentials DROP COLUMN passphrase_enc;
+`},
 }
 
 // stopAfter lets a test bring the schema up to a PARTICULAR migration and no further, so

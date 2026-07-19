@@ -91,13 +91,16 @@ func (s *Store) ListSSHKeys(ctx context.Context) ([]*SSHKey, error) {
 }
 
 // SSHKeyInUse counts everything that authenticates with this key, so a key still in use is
-// refused rather than deleted out from under a cluster or node that would next fail to dial.
-//
-// Nothing references an SSH key yet — clusters and nodes gain that column in a later phase
-// (docs/clusters.md §9). Until then the count is zero, and this is the single place a future
-// phase adds the reference counts to, so the "refuse, don't orphan" guard is already wired.
+// refused rather than deleted out from under a dependent that would next fail (docs/clusters.md §6).
+// Both a node (ssh_key_id) and an SSH git credential (git_credentials.ssh_key_id) reference a key;
+// counting only one would let the other's key be deleted and surface as a runtime failure instead
+// of the friendly refusal the guard exists to give.
 func (s *Store) SSHKeyInUse(ctx context.Context, id string) (int, error) {
-	return 0, nil
+	var n int
+	err := s.queryRow(ctx, `SELECT
+        (SELECT COUNT(*) FROM nodes WHERE ssh_key_id = ?) +
+        (SELECT COUNT(*) FROM git_credentials WHERE ssh_key_id = ?)`, id, id).Scan(&n)
+	return n, err
 }
 
 func (s *Store) DeleteSSHKey(ctx context.Context, id string) error {
