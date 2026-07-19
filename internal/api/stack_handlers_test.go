@@ -244,3 +244,101 @@ func TestRegistryAuthsEmptyForPublicImages(t *testing.T) {
 		t.Errorf("a stack pulling only public images needs no credentials, got %d", len(auths))
 	}
 }
+
+// setStackSecrets drives handleSetStackSecrets with the stack already in context.
+func setStackSecrets(s *Server, ctx context.Context, stack *store.Stack, body string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodPut, "/api/stacks/"+stack.ID+"/secrets", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(withStack(ctx, stack))
+	rec := httptest.NewRecorder()
+	s.handleSetStackSecrets(rec, req)
+	return rec
+}
+
+// File secrets are Swarm-only: a compose stack's file: secret can't mount through the runner, so
+// creating one is refused up front and the refusal names the compose path that works (env vars).
+func TestSetStackSecretsRefusedOnCompose(t *testing.T) {
+	s, ctx, st := stackServer(t)
+	stack := inlineStack(t, ctx, st) // inlineStack is a compose stack
+
+	rec := setStackSecrets(s, ctx, stack, `{"secrets":[{"name":"db_password","content":"hunter2"}]}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("setting a secret on a compose stack returned %d; want 400: %s", rec.Code, rec.Body)
+	}
+	if !strings.Contains(rec.Body.String(), "Swarm feature") ||
+		!strings.Contains(rec.Body.String(), "environment variables") {
+		t.Errorf("the refusal does not redirect to secret env vars: %s", rec.Body)
+	}
+}
+
+// The same request on a Swarm stack is accepted — secrets there become raft secrets.
+func TestSetStackSecretsAllowedOnSwarm(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(ctx, "sqlite://"+filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	key, err := config.NewMasterKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealer, err := config.NewSealer(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{store: st, sealer: sealer, notify: notify.New(st, fakeSealer{}, slog.New(slog.DiscardHandler))}
+
+	env := &store.Environment{Name: "prod"}
+	if err := st.CreateEnvironment(ctx, env); err != nil {
+		t.Fatal(err)
+	}
+	stack := &store.Stack{EnvID: env.ID, Name: "web", Engine: "swarm", SourceKind: "inline",
+		InlineYAML: "services:\n  app:\n    image: nginx\n"}
+	if err := st.CreateStack(ctx, stack); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := setStackSecrets(s, ctx, stack, `{"secrets":[{"name":"db_password","content":"hunter2"}]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("setting a secret on a swarm stack returned %d; want 200: %s", rec.Code, rec.Body)
+	}
+	got, err := st.StackSecrets(ctx, stack.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Name != "db_password" {
+		t.Errorf("the secret was not stored: %+v", got)
+	}
+}
+
+// checkSecretRefs splits by engine: compose refuses any daffa-secrets/ reference outright, swarm
+// only refuses one with no stored secret behind it.
+func TestCheckSecretRefsEngineAware(t *testing.T) {
+	ctx := context.Background()
+	yaml := "services:\n  db:\n    image: postgres\n    secrets: [x]\n" +
+		"secrets:\n  x:\n    file: ./daffa-secrets/x\n"
+
+	// Compose: refused regardless of whether a secret is stored, and it names the env-var path.
+	err := checkSecretRefs(ctx, yaml, "proj", nil, []stacks.Secret{{Name: "x", Content: "v"}}, false)
+	if err == nil || !strings.Contains(err.Error(), "Swarm feature") {
+		t.Fatalf("compose must refuse a daffa-secrets reference with the Swarm-feature message: %v", err)
+	}
+
+	// Swarm without the stored secret: the classic "not defined" refusal.
+	if err := checkSecretRefs(ctx, yaml, "proj", nil, nil, true); err == nil ||
+		!strings.Contains(err.Error(), "not defined") {
+		t.Fatalf("swarm must refuse an undefined secret: %v", err)
+	}
+
+	// Swarm with the stored secret: fine.
+	if err := checkSecretRefs(ctx, yaml, "proj", nil, []stacks.Secret{{Name: "x", Content: "v"}}, true); err != nil {
+		t.Errorf("swarm with the secret defined must pass: %v", err)
+	}
+
+	// A compose stack with no daffa-secrets reference is unaffected.
+	plain := "services:\n  web:\n    image: nginx\n"
+	if err := checkSecretRefs(ctx, plain, "proj", nil, nil, false); err != nil {
+		t.Errorf("a compose stack with no file secrets must deploy: %v", err)
+	}
+}

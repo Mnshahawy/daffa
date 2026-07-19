@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/vue-query'
 import { bytes, daffa, type Container, type ContainerAction } from '@/lib/api'
 import { streamEvents } from '@/lib/stream'
 import { useSession } from '@/stores/session'
-import { containerStatus } from '@/lib/status'
+import { containerStatus, containerUptime } from '@/lib/status'
 import { Cap } from '@/lib/caps'
 import ContainerActions from '@/components/ContainerActions.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
@@ -183,6 +183,9 @@ function ports(c: Container): string {
                      build is in progress. -->
                 <td class="px-4 py-3">
                   <StatusPill :status="containerStatus(c.state, c.status)" />
+                  <div v-if="containerUptime(c.status)" class="subtle mt-1 text-xs">
+                    up {{ containerUptime(c.status) }}
+                  </div>
                 </td>
 
                 <td class="py-3 pr-4">

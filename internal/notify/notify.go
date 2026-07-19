@@ -3,7 +3,6 @@ package notify
 import (
 	"context"
 	"log/slog"
-	"strings"
 
 	"github.com/Mnshahawy/daffa/internal/mailer"
 	"github.com/Mnshahawy/daffa/internal/store"
@@ -43,11 +42,7 @@ func (n *Notifier) Send(ctx context.Context, envID string, d Data) {
 	// and cannot know its own public address, so a missing one omits the button rather than
 	// rendering a link to nowhere. BaseURL lives in the SMTP row but belongs to every channel —
 	// it is read even when email is off, because a Slack message wants the link too.
-	if cfg.BaseURL != "" && d.Link != "" {
-		d.Link = strings.TrimRight(cfg.BaseURL, "/") + d.Link
-	} else {
-		d.Link = ""
-	}
+	d.Link = withBaseURL(cfg.BaseURL, d.Link)
 
 	// Email and channels are resolved and enqueued independently: email is off on a fresh
 	// install and channels are the whole reason this exists, so gating channels on an SMTP

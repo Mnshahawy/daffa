@@ -139,7 +139,10 @@ func (s *Server) handleTestSMTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	msg, err := notify.Preview(notify.BackupFailed)
+	// Render with the operator's configured public URL, so the test's "Open in Daffa" button points
+	// where a real notification would — not a placeholder. An unconfigured base URL omits the button,
+	// exactly as a real send does.
+	msg, err := notify.PreviewFor(notify.BackupFailed, cfg.BaseURL)
 	if err != nil {
 		httpx.Error(w, r, err)
 		return

@@ -74,9 +74,28 @@ func plainText(d Data) string {
 	return b.String()
 }
 
-// Preview renders an event with plausible data, for the settings page. It is the only way to
-// see what one of these looks like without breaking something first.
+// withBaseURL turns an event's in-app path into the absolute link an email or channel shows,
+// prepending the operator-configured public base URL. An empty base URL (Daffa sits behind a proxy
+// and cannot know its own address) or an empty path yields no link, so the template omits the
+// button rather than rendering one that goes nowhere. Send and the previews all go through here so
+// a test email's "Open in Daffa" button points where a real one would.
+func withBaseURL(baseURL, path string) string {
+	if baseURL == "" || path == "" {
+		return ""
+	}
+	return strings.TrimRight(baseURL, "/") + path
+}
+
+// Preview renders an event with plausible data for the settings-page preview, using a sample base
+// URL so the button always shows regardless of whether one is configured.
 func Preview(e Event) (Rendered, error) {
+	return PreviewFor(e, "https://ops.example.com")
+}
+
+// PreviewFor renders an event with plausible data against a specific base URL — the test-email path
+// passes the operator's real one, so the sent message's link matches what real notifications use
+// (and is omitted when no base URL is configured, exactly as a real send would).
+func PreviewFor(e Event, baseURL string) (Rendered, error) {
 	d := Data{
 		Event:    e,
 		Subject:  "Deploy failed: billing on prod",
@@ -85,7 +104,7 @@ func Preview(e Event) (Rendered, error) {
 		HostName: "prod",
 		Target:   "billing",
 		Detail:   "billing-web  Pulling\nbilling-web  Error response from daemon: pull access denied for acme/billing-web",
-		Link:     "https://ops.example.com/stacks/abc",
+		Link:     withBaseURL(baseURL, "/stacks/abc"),
 		Failed:   true,
 	}
 

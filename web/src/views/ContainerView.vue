@@ -6,6 +6,7 @@ import { daffa } from '@/lib/api'
 import { setTitle } from '@/lib/title'
 import { useSession } from '@/stores/session'
 import { containerStatus } from '@/lib/status'
+import { absolute } from '@/lib/format'
 import PageHeader from '@/components/ui/PageHeader.vue'
 import StatusPill from '@/components/ui/StatusPill.vue'
 import ContainerPanel from '@/components/ContainerPanel.vue'
@@ -50,10 +51,22 @@ const state = computed(
 // Inspect gives the exit code as a number; containerStatus reads it out of Docker's
 // "Exited (137)" phrasing, so hand it that shape. It is the difference between "Completed"
 // and "Exited · code 137", which is the difference between a finished migration and an
-// OOM kill.
+// OOM kill. Health rides along structured from inspect, so the pill can say "healthy".
 const status = computed(() => {
-  const code = (inspect.value?.State as Record<string, unknown>)?.ExitCode
-  return containerStatus(state.value, typeof code === 'number' ? `(${code})` : undefined)
+  const st = inspect.value?.State as Record<string, unknown> | undefined
+  const code = st?.ExitCode
+  const health = (st?.Health as Record<string, unknown> | undefined)?.Status as string | undefined
+  return containerStatus(state.value, typeof code === 'number' ? `(${code})` : undefined, health)
+})
+
+// When it came up. Docker's inspect carries the absolute StartedAt; a zero value ("0001-01-01…")
+// means it never started, so only a running container gets an "up since".
+const upSince = computed(() => {
+  if (state.value !== 'running') return ''
+  const started = (inspect.value?.State as Record<string, unknown> | undefined)?.StartedAt as
+    | string
+    | undefined
+  return started && !started.startsWith('0001-') ? absolute(started) : ''
 })
 </script>
 
@@ -63,7 +76,10 @@ const status = computed(() => {
          list, from the overview and from a stack, and it used to lead back to none of them. -->
     <PageHeader :title="name" :crumbs="[{ label: 'Containers', to: { name: 'containers' } }]">
       <template #actions>
-        <StatusPill v-if="state" :status="status" />
+        <div v-if="state" class="flex flex-col items-end gap-1">
+          <StatusPill :status="status" />
+          <span v-if="upSince" class="subtle text-xs">up since {{ upSince }}</span>
+        </div>
       </template>
     </PageHeader>
 

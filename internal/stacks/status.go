@@ -24,9 +24,13 @@ type ServiceStatus struct {
 	// Declared is the image the compose file asks for; Running is what is actually up.
 	// They differ when someone deployed, then edited the file — or when a tag moved
 	// under a running container.
-	Declared    string `json:"declared"`
-	Running     string `json:"running,omitempty"`
-	State       string `json:"state"` // running | exited | missing | …
+	Declared string `json:"declared"`
+	Running  string `json:"running,omitempty"`
+	State    string `json:"state"` // running | exited | missing | …
+	// Status is Docker's own `docker ps` line for the backing container — "Up 3 hours (healthy)" —
+	// carrying the uptime and healthcheck the UI shows. Compose only: a swarm service is replicas,
+	// not a single container, so it has no such line and leaves this empty.
+	Status      string `json:"status,omitempty"`
 	ContainerID string `json:"container_id,omitempty"`
 }
 
@@ -86,6 +90,7 @@ func describeContainers(ctx context.Context, node *dockerx.Node, eng Engine, pro
 		if c, ok := running[d.Name]; ok {
 			s.State = c.State
 			s.Running = c.Image
+			s.Status = c.Status // "Up 3 hours (healthy)" — uptime + health for the UI
 			s.ContainerID = c.ID
 			if c.State == "running" {
 				up++

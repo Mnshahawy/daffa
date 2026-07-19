@@ -5,6 +5,7 @@ import { useQuery, useQueryClient } from '@tanstack/vue-query'
 import { ApiError, daffa, type EnvVarItem, type StackAction, type StackSecretItem, type Task } from '@/lib/api'
 import { useSession } from '@/stores/session'
 import AutoDeployPanel from '@/components/AutoDeployPanel.vue'
+import DropdownMenu from '@/components/DropdownMenu.vue'
 import ContainerPanel from '@/components/ContainerPanel.vue'
 import DeploymentLog from '@/components/DeploymentLog.vue'
 import StackEnvEditor from '@/components/StackEnvEditor.vue'
@@ -18,7 +19,7 @@ import StatusPill from '@/components/ui/StatusPill.vue'
 import { Cap } from '@/lib/caps'
 import { confirm } from '@/lib/confirm'
 import { ago, absolute, actionLabel, duration, shortSha } from '@/lib/format'
-import { containerStatus, deploymentStatus } from '@/lib/status'
+import { containerStatus, containerUptime, deploymentStatus } from '@/lib/status'
 import { setTitle } from '@/lib/title'
 
 const route = useRoute()
@@ -51,11 +52,13 @@ const tabs = computed<{ id: Tab; label: string }[]>(() => {
   if (stack.value?.source_kind === 'inline') {
     list.push({ id: 'compose', label: 'Compose' })
   }
-  list.push(
-    { id: 'environment', label: 'Environment' },
-    { id: 'secrets', label: 'Secrets' },
-    { id: 'settings', label: 'Settings' },
-  )
+  list.push({ id: 'environment', label: 'Environment' })
+  // File secrets are a Swarm-only feature (they become raft secrets). A compose file: secret can't
+  // mount through the runner, so the tab would be a dead end — compose stacks use secret env vars.
+  if (stack.value?.engine === 'swarm') {
+    list.push({ id: 'secrets', label: 'Secrets' })
+  }
+  list.push({ id: 'settings', label: 'Settings' })
   return list
 })
 
@@ -96,16 +99,35 @@ watch(live, (d) => {
 const latest = computed(() => live.value ?? deployments.value?.[0])
 
 async function act(action: StackAction) {
+  const name = stack.value?.name ?? 'this stack'
+
   // `down` removes the containers. Volumes survive (Daffa never passes --volumes), but the person
   // should still be told out loud what goes and what stays before they take a service off the air.
   if (action === 'down') {
     const ok = await confirm({
-      title: `Take ${stack.value?.name} down?`,
+      title: `Take ${name} down?`,
       body:
         'Every container and network in this stack is removed, and the service goes off the air. ' +
         'Volumes are NOT removed — your data stays. Deploy again to bring it back.',
       confirmLabel: 'Take down',
       intent: 'caution',
+    })
+    if (!ok) return
+  }
+
+  // `down + volumes` DELETES the stack's named volumes — the data in them, a database included — and
+  // nothing puts it back. It used to fire straight from a plain button with no confirmation at all,
+  // which is how a misclick wipes a production database. So it earns the strongest guard on this
+  // page short of deletion: red, spelled out, and type-the-name-to-mean-it.
+  if (action === 'down+volumes') {
+    const ok = await confirm({
+      title: `Take ${name} down and delete its volumes?`,
+      body:
+        'Every container and network is removed AND the stack’s named volumes are deleted — the ' +
+        'data in them, including any database, is destroyed. This cannot be undone.',
+      confirmLabel: 'Down + delete volumes',
+      intent: 'danger',
+      typeToConfirm: name,
     })
     if (!ok) return
   }
@@ -205,11 +227,45 @@ const currentContainer = computed(() =>
   containerOptions.value.find((o) => o.key === selectedContainer.value),
 )
 
-// Which actions get which weight. WHICH actions exist is the engine's business, not this file's.
-const secondaryActions = computed(() =>
-  (stack.value?.actions ?? []).filter((a) => a !== 'up' && a !== 'down'),
+// The header used to be a row of six buttons, destructive ones sitting flush beside routine ones.
+// Now it is the one action people came for — Deploy — and a menu for the rest. WHICH actions exist
+// is still the engine's business (compose stops, swarm does not), so the menu is built from the
+// server's list, split into what is routine and what destroys something.
+const lifecycleOrder: StackAction[] = ['pull', 'restart', 'stop']
+const lifecycleActions = computed(() =>
+  lifecycleOrder.filter((a) => stack.value?.actions?.includes(a)),
 )
-const hasDown = computed(() => stack.value?.actions?.includes('down'))
+// Down (service off the air, data kept) and Down + volumes (data DELETED) — grouped, separated, and
+// coloured, because a menu that lists them next to "Restart" is how the dangerous one gets clicked.
+const destructiveActions = computed(() =>
+  (['down', 'down+volumes'] as StackAction[]).filter((a) => stack.value?.actions?.includes(a)),
+)
+const hasMenu = computed(() => lifecycleActions.value.length + destructiveActions.value.length > 0)
+
+// The colour a menu item wears. down+volumes is the only one that destroys data, so it is the only
+// red; the rest that take the service away and give it back are amber; pull destroys nothing.
+function actionTone(a: StackAction): 'danger' | 'caution' | 'neutral' {
+  if (a === 'down+volumes') return 'danger'
+  if (a === 'stop' || a === 'restart' || a === 'down') return 'caution'
+  return 'neutral'
+}
+function toneColor(a: StackAction): string | undefined {
+  const t = actionTone(a)
+  return t === 'danger' ? 'var(--danger)' : t === 'caution' ? 'var(--warn)' : undefined
+}
+
+// ── source preview (git stacks) ───────────────────────────────────────────────────
+// A git-backed stack edits its compose in the repo, so it has no Compose tab to read it back in.
+// This shows the RESOLVED file the detail endpoint already carries (data.yaml) in a modal, so you
+// can see exactly what would deploy without leaving for the repo host.
+const showSource = ref(false)
+const sourceYaml = computed(() => data.value?.yaml ?? '')
+const sourceCopied = ref(false)
+async function copySource() {
+  await navigator.clipboard.writeText(sourceYaml.value)
+  sourceCopied.value = true
+  window.setTimeout(() => (sourceCopied.value = false), 1500)
+}
 
 // Whether the "also delete its volumes" box is even DRAWN comes from the engine's action list, not
 // from this file's opinion. Swarm cannot remove a stack's volumes — they are node-local, and the
@@ -219,12 +275,6 @@ const hasDown = computed(() => stack.value?.actions?.includes('down'))
 // This is the same mechanism that already keeps dead buttons from shipping, reused rather than
 // reinvented.
 const canRemoveVolumes = computed(() => stack.value?.actions?.includes('down+volumes'))
-
-// And the colour says what each one COSTS. Stop and restart take the service away and give it
-// back: amber. Pull is a deploy by another name and destroys nothing, so it stays quiet.
-function actionIntent(a: StackAction): 'secondary' | 'caution' {
-  return a === 'stop' || a === 'restart' ? 'caution' : 'secondary'
-}
 
 // Deleting a stack removes what it deployed. It used to remove only the record and leave the
 // containers running — a warning in a confirm() does not make that a good outcome, because what
@@ -482,21 +532,44 @@ function triggeredBy(d: { trigger_kind: string; started_by_name?: string }): str
           Deploy
         </BaseButton>
 
-        <BaseButton
-          v-for="a in secondaryActions"
-          :key="a"
-          :intent="actionIntent(a)"
-          :disabled="busy"
-          @click="act(a)"
-        >
-          {{ actionLabel(a) }}
-        </BaseButton>
+        <!-- Everything that is not Deploy lives behind one menu now, so the destructive ones do not
+             sit flush against the routine ones where the wrong one gets clicked. -->
+        <DropdownMenu v-if="hasMenu" align="right">
+          <template #trigger>
+            <span class="btn btn-secondary btn-sm" :class="{ 'opacity-45': busy }">
+              Actions
+              <AppIcon name="more" class="size-3.5" />
+            </span>
+          </template>
 
-        <!-- Down takes the service away and gives it back: amber, not red. The volumes stay, and
-             a deploy puts it back exactly as it was. -->
-        <BaseButton v-if="hasDown" intent="caution" :disabled="busy" @click="act('down')">
-          Down
-        </BaseButton>
+          <button
+            v-for="a in lifecycleActions"
+            :key="a"
+            :disabled="busy"
+            class="flex w-full items-center rounded-lg px-2 py-1.5 text-left text-sm transition hover:bg-[var(--surface-sunken)] disabled:opacity-45"
+            @click="act(a)"
+          >
+            {{ actionLabel(a) }}
+          </button>
+
+          <!-- Destructive actions are pushed below a rule and coloured; down+volumes is the only red
+               one because it is the only one that deletes data. -->
+          <div
+            v-if="destructiveActions.length && lifecycleActions.length"
+            class="my-1 border-t"
+            :style="{ borderColor: 'var(--border)' }"
+          />
+          <button
+            v-for="a in destructiveActions"
+            :key="a"
+            :disabled="busy"
+            class="flex w-full items-center rounded-lg px-2 py-1.5 text-left text-sm transition hover:bg-[var(--surface-sunken)] disabled:opacity-45"
+            :style="{ color: toneColor(a) }"
+            @click="act(a)"
+          >
+            {{ actionLabel(a) }}
+          </button>
+        </DropdownMenu>
       </template>
     </PageHeader>
 
@@ -517,6 +590,16 @@ function triggeredBy(d: { trigger_kind: string; started_by_name?: string }): str
       <span v-if="stack.deployed_commit" class="subtle font-mono">
         live: {{ shortSha(stack.deployed_commit) }}
       </span>
+      <!-- A git stack has no Compose tab (its file lives in the repo), so this is the way to read
+           the resolved file back without leaving for the repo host. -->
+      <button
+        v-if="stack.source_kind === 'git' && sourceYaml"
+        class="inline-flex items-center gap-1 transition hover:text-[var(--accent-text)]"
+        @click="showSource = true"
+      >
+        <AppIcon name="file" class="size-3" />
+        View source
+      </button>
     </div>
 
     <!-- A broken source is the one time the editor matters most, so it must not hide it. -->
@@ -652,7 +735,10 @@ function triggeredBy(d: { trigger_kind: string; started_by_name?: string }): str
               :style="{ borderColor: 'var(--border)' }"
             >
               <td class="px-4 py-3">
-                <StatusPill :status="containerStatus(svc.state)" />
+                <StatusPill :status="containerStatus(svc.state, svc.status)" />
+                <div v-if="containerUptime(svc.status)" class="subtle mt-1 text-xs">
+                  up {{ containerUptime(svc.status) }}
+                </div>
               </td>
 
               <td class="py-3 pr-4 font-medium">{{ svc.name }}</td>
@@ -854,7 +940,6 @@ function triggeredBy(d: { trigger_kind: string; started_by_name?: string }): str
       <StackSecretsEditor
         :stack-id="id"
         :can-write="session.can(Cap.StacksEdit, stack.env_id)"
-        :engine="stack.engine"
         @save="saveSecrets"
       />
     </template>
@@ -968,5 +1053,47 @@ function triggeredBy(d: { trigger_kind: string; started_by_name?: string }): str
         </BaseButton>
       </div>
     </template>
+
+    <!-- ── Source preview (git stacks) ─────────────────────────────────────────────
+         The resolved compose file the deploy would ship, read-only, in a modal. -->
+    <Teleport to="body">
+      <div
+        v-if="showSource"
+        class="fixed inset-0 z-50 flex items-center justify-center p-4"
+        style="background: color-mix(in oklch, black 55%, transparent)"
+        @click.self="showSource = false"
+      >
+        <div class="surface flex max-h-[80vh] w-full max-w-3xl flex-col rounded-[var(--radius-card)]">
+          <div
+            class="flex items-center justify-between border-b px-5 py-3"
+            :style="{ borderColor: 'var(--border)' }"
+          >
+            <div class="min-w-0">
+              <h2 class="text-sm font-medium">Source</h2>
+              <p class="subtle truncate font-mono text-xs">
+                {{ stack?.git_path || 'docker-compose.yml' }}@{{ stack?.git_ref || 'HEAD' }}
+              </p>
+            </div>
+            <div class="flex items-center gap-1">
+              <button class="btn btn-ghost btn-sm" @click="copySource">
+                <AppIcon :name="sourceCopied ? 'check' : 'copy'" class="size-3.5" />
+                {{ sourceCopied ? 'Copied' : 'Copy' }}
+              </button>
+              <button
+                class="btn btn-ghost btn-sm btn-icon"
+                aria-label="Close"
+                @click="showSource = false"
+              >
+                <AppIcon name="x" class="size-3.5" />
+              </button>
+            </div>
+          </div>
+          <pre
+            class="overflow-auto p-4 font-mono text-xs leading-relaxed"
+            :style="{ background: 'var(--surface-sunken)' }"
+          ><code>{{ sourceYaml }}</code></pre>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>

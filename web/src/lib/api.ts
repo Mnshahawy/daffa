@@ -450,6 +450,7 @@ export interface ServiceStatus {
   declared: string
   running?: string
   state: string
+  status?: string
   container_id?: string
 }
 

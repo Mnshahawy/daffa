@@ -42,10 +42,49 @@ export interface Status {
  * carries its code — 137 (OOM-killed) and 1 are entirely different mornings, and Portainer is
  * right to surface the number inline rather than make you open the logs for it.
  */
-export function containerStatus(state: string, statusText?: string): Status {
+// Docker reports a container's healthcheck two ways: the `docker ps` status string carries it in
+// parentheses — "Up 3 hours (healthy)" / "(unhealthy)" / "(health: starting)" — and inspect gives
+// it structured as State.Health.Status ("healthy" | "unhealthy" | "starting" | "none"). Both funnel
+// through here so the pill can say it, whichever the caller has.
+export function containerHealth(statusText?: string): 'healthy' | 'unhealthy' | 'starting' | undefined {
+  if (!statusText) return undefined
+  if (/\(unhealthy\)/i.test(statusText)) return 'unhealthy'
+  if (/\(health: starting\)/i.test(statusText)) return 'starting'
+  if (/\(healthy\)/i.test(statusText)) return 'healthy'
+  return undefined
+}
+
+// containerUptime pulls the human "up" duration out of the `docker ps` status string:
+// "Up 3 hours (healthy)" → "3 hours". Empty for anything not currently up (Exited, Created, …).
+export function containerUptime(statusText?: string): string {
+  if (!statusText) return ''
+  const m = /^Up\s+(.+?)(?:\s+\((?:healthy|unhealthy|health: starting)\))?$/i.exec(statusText.trim())
+  return m ? m[1] : ''
+}
+
+function normalizeHealth(h?: string): 'healthy' | 'unhealthy' | 'starting' | undefined {
+  switch (h) {
+    case 'healthy':
+    case 'unhealthy':
+    case 'starting':
+      return h
+    default:
+      return undefined // "none" (no healthcheck), or a status string handed in whole
+  }
+}
+
+// containerStatus maps a container's lifecycle state to a pill. For a RUNNING container it also
+// surfaces the healthcheck when there is one: `health` (from inspect) wins, else it is read out of
+// `statusText` (the `docker ps` string). Unhealthy earns an amber dot — a running-but-failing
+// container is not the plain green "Running" it would otherwise read as.
+export function containerStatus(state: string, statusText?: string, health?: string): Status {
   switch (state) {
-    case 'running':
+    case 'running': {
+      const h = normalizeHealth(health) ?? containerHealth(statusText)
+      if (h === 'unhealthy') return { tone: 'warn', label: 'Running', detail: 'unhealthy' }
+      if (h) return { tone: 'success', label: 'Running', detail: h } // healthy | starting
       return { tone: 'success', label: 'Running' }
+    }
     case 'paused':
       return { tone: 'warn', label: 'Paused' }
     case 'restarting':

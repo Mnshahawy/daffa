@@ -84,6 +84,36 @@ const blank = {
 const draft = ref({ ...blank })
 const editing = ref<string | null>(null)
 
+// ── target suggestions (stack / container comboboxes) ─────────────────────────
+// The Stack and Container targets are name filters ("" = any). These feed a <datalist> so an
+// operator can pick from what exists without losing the ability to type a name that is not running
+// yet (a stopped container, a not-yet-deployed stack, an "Every host" rule). Declared after draft:
+// vue-query reads the reactive key/enabled during setup, so draft must already exist.
+const { data: stacks } = useQuery({ queryKey: ['stacks'], queryFn: daffa.stacks })
+
+// Containers are listed per host, and the endpoint needs containers.view on it — so the query is
+// gated on both a chosen host and the capability. That also means "Every host" fetches nothing (no
+// single host to enumerate) and the operator simply types the name there.
+const { data: containers } = useQuery({
+  queryKey: ['monitor-containers', () => draft.value.env_id],
+  queryFn: () => daffa.containers(draft.value.env_id),
+  enabled: computed(() => !!draft.value.env_id && session.can(Cap.ContainersView, draft.value.env_id)),
+})
+
+// Stack names for the chosen host (all hosts when fleet-wide), de-duped.
+const stackOptions = computed(() => {
+  const list = stacks.value ?? []
+  const scoped = draft.value.env_id ? list.filter((s) => s.env_id === draft.value.env_id) : list
+  return [...new Set(scoped.map((s) => s.name))].sort()
+})
+
+// Containers on the host, narrowed to the selected stack (its compose project) when one is set.
+const containerOptions = computed(() => {
+  const list = containers.value ?? []
+  const scoped = draft.value.stack ? list.filter((c) => c.project === draft.value.stack) : list
+  return [...new Set(scoped.map((c) => c.name))].sort()
+})
+
 // ── what a rule is written in, versus what it is stored in ────────────────────
 //
 // A rule is stored in exactly one unit per metric: percent, or BYTES, or cores. Nobody types
@@ -607,10 +637,14 @@ const recoveredStatus: Status = { tone: 'success', label: 'Recovered' }
             <input
               id="m-stack"
               v-model="draft.stack"
+              list="monitor-stacks"
               placeholder="any"
               class="field font-mono text-xs"
               data-cursor="text"
             />
+            <datalist id="monitor-stacks">
+              <option v-for="s in stackOptions" :key="s" :value="s" />
+            </datalist>
           </div>
           <div>
             <label for="m-container" class="mb-1.5 block text-sm font-medium">
@@ -619,10 +653,14 @@ const recoveredStatus: Status = { tone: 'success', label: 'Recovered' }
             <input
               id="m-container"
               v-model="draft.container"
+              list="monitor-containers"
               placeholder="any"
               class="field font-mono text-xs"
               data-cursor="text"
             />
+            <datalist id="monitor-containers">
+              <option v-for="c in containerOptions" :key="c" :value="c" />
+            </datalist>
           </div>
         </div>
 

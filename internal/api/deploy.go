@@ -360,8 +360,15 @@ func (s *Server) buildBundle(ctx context.Context, stack *store.Stack, resolved *
 	if err != nil {
 		return nil, nil, err
 	}
-	if err := checkSecretRefs(ctx, resolved.YAML, stack.Name, env, secrets); err != nil {
+	swarm := stack.Engine == stacks.SwarmEngine.Name()
+	if err := checkSecretRefs(ctx, resolved.YAML, stack.Name, env, secrets, swarm); err != nil {
 		return nil, nil, err
+	}
+	// File secrets ride the bundle only for Swarm, where `docker stack deploy` reads them into raft.
+	// A compose `file:` secret would become a daemon-side bind of a path that only exists inside the
+	// runner, so it cannot work — checkSecretRefs refuses one above, and we never embed dead files.
+	if !swarm {
+		secrets = nil
 	}
 	auths, err := s.registryAuths(ctx, resolved.YAML, stack.Name, env)
 	if err != nil {
@@ -395,29 +402,53 @@ func (s *Server) buildBundle(ctx context.Context, stack *store.Stack, resolved *
 	return bundle, plan, err
 }
 
-// checkSecretRefs refuses a deploy whose compose file points a daffa-secrets/ file at a
-// secret that has not been defined — in the browser, naming the fix, rather than letting the
-// runner fail thirty seconds later with a bare "file not found" on a remote host. The reverse
-// (a stored secret nothing references) is harmless and is surfaced on the Secrets tab, not
-// here. See docs/secrets.md §4.
-func checkSecretRefs(ctx context.Context, yaml, projectName string, env []stacks.EnvVar, secrets []stacks.Secret) error {
+// checkSecretRefs validates a stack's `daffa-secrets/` references before the runner starts, in the
+// browser, rather than letting the runner fail thirty seconds later on a remote host.
+//
+// On SWARM it refuses a reference with no stored secret behind it — `docker stack deploy` reads the
+// file into a raft secret, so the file has to exist. A stored secret nothing references is harmless
+// and surfaced on the Secrets tab, not here.
+//
+// On COMPOSE any `daffa-secrets/` reference is refused outright: a compose `file:` secret becomes a
+// bind mount the daemon resolves on the host, but the bundle only exists inside the runner
+// container, so `/stack/daffa-secrets/<name>` can never mount. Stack secrets are a Swarm feature;
+// the refusal names the compose path that works (a secret environment variable) instead of leaving
+// the operator with a bare "bind source path does not exist" from the daemon.
+func checkSecretRefs(ctx context.Context, yaml, projectName string, env []stacks.EnvVar, secrets []stacks.Secret, swarm bool) error {
 	declared, err := stacks.SecretsFromCompose(ctx, yaml, projectName, env)
 	if err != nil {
 		return err
 	}
+
+	var refs []string
+	for _, d := range declared {
+		if name, ok := stacks.DaffaSecretRef(d.File); ok {
+			refs = append(refs, name)
+		}
+	}
+	if len(refs) == 0 {
+		return nil
+	}
+	sort.Strings(refs)
+
+	if !swarm {
+		return fmt.Errorf("stacks: this compose stack references secret(s) %s under daffa-secrets/, "+
+			"but file secrets are a Swarm feature — a compose file: secret cannot mount through the "+
+			"runner. Store sensitive values as secret environment variables on the Environment tab",
+			strings.Join(refs, ", "))
+	}
+
 	have := make(map[string]bool, len(secrets))
 	for _, sec := range secrets {
 		have[sec.Name] = true
 	}
 	var missing []string
-	for _, d := range declared {
-		name, ok := stacks.DaffaSecretRef(d.File)
-		if ok && !have[name] {
+	for _, name := range refs {
+		if !have[name] {
 			missing = append(missing, name)
 		}
 	}
 	if len(missing) > 0 {
-		sort.Strings(missing)
 		return fmt.Errorf("stacks: the compose file references secret(s) %s under daffa-secrets/, "+
 			"but they are not defined — add them on the stack's Secrets tab", strings.Join(missing, ", "))
 	}

@@ -12815,6 +12815,9 @@
           "state": {
             "type": "string"
           },
+          "status": {
+            "type": "string"
+          },
           "container_id": {
             "type": "string"
           }

@@ -5,7 +5,7 @@ import { daffa, type StackSecretItem } from '@/lib/api'
 import AppIcon from './ui/AppIcon.vue'
 import BaseButton from './ui/BaseButton.vue'
 
-const props = defineProps<{ stackId: string; canWrite: boolean; engine?: string }>()
+const props = defineProps<{ stackId: string; canWrite: boolean }>()
 const emit = defineEmits<{ save: [StackSecretItem[]] }>()
 
 const { data } = useQuery({
@@ -58,14 +58,16 @@ async function save() {
     </div>
 
     <div class="p-4">
-      <!-- What a secret IS here: a file Daffa keeps beside the stack and mounts in. Say it once,
-           with the exact snippet to paste — a secrets block is easy to get subtly wrong. -->
+      <!-- File secrets are a Swarm-only feature: docker stack deploy reads the file and turns it
+           into a raft secret. Say it once, with the exact snippet to paste — a secrets block is
+           easy to get subtly wrong. (Compose stacks never see this tab; they use secret env vars.) -->
       <div
         class="mb-4 rounded-[var(--radius-control)] border px-3 py-2.5 text-xs"
         :style="{ borderColor: 'var(--border)', background: 'var(--surface-sunken)' }"
       >
         <p class="muted">
-          Each secret is a file kept beside the stack. Declare it in your compose file:
+          Each secret is a file Daffa keeps beside the stack. On deploy it becomes a Swarm raft
+          secret, delivered to whatever node runs the task. Declare it in your compose file:
         </p>
         <pre
           class="mt-1.5 overflow-x-auto font-mono text-[11px]"
@@ -75,11 +77,8 @@ async function save() {
     file: ./daffa-secrets/&lt;name&gt;</code></pre>
         <p class="muted mt-1.5">
           Reference it in a service with <code class="font-mono">secrets: [&lt;name&gt;]</code>; it
-          mounts at <code class="font-mono">/run/secrets/&lt;name&gt;</code>.
-        </p>
-        <p v-if="engine === 'swarm'" class="muted mt-1.5">
-          On Swarm a secret's content is immutable once deployed — rotating it means giving it a new
-          name.
+          mounts at <code class="font-mono">/run/secrets/&lt;name&gt;</code>. Its content is immutable
+          once deployed — rotating it means giving it a new name.
         </p>
       </div>
 

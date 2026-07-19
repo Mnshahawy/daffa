@@ -55,7 +55,19 @@ async function save() {
   error.value = ''
   testResult.value = null
   try {
-    await daffa.saveSmtp(form.value)
+    // Send only the request fields. The form is seeded from the GET view, which carries the
+    // read-only has_password flag; the save endpoint decodes strictly and rejects unknown fields,
+    // so spreading the whole form would 400 with `unknown field "has_password"`.
+    await daffa.saveSmtp({
+      host: form.value.host,
+      port: form.value.port,
+      username: form.value.username,
+      password: form.value.password,
+      from_addr: form.value.from_addr,
+      from_name: form.value.from_name,
+      base_url: form.value.base_url,
+      enabled: form.value.enabled,
+    })
     await qc.invalidateQueries({ queryKey: ['smtp'] })
     form.value.password = '' // it is stored now; keep it out of the DOM
   } catch (e) {

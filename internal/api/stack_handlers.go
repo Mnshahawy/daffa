@@ -713,6 +713,18 @@ func (s *Server) handleSetStackSecrets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// File-based stack secrets are a Swarm feature: `docker stack deploy` reads the file and turns
+	// it into a raft secret. A compose stack's `file:` secret would become a bind mount the daemon
+	// resolves on the host, but the bundle only exists inside the runner container — so it can never
+	// mount. Rather than ship a secret that will fail at deploy, refuse it here and name the path
+	// that does work: a secret environment variable, which is sealed and delivered through .env.
+	if stack.Engine != stacks.SwarmEngine.Name() {
+		httpx.BadRequest(w, r,
+			"Stack secrets are a Swarm feature — they become raft secrets. On a compose stack, store "+
+				"sensitive values as secret environment variables on the Environment tab instead.")
+		return
+	}
+
 	var req setSecretsRequest
 	if err := httpx.Decode(w, r, &req); err != nil {
 		httpx.BadRequest(w, r, err.Error())
