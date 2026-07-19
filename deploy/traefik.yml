@@ -35,6 +35,12 @@ entryPoints:
     address: ":443"
 
 providers:
+  # Swarm services — published stacks whose replicas may span nodes. A Daffa box is a single-node
+  # Swarm by default, so this is on out of the box; the console itself always uses the `docker`
+  # provider below. install.sh removes this block under --no-swarm, where a standalone daemon has
+  # no Swarm API to answer it and it would only log errors.
+  swarm:
+    exposedByDefault: false
   docker:
     # Only route to containers that opt in with traefik.enable=true.
     exposedByDefault: false

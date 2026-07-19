@@ -52,7 +52,7 @@ func (s *Server) handleExec(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	node, ok := s.node(w, r)
+	node, ok := s.nodeForContainer(w, r)
 	if !ok {
 		return
 	}

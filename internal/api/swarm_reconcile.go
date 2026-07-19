@@ -100,6 +100,16 @@ func (s *Server) reconcileNode(ctx context.Context, envID string, node *dockerx.
 		return
 	}
 
+	// A WORKER cannot name its own cluster — Docker populates Swarm.Cluster only on managers — so
+	// info.ClusterID is empty for one, and the ClusterID-based assembly below cannot place it (an
+	// empty id matches every standalone environment, which is exactly wrong). Resolve it from the
+	// authoritative side instead: a manager that lists this node. Until such a manager is reachable
+	// there is nothing to match against, so the node waits, harmless, in its own environment.
+	if info.ClusterID == "" {
+		s.attachWorkerToSwarm(ctx, env, node, info.NodeID)
+		return
+	}
+
 	// The daemon IS in a swarm, and its environment already agrees. Nothing to do.
 	if env.SwarmID == info.ClusterID {
 		return
@@ -160,6 +170,89 @@ func (s *Server) reconcileNode(ctx context.Context, envID string, node *dockerx.
 			}),
 		})
 	}
+}
+
+// attachWorkerToSwarm places an agent-connected worker into the swarm environment that owns it.
+// A worker's own daemon cannot report its ClusterID (Docker exposes it only on managers), so the
+// owning swarm is found from a manager that lists the worker's NodeID — the daemon is authoritative
+// here exactly as everywhere else. It reuses the bare-node move path: a freshly enrolled worker is
+// alone in its own environment with nothing hanging off it, so nothing can be silently merged.
+func (s *Server) attachWorkerToSwarm(ctx context.Context, env *store.Environment, node *dockerx.Node, swarmNodeID string) {
+	if swarmNodeID == "" {
+		return // an active swarm node with no id is a contradiction; say nothing
+	}
+
+	owner, ok := s.swarmEnvForSwarmNode(ctx, swarmNodeID)
+	if !ok {
+		return // no reachable manager claims this node yet — try again on the next sweep
+	}
+	if owner.ID == env.ID {
+		return // already where it belongs
+	}
+
+	// Same guard as the ClusterID move path: only a bare, single-node environment may be dissolved
+	// into a swarm. A worker whose environment carries stacks or grants is somebody's configuration,
+	// and an action taken OUTSIDE Daffa does not get to merge it — refuse, loudly, and leave both.
+	if len(s.nodesIn(ctx, env.ID)) != 1 || !s.envIsBare(ctx, env.ID) {
+		slog.Warn("worker belongs to a managed swarm but its environment is not bare — refusing to merge",
+			"node", node.Name, "swarm", owner.Name, "environment", env.Name)
+		s.audit(ctx, store.AuditEntry{
+			EnvID: env.ID, Action: "swarm.conflict", Target: env.Name, Outcome: "error",
+			Detail: store.AuditDetail(map[string]string{
+				"other": owner.Name,
+				"why": "This worker is part of a Swarm already managed as another environment, but its " +
+					"current environment has stacks or grants. Daffa will not merge them: remove one.",
+			}),
+		})
+		return
+	}
+
+	if err := s.store.MoveNode(ctx, node.ID, owner.ID); err != nil {
+		slog.Error("attaching a worker to its swarm", "node", node.Name, "err", err)
+		return
+	}
+	s.pool.Deregister(env.ID, node.ID)
+	s.reconnectNode(ctx, owner, node.ID)
+	slog.Info("worker joined its swarm", "node", node.Name, "environment", owner.Name)
+	s.audit(ctx, store.AuditEntry{
+		EnvID: owner.ID, Action: "swarm.node.join", Target: node.Name, Outcome: "ok",
+		Detail: store.AuditDetail(map[string]string{"swarm_node": swarmNodeID, "via": "manager"}),
+	})
+}
+
+// swarmEnvForSwarmNode returns the swarm environment whose manager lists swarmNodeID among its
+// nodes — the authoritative answer to "which swarm is this worker in" when the worker cannot say.
+// It asks managers, not the store, on purpose: the same daemon-is-authoritative rule the rest of
+// reconciliation obeys.
+func (s *Server) swarmEnvForSwarmNode(ctx context.Context, swarmNodeID string) (*store.Environment, bool) {
+	envs, err := s.store.ListEnvironments(ctx)
+	if err != nil {
+		slog.Error("resolving a worker's swarm: listing environments", "err", err)
+		return nil, false
+	}
+	for _, e := range envs {
+		if !e.IsSwarm() {
+			continue // a standalone environment cannot own a swarm node
+		}
+		penv, err := s.pool.Get(e.ID)
+		if err != nil {
+			continue // not connected — nothing to ask
+		}
+		control, err := penv.Control()
+		if err != nil {
+			continue // no reachable manager in this environment right now
+		}
+		nodes, err := control.ListSwarmNodes(ctx)
+		if err != nil {
+			continue
+		}
+		for _, sn := range nodes {
+			if sn.ID == swarmNodeID {
+				return e, true
+			}
+		}
+	}
+	return nil, false
 }
 
 func (s *Server) setSwarm(ctx context.Context, env *store.Environment, swarmID, nodeName string) {

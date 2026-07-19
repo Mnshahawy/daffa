@@ -206,6 +206,50 @@ func (s *Server) node(w http.ResponseWriter, r *http.Request) (*dockerx.Node, bo
 	return n, true
 }
 
+// nodeForContainer is `node` for a request that names a CONTAINER, with one extra move: when the
+// caller did not pass ?node= and the environment has more than one node, it finds the node that
+// actually runs the container in the path rather than refusing with node_required. A container id
+// is unique per daemon, so the first node that can inspect it is the right one.
+//
+// This is what lets a caller that cannot know the node still reach the right daemon — the container
+// list's stats, a COMPOSE stack's panel on a multi-node host — while `node` keeps refusing for the
+// requests that have no id to resolve (prune, df), where naming the node is the only honest answer.
+// A single-node environment still short-circuits with no lookup, so the common case pays nothing.
+func (s *Server) nodeForContainer(w http.ResponseWriter, r *http.Request) (*dockerx.Node, bool) {
+	env, ok := s.env(w, r)
+	if !ok {
+		return nil, false
+	}
+
+	if id := r.URL.Query().Get("node"); id != "" {
+		n, err := env.Node(id)
+		if err != nil {
+			httpx.Fail(w, r, http.StatusNotFound, "no_such_node",
+				"That environment has no such node, or Daffa cannot reach it.")
+			return nil, false
+		}
+		return n, true
+	}
+
+	// One node (standalone or single-node swarm): no ambiguity, no lookup.
+	if n, err := env.One(); err == nil {
+		return n, true
+	}
+
+	// Many nodes, none named: locate the one that runs this container. A successful inspect is
+	// proof of ownership; ask each daemon in turn until one answers.
+	if cid := r.PathValue("id"); cid != "" {
+		for _, n := range env.Nodes() {
+			if _, err := n.InspectContainer(r.Context(), cid); err == nil {
+				return n, true
+			}
+		}
+	}
+	httpx.Fail(w, r, http.StatusNotFound, "no_such_container",
+		"No such container on any reachable node in this environment.")
+	return nil, false
+}
+
 // control resolves the daemon a CLUSTER-WIDE request is about: services, tasks, swarm nodes,
 // secrets, configs, stack deploys. A manager — the leader if it is reachable, otherwise any of
 // them.
@@ -271,7 +315,7 @@ func (s *Server) handleListContainers(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleInspectContainer(w http.ResponseWriter, r *http.Request) {
-	node, ok := s.node(w, r)
+	node, ok := s.nodeForContainer(w, r)
 	if !ok {
 		return
 	}
@@ -285,7 +329,7 @@ func (s *Server) handleInspectContainer(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleContainerAction(w http.ResponseWriter, r *http.Request) {
-	node, ok := s.node(w, r)
+	node, ok := s.nodeForContainer(w, r)
 	if !ok {
 		return
 	}
@@ -326,7 +370,7 @@ func errText(err error) string {
 // handleContainerLogs streams logs as SSE. The client sets follow=false to fetch a
 // tail and stop, or follow=true (default) to keep the stream open.
 func (s *Server) handleContainerLogs(w http.ResponseWriter, r *http.Request) {
-	node, ok := s.node(w, r)
+	node, ok := s.nodeForContainer(w, r)
 	if !ok {
 		return
 	}

@@ -33,7 +33,9 @@ type SwarmInfo struct {
 	// task's NodeID into the client that can exec into it.
 	NodeID string
 	// ClusterID identifies the swarm itself. Two daemons reporting the same one are, definitionally,
-	// the same cluster — which is how environments are assembled rather than asserted.
+	// the same cluster — which is how environments are assembled rather than asserted. Docker
+	// populates it ONLY on managers, so it is empty for a worker: an active worker is in the swarm
+	// (InSwarm true) but cannot name it, and the reconcile resolves such a node via a manager.
 	ClusterID string
 	// Manager reports Swarm.ControlAvailable: not "is this labelled a manager" but "will this
 	// socket answer a question about the cluster". It is the only bit that decides a control node.
@@ -56,22 +58,28 @@ func (e *Node) Swarm(ctx context.Context) (*SwarmInfo, error) {
 	// LocalNodeState is inactive | pending | active | error | locked. Only "active" means this
 	// daemon is actually part of a working swarm; the rest are a daemon that is either not in one
 	// or cannot currently be said to be in one, and both are "not a swarm" as far as anything
-	// Daffa does with the answer.
-	//
-	// This is checked FIRST, and it is not merely tidy: Swarm.Cluster is a POINTER, and it is nil
-	// on a daemon that has never joined a swarm — which is most of them. Reading Cluster.ID before
-	// establishing that there is a cluster panics on the standalone install, i.e. the default one.
-	if s.LocalNodeState != swarm.LocalNodeStateActive || s.Cluster == nil {
+	// Daffa does with the answer. This is the ONLY thing that decides swarm membership — a nil
+	// Cluster does not, see below.
+	if s.LocalNodeState != swarm.LocalNodeStateActive {
 		return &SwarmInfo{}, nil
 	}
 
 	out := &SwarmInfo{
-		InSwarm:   true,
-		NodeID:    s.NodeID,
-		Manager:   s.ControlAvailable,
-		Managers:  s.Managers,
-		Nodes:     s.Nodes,
-		ClusterID: s.Cluster.ID,
+		InSwarm:  true,
+		NodeID:   s.NodeID,
+		Manager:  s.ControlAvailable,
+		Managers: s.Managers,
+		Nodes:    s.Nodes,
+	}
+
+	// Swarm.Cluster is a POINTER, and Docker populates it — and thus the ClusterID — ONLY on a
+	// manager. A worker in an active swarm reports it nil. So a nil Cluster is NOT "standalone"
+	// once the state is active: it is simply a worker that cannot name its own cluster. Reading
+	// Cluster.ID unconditionally panics on that worker (and on the standalone default), so guard
+	// it; leaving ClusterID empty is the signal the reconcile uses to resolve the node via a
+	// manager's node list instead of by cluster id.
+	if s.Cluster != nil {
+		out.ClusterID = s.Cluster.ID
 	}
 
 	// Leadership is not in Info(); it is on the node's own record, and only a manager can read

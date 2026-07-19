@@ -23,7 +23,7 @@ var errSystemResource = errors.New("protected by this deployment")
 // which ones — it knows what is on screen, and sampling a container nobody is looking
 // at is work spent for nothing.
 func (s *Server) handleStatsSnapshot(w http.ResponseWriter, r *http.Request) {
-	node, ok := s.node(w, r)
+	env, ok := s.env(w, r)
 	if !ok {
 		return
 	}
@@ -46,7 +46,16 @@ func (s *Server) handleStatsSnapshot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	stats, err := node.Snapshot(r.Context(), filtered)
+	// The ids may span nodes in a Swarm, and a list that mixes them has no single node to name.
+	// Ask EVERY node for the whole set and union the answers: Snapshot skips ids a daemon does not
+	// run (a container that stopped between the list and the sample is not an error worth failing
+	// over), so each node contributes exactly its own. This is the fan-out the container list uses.
+	stats, err := fanOutErr(r.Context(), env,
+		func(ctx context.Context, n *dockerx.Node) ([]dockerx.Stats, error) {
+			return n.Snapshot(ctx, filtered)
+		},
+		func(*dockerx.Stats, *dockerx.Node) {}, // a Stats already carries its container id; no node tag
+	)
 	if err != nil {
 		if r.Context().Err() != nil {
 			return // the client navigated away mid-sample
@@ -59,7 +68,7 @@ func (s *Server) handleStatsSnapshot(w http.ResponseWriter, r *http.Request) {
 
 // handleStatsStream follows ONE container — the one on screen.
 func (s *Server) handleStatsStream(w http.ResponseWriter, r *http.Request) {
-	node, ok := s.node(w, r)
+	node, ok := s.nodeForContainer(w, r)
 	if !ok {
 		return
 	}

@@ -38,6 +38,7 @@ ADMIN_PASSWORD=""
 BIND="127.0.0.1"
 PORT="8080"
 NO_PROMPTS=0
+NO_SWARM=0         # by default this box becomes a single-node Swarm; --no-swarm keeps a bridge edge
 FORCE_TRAEFIK=""   # "", "1" (--traefik), or "0" (--no-traefik) — "" means infer from --domain
 FORCE_INTERNAL=""  # "", "1" (--internal), or "0" (--public) — "" means ask / default public
 
@@ -67,6 +68,8 @@ Usage: install.sh [options]
   --admin-password PASS  First admin password (>= 12 chars; generated if omitted).
   --traefik / --no-traefik
                          Force the mode instead of inferring it from --domain.
+  --no-swarm             Do not initialise Swarm. The default makes this box a single-node Swarm
+                         so worker nodes can join later; --no-swarm keeps a plain bridge edge.
   --bind ADDR            Direct-mode publish address (default: 127.0.0.1).
   --port PORT            Direct-mode publish port (default: 8080).
   --version TAG          Install a specific release (e.g. v1.2.3) instead of the latest.
@@ -89,6 +92,8 @@ while [ $# -gt 0 ]; do
     --admin-password)  ADMIN_PASSWORD="${2:-}"; shift 2 ;;
     --traefik)         FORCE_TRAEFIK=1; shift ;;
     --no-traefik)      FORCE_TRAEFIK=0; shift ;;
+    --swarm)           NO_SWARM=0; shift ;;
+    --no-swarm)        NO_SWARM=1; shift ;;
     --internal)        FORCE_INTERNAL=1; shift ;;
     --public)          FORCE_INTERNAL=0; shift ;;
     --bind)            BIND="${2:-}"; shift 2 ;;
@@ -211,6 +216,34 @@ docker_gid() {
   stat -c '%g' /var/run/docker.sock 2>/dev/null || echo 999
 }
 
+# A Daffa box is a single-node Swarm by default: it costs almost nothing on one host, and it turns
+# "add a second machine later" into a join command instead of a rebuild — the daemon is still an
+# ordinary one, so compose stacks and plain containers keep working beside any Swarm services. Sets
+# SWARM=1 on success. --no-swarm opts out, and ANY failure (rootless Docker, a locked-down host)
+# degrades to standalone rather than aborting: the console still runs, just without an overlay edge.
+maybe_init_swarm() {
+  SWARM=0
+  if [ "$NO_SWARM" = 1 ]; then
+    say "skipping Swarm (--no-swarm): the published-apps edge stays a plain bridge"
+    return
+  fi
+  if [ "$(docker info --format '{{.Swarm.LocalNodeState}}' 2>/dev/null)" = active ]; then
+    ok "Swarm already active"; SWARM=1; return
+  fi
+  # Advertise the box's primary IP so a future worker has a real address to dial. Fall back to
+  # letting Docker choose, then to loopback for a box that will only ever be a single node.
+  local addr; addr="$(ip -4 route get 1.1.1.1 2>/dev/null | sed -n 's/.*src \([0-9.][0-9.]*\).*/\1/p' | head -1)"
+  say "initialising a single-node Swarm${addr:+ (advertise ${addr})}"
+  if { [ -n "$addr" ] && docker swarm init --advertise-addr "$addr" >/dev/null 2>&1; } \
+     || docker swarm init >/dev/null 2>&1 \
+     || docker swarm init --advertise-addr 127.0.0.1 >/dev/null 2>&1; then
+    ok "Swarm initialised"; SWARM=1
+  else
+    warn "could not initialise Swarm — continuing standalone (plain bridge edge)."
+    warn "  pass --no-swarm to skip this step, or run 'docker swarm init' by hand to see why."
+  fi
+}
+
 # Resolve the release to install: an explicit --version wins, otherwise ask GitHub
 # for the latest published release. Sets TAG, COMPOSE_REF (the git ref to fetch the
 # compose file from) and the default image. Falls back to main/:latest with a warning
@@ -258,6 +291,14 @@ fetch_compose() {
       || die "could not download the Traefik config: $base/traefik.yml"
     grep -q '^entryPoints:' "$INSTALL_DIR/traefik.yml" \
       || die "downloaded Traefik config doesn't look right — aborting"
+    # The template ships the swarm provider active (Swarm is the default). On a standalone install
+    # drop it, or Traefik error-loops against a Swarm API that will never answer. Deletes the
+    # `swarm:` mapping up to the next top-level provider key, leaving `docker:`/`file:` intact.
+    if [ "${SWARM:-0}" != 1 ]; then
+      awk '/^  swarm:/{skip=1; next} skip && /^  [a-zA-Z]/{skip=0} skip{next} {print}' \
+        "$INSTALL_DIR/traefik.yml" > "$INSTALL_DIR/traefik.yml.tmp" \
+        && mv "$INSTALL_DIR/traefik.yml.tmp" "$INSTALL_DIR/traefik.yml"
+    fi
     if [ -n "$ACME_EMAIL" ]; then
       # Traefik does not expand env vars in its static config, so append a concrete block.
       cat >> "$INSTALL_DIR/traefik.yml" <<EOF
@@ -312,6 +353,9 @@ if [ "$USE_TRAEFIK" = 1 ]; then
   PROFILES="traefik"; SECURE_COOKIE="true"; TRUST_PROXY="true"
   ACCESS_URL="https://$DOMAIN"
   SYSTEM_VOLUMES="$SYSTEM_VOLUMES,daffa-edge-certs,traefik-acme,daffa-traefik-config"
+  # The published-apps edge network exists whenever Traefik does (overlay on a Swarm, bridge on
+  # --no-swarm); either way it is the console's own plumbing, so protect it from deletion.
+  SYSTEM_NETWORKS="$SYSTEM_NETWORKS,daffa-edge-overlay"
 
   # Public (Let's Encrypt) or internal (Daffa's own CA) — for THIS console. Traefik itself
   # serves both kinds of site regardless; this only picks the console's own certificate. A
@@ -347,6 +391,9 @@ else
 fi
 
 install_docker
+maybe_init_swarm
+# The published-apps edge network is an attachable overlay on a Swarm, a plain bridge otherwise.
+[ "$SWARM" = 1 ] && OVERLAY_DRIVER=overlay || OVERLAY_DRIVER=bridge
 resolve_release
 DGID="$(docker_gid)"
 mkdir -p "$INSTALL_DIR"
@@ -383,6 +430,7 @@ DOCKER_GID=$DGID
 DAFFA_CONFIG_DIR=$INSTALL_DIR
 DAFFA_SYSTEM_NETWORKS=$SYSTEM_NETWORKS
 DAFFA_SYSTEM_VOLUMES=$SYSTEM_VOLUMES
+DAFFA_EDGE_OVERLAY_DRIVER=$OVERLAY_DRIVER
 POSTGRES_PASSWORD=$POSTGRES_PASSWORD
 EOF
 chmod 600 "$ENV_FILE"
@@ -506,6 +554,7 @@ ok "Daffa is running."
 echo
 printf '  %sURL%s        %s\n' "$B" "$RST" "$ACCESS_URL"
 printf '  %sVersion%s    %s\n' "$DIM" "$RST" "$TAG"
+[ "${SWARM:-0}" = 1 ] && printf '  %sSwarm%s      single-node manager — add a worker with: %sdocker swarm join-token worker%s\n' "$DIM" "$RST" "$DIM" "$RST"
 if [ "$USE_TRAEFIK" = 1 ] && [ "$INTERNAL" = 0 ]; then
   printf '  %sDNS%s        point %s at this host; a Let'\''s Encrypt cert is issued on first request to :443\n' "$DIM" "$RST" "$DOMAIN"
 fi

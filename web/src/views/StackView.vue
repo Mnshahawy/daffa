@@ -777,7 +777,7 @@ function triggeredBy(d: { trigger_kind: string; started_by_name?: string }): str
       <template v-else>
         <div class="mb-4 flex flex-wrap items-center gap-3">
           <label for="stack-container" class="text-sm font-medium">Container</label>
-          <Select id="stack-container" v-model="selectedContainer" class="max-w-xs">
+          <Select id="stack-container" v-model="selectedContainer" class="w-80 max-w-full">
             <option v-for="o in containerOptions" :key="o.key" :value="o.key">{{ o.label }}</option>
           </Select>
           <!-- The full page still exists; this is the way out to it. -->

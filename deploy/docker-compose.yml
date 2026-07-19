@@ -146,8 +146,10 @@ services:
       # ACME account + issued certs (public-domain mode). Empty and unused in internal mode.
       - traefik-acme:/acme
     restart: unless-stopped
-    # Edge only — the proxy has no path to the database network.
-    networks: [edge]
+    # Edge networks only — the proxy has no path to the database network. `edge` carries the
+    # console; `edge-overlay` carries PUBLISHED STACKS. Traefik sits on both, so one proxy serves
+    # the console and cluster apps alike.
+    networks: [edge, edge-overlay]
 
 volumes:
   # Explicit names on every volume: without them Compose prefixes the project name
@@ -177,6 +179,15 @@ networks:
   # daffa <-> postgres. No proxy here.
   internal:
     name: daffa-internal
-  # traefik <-> daffa. No database here.
+  # traefik <-> daffa. A plain bridge: the console and the proxy are always on the same host.
   edge:
     name: daffa-edge
+  # traefik <-> PUBLISHED STACKS. An attachable overlay on a Swarm manager (the default), so a
+  # replicated service's tasks are reachable no matter which node runs them; a plain bridge under
+  # --no-swarm. `attachable` lets this compose Traefik (a container, not a Swarm service) join it,
+  # and Swarm stacks attach to `daffa-edge-overlay` as an external network. install.sh writes the
+  # driver to match the install mode; the default here follows Swarm-by-default.
+  edge-overlay:
+    name: daffa-edge-overlay
+    driver: ${DAFFA_EDGE_OVERLAY_DRIVER:-overlay}
+    attachable: true
