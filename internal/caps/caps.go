@@ -50,6 +50,7 @@ const (
 	NSSwarm    Namespace = "swarm"    // services, tasks and nodes on a Swarm cluster
 	NSCerts    Namespace = "certs"    // certificate authorities, certificates, encryption keys
 	NSKeyrings Namespace = "keyrings" // rotatable application encryption keys and their deliveries
+	NSSSHKeys  Namespace = "sshkeys"  // SSH keys Daffa dials out to clusters and nodes with
 )
 
 // Area is a namespace as a person reads it. The role editor's section headers.
@@ -68,7 +69,8 @@ var Namespaces = []Area{
 	{NSSwarm, "Swarm", "Services, tasks and nodes on a Swarm cluster."},
 	{NSCerts, "Certificates", "Certificate authorities, the certificates they sign, and backup encryption keys."},
 	{NSKeyrings, "Keyrings", "Rotatable application encryption keys, versioned so old data stays readable, delivered to hosts in volumes."},
-	{NSAdmin, "Administration", "Users, roles, environments and Daffa's own settings."},
+	{NSSSHKeys, "SSH keys", "Keys Daffa uses to reach clusters and nodes over SSH."},
+	{NSAdmin, "Administration", "Users, roles, clusters and Daffa's own settings."},
 }
 
 type (
@@ -159,6 +161,10 @@ var (
 	// ── keyrings ────────────────────────────────────────────────────────────────
 	KeyringsView = Cap{NSKeyrings, 1 << 0}
 	KeyringsEdit = Cap{NSKeyrings, 1 << 1}
+
+	// ── sshkeys ──────────────────────────────────────────────────────────────────
+	SSHKeysView = Cap{NSSSHKeys, 1 << 0}
+	SSHKeysEdit = Cap{NSSSHKeys, 1 << 1}
 
 	// ── admin ───────────────────────────────────────────────────────────────────
 	UsersView    = Cap{NSAdmin, 1 << 0}
@@ -359,6 +365,13 @@ var All = []Def{
 	// host can decrypt, so there is no narrower grant that means anything.
 	{KeyringsView, "keyrings.view", "keyrings", ModeView, ScopeEnv, "See keyrings, their version timeline and their deliveries — names, states, ages, sync status. Never key material."},
 	{KeyringsEdit, "keyrings.edit", "keyrings", ModeEdit, ScopeGlobal, "Create, rotate and retire keyrings, and deliver them to hosts. Retiring a version makes data encrypted under it unreadable to every consumer."},
+
+	// The SSH-key store is the credential-store pattern (registries, git credentials): its VIEW
+	// is env-grantable and secret-free — an operator scoped to one cluster still has to pick a key
+	// when they add a node to it — and its EDIT is global, because generating or importing a key,
+	// and holding the sealed private half, is a fleet-wide power.
+	{SSHKeysView, "sshkeys.view", "sshkeys", ModeView, ScopeEnv, "See SSH keys by name and fingerprint, and copy their PUBLIC half. Never the private key."},
+	{SSHKeysEdit, "sshkeys.edit", "sshkeys", ModeEdit, ScopeGlobal, "Generate, import and remove SSH keys. The private half is sealed and used to dial out to clusters and nodes — so this is fleet-wide."},
 
 	// ── admin ───────────────────────────────────────────────────────────────────
 	{UsersView, "users.view", "users", ModeView, ScopeGlobal, "See the list of users and the roles they hold."},

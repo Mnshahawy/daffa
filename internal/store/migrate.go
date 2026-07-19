@@ -949,6 +949,34 @@ CREATE TABLE volsource_files (
 	{name: "0004_backup_exclude_paths", sql: `
 ALTER TABLE backup_jobs ADD COLUMN exclude_paths TEXT NOT NULL DEFAULT '';
 `},
+
+	// An SSH key is how Daffa dials OUT to a machine it does not run on — a remote cluster's
+	// manager, or a node reached over SSH rather than an agent (docs/clusters.md §6). Same shape
+	// of shared, configured-once credential as a registry or a git credential.
+	//
+	// The split of what is sealed and what is not is deliberate and is the whole point:
+	//   public_key   — plaintext, ON PURPOSE. It is meant to be read and pasted into the target's
+	//                  authorized_keys; it is not a secret, and hiding it would only make the
+	//                  store harder to use for no gain.
+	//   fingerprint  — plaintext, shown so a human can tell two keys apart at a glance.
+	//   *_enc        — the private half and its passphrase, AES-256-GCM under master.key. WRITE-ONLY
+	//                  through the API: sealed at rest and never returned, only opened in memory
+	//                  when Daffa actually dials out. This is sealed-not-absent on purpose — unlike
+	//                  an age backup key ("the box cannot read its own backups"), Daffa MUST hold
+	//                  these to use them, so the posture is sealing, not exile. See clusters.md §6.
+	{name: "0005_ssh_keys", sql: `
+CREATE TABLE ssh_keys (
+    id              TEXT PRIMARY KEY,
+    name            TEXT NOT NULL UNIQUE,
+    algo            TEXT NOT NULL,             -- ed25519 | rsa
+    public_key      TEXT NOT NULL,             -- one authorized_keys line
+    fingerprint     TEXT NOT NULL,             -- SHA256:…
+    private_key_enc TEXT NOT NULL,             -- sealed OpenSSH private key
+    passphrase_enc  TEXT NOT NULL DEFAULT '',  -- sealed; empty for a generated key
+    created_at      TEXT NOT NULL,
+    created_by      TEXT
+);
+`},
 }
 
 // stopAfter lets a test bring the schema up to a PARTICULAR migration and no further, so

@@ -64,6 +64,16 @@
     "bit": 7,
     "scope": "global"
   },
+  "sshkeys.view": {
+    "ns": "sshkeys",
+    "bit": 0,
+    "scope": "env"
+  },
+  "sshkeys.edit": {
+    "ns": "sshkeys",
+    "bit": 1,
+    "scope": "global"
+  },
   "clusters.view": {
     "ns": "admin",
     "bit": 6,

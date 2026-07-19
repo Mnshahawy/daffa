@@ -197,6 +197,12 @@ export const router = createRouter({
               meta: { cap: Cap.GitCredsView },
             },
             {
+              path: 'ssh-keys',
+              name: 'settings-ssh',
+              component: () => import('./views/SSHKeysView.vue'),
+              meta: { cap: Cap.SshkeysView },
+            },
+            {
               path: 'registries',
               name: 'settings-registries',
               component: () => import('./views/RegistriesView.vue'),

@@ -786,6 +786,30 @@ export interface GitTestResponse {
   error?: string
 }
 
+export interface SSHKey {
+  id: string
+  name: string
+  algo: 'ed25519' | 'rsa' | 'ecdsa'
+  public_key: string
+  fingerprint: string
+  has_passphrase: boolean
+  in_use: number
+}
+
+export interface SSHKeyRequest {
+  name?: string
+  mode?: string
+  algo?: string
+  private_key?: string
+  passphrase?: string
+}
+
+export interface CreatedSSHKey {
+  id: string
+  public_key: string
+  fingerprint: string
+}
+
 export interface CertAuthority {
   id: string
   name: string
@@ -1335,6 +1359,9 @@ export const daffa = {
   testGitCredential: (id: string, body: GitTestRequest) =>
     api.post<GitTestResponse>(`/api/gitcreds/${id}/test`, body),
   deleteGitCredential: (id: string) => api.del<Record<string, string>>(`/api/gitcreds/${id}`),
+  sshKeys: () => api.get<SSHKey[]>('/api/ssh-keys'),
+  createSSHKey: (body: SSHKeyRequest) => api.post<CreatedSSHKey>('/api/ssh-keys', body),
+  deleteSSHKey: (id: string) => api.del<Record<string, string>>(`/api/ssh-keys/${id}`),
   cas: () => api.get<CertAuthority[]>('/api/certs/cas'),
   createCA: (body: CaRequest) => api.post<CertAuthority>('/api/certs/cas', body),
   rotateCA: (id: string, body: CaRotateRequest) =>

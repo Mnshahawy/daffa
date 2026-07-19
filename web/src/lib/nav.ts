@@ -231,6 +231,13 @@ export const settingsGroups: { title: string; items: SettingsTab[] }[] = [
         icon: 'layers',
       },
       {
+        name: 'settings-ssh',
+        label: 'SSH keys',
+        hint: 'Keys Daffa dials out to clusters and nodes with',
+        cap: Cap.SshkeysView,
+        icon: 'key',
+      },
+      {
         name: 'settings-registries',
         label: 'Registries',
         hint: 'Credentials for private images',

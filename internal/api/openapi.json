@@ -48,6 +48,9 @@
       "name": "storage, registries, git credentials"
     },
     {
+      "name": "ssh keys"
+    },
+    {
       "name": "certificates \u0026 encryption keys"
     },
     {
@@ -6495,6 +6498,208 @@
         "summary": "Delete a git credential no stack uses",
         "description": "Refused while stacks still use it — a stack whose credential vanished fails at its next deploy, which is a bad time to find out.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
         "x-daffa-capability": "gitcreds.edit",
+        "x-daffa-scope": "global",
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No live session or valid token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but the capability is not held at the required scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Nothing lives at that id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something went wrong on the server; the audit log has the details.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/ssh-keys": {
+      "get": {
+        "operationId": "sshKeys",
+        "tags": [
+          "ssh keys"
+        ],
+        "summary": "List SSH keys — names, algorithms, fingerprints and public keys, never a private key",
+        "description": "The credential-store pattern again: view is env-grantable and secret-free (names, fingerprints and the PUBLIC key, via scopeAny), edit is global-only, because holding the sealed private half — the thing Daffa dials out with — is a fleet-wide power.\n\nSatisfied by the capability held globally or on any host; list responses are filtered to what the caller may see.",
+        "x-daffa-capability": "sshkeys.view",
+        "x-daffa-scope": "any",
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SSHKey"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No live session or valid token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but the capability is not held at the required scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something went wrong on the server; the audit log has the details.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createSSHKey",
+        "tags": [
+          "ssh keys"
+        ],
+        "summary": "Create an SSH key — generate a keypair or import a private key",
+        "description": "Generate a fresh keypair or import an existing private key. Either way the private half is sealed on arrival and never returned; the response carries the PUBLIC key so the operator can paste it into the target's authorized_keys straight away.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "x-daffa-capability": "sshkeys.edit",
+        "x-daffa-scope": "global",
+        "requestBody": {
+          "description": "Request bodies are capped at 1 MiB; unknown fields are refused.",
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SSHKeyRequest"
+              },
+              "example": {
+                "name": "prod-fleet",
+                "mode": "generate",
+                "algo": "ed25519"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreatedSSHKey"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is wrong, and the message says how to fix it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No live session or valid token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but the capability is not held at the required scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something went wrong on the server; the audit log has the details.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/ssh-keys/{id}": {
+      "delete": {
+        "operationId": "deleteSSHKey",
+        "tags": [
+          "ssh keys"
+        ],
+        "summary": "Delete an SSH key nothing uses",
+        "description": "Refused while a cluster or node still authenticates with it — that reference is added in a later phase; today nothing does, so the guard is wired but always passes.\n\nRequires the capability granted globally — a host-scoped grant does not satisfy it.",
+        "x-daffa-capability": "sshkeys.edit",
         "x-daffa-scope": "global",
         "responses": {
           "200": {
@@ -13878,6 +14083,86 @@
         },
         "required": [
           "ok"
+        ]
+      },
+      "SSHKey": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "algo": {
+            "type": "string",
+            "enum": [
+              "ed25519",
+              "rsa",
+              "ecdsa"
+            ]
+          },
+          "public_key": {
+            "type": "string"
+          },
+          "fingerprint": {
+            "type": "string"
+          },
+          "has_passphrase": {
+            "type": "boolean"
+          },
+          "in_use": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "algo",
+          "public_key",
+          "fingerprint",
+          "has_passphrase",
+          "in_use"
+        ]
+      },
+      "SSHKeyRequest": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "algo": {
+            "type": "string"
+          },
+          "private_key": {
+            "type": "string"
+          },
+          "passphrase": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "CreatedSSHKey": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "public_key": {
+            "type": "string"
+          },
+          "fingerprint": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "public_key",
+          "fingerprint"
         ]
       },
       "CertAuthority": {

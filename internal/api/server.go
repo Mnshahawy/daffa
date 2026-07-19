@@ -892,6 +892,27 @@ func (s *Server) apiRoutes() []route {
 		{pattern: "DELETE /api/gitcreds/{id}", cap: caps.GitCredsEdit, scope: scopeGlobal, h: s.handleDeleteGitCredential,
 			resp: map[string]string(nil), ts: "deleteGitCredential"},
 
+		// ── ssh keys ───────────────────────────────────────────────────────────────
+		// The credential-store pattern again: view is env-grantable and secret-free (names,
+		// fingerprints and the PUBLIC key, via scopeAny), edit is global-only, because holding
+		// the sealed private half — the thing Daffa dials out with — is a fleet-wide power.
+		//oapi:summary List SSH keys — names, algorithms, fingerprints and public keys, never a private key
+		//oapi:enum SSHKey.algo ed25519|rsa|ecdsa
+		{pattern: "GET /api/ssh-keys", cap: caps.SSHKeysView, scope: scopeAny, h: s.handleListSSHKeys,
+			resp: []sshKeyView(nil), ts: "sshKeys"},
+		// Generate a fresh keypair or import an existing private key. Either way the private
+		// half is sealed on arrival and never returned; the response carries the PUBLIC key so
+		// the operator can paste it into the target's authorized_keys straight away.
+		//oapi:summary Create an SSH key — generate a keypair or import a private key
+		//oapi:example req {"name": "prod-fleet", "mode": "generate", "algo": "ed25519"}
+		{pattern: "POST /api/ssh-keys", cap: caps.SSHKeysEdit, scope: scopeGlobal, h: s.handleCreateSSHKey,
+			req: sshKeyRequest{}, resp: sshKeyCreateResponse{}, ts: "createSSHKey"},
+		// Refused while a cluster or node still authenticates with it — that reference is added
+		// in a later phase; today nothing does, so the guard is wired but always passes.
+		//oapi:summary Delete an SSH key nothing uses
+		{pattern: "DELETE /api/ssh-keys/{id}", cap: caps.SSHKeysEdit, scope: scopeGlobal, h: s.handleDeleteSSHKey,
+			resp: map[string]string(nil), ts: "deleteSSHKey"},
+
 		// ── certificates & encryption keys ─────────────────────────────────────────
 		// The same shape as the other credential stores: view is env-grantable and lists
 		// names, SANs and expiry (never key material) via scopeAny; edit is global-only,

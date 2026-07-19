@@ -24,7 +24,9 @@ export const Ns = {
   Certs: 'certs',
   /** Rotatable application encryption keys, versioned so old data stays readable, delivered to hosts in volumes. */
   Keyrings: 'keyrings',
-  /** Users, roles, environments and Daffa's own settings. */
+  /** Keys Daffa uses to reach clusters and nodes over SSH. */
+  Sshkeys: 'sshkeys',
+  /** Users, roles, clusters and Daffa's own settings. */
   Admin: 'admin',
 } as const
 
@@ -113,6 +115,10 @@ export const Cap = {
   KeyringsView: { ns: Ns.Keyrings, bit: 1 },
   /** Create, rotate and retire keyrings, and deliver them to hosts. Retiring a version makes data encrypted under it unreadable to every consumer. */
   KeyringsEdit: { ns: Ns.Keyrings, bit: 2 },
+  /** See SSH keys by name and fingerprint, and copy their PUBLIC half. Never the private key. */
+  SshkeysView: { ns: Ns.Sshkeys, bit: 1 },
+  /** Generate, import and remove SSH keys. The private half is sealed and used to dial out to clusters and nodes — so this is fleet-wide. */
+  SshkeysEdit: { ns: Ns.Sshkeys, bit: 2 },
   /** See the list of users and the roles they hold. */
   UsersView: { ns: Ns.Admin, bit: 1 },
   /** Create, disable and delete users, reset passwords, and grant roles. */
