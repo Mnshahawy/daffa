@@ -158,12 +158,14 @@ func (s *Store) VolumeSourcesByStack(ctx context.Context, stackID string) ([]*Vo
 
 // UpdateVolumeSource rewrites the mutable fields. EnvID and Volume are not among them:
 // retargeting a source would strand the old volume with a manifest nothing owns —
-// delete and recreate instead, so both halves are explicit.
+// delete and recreate instead, so both halves are explicit. source_kind IS mutable: a source
+// can be switched from inline to git (the handler validates the direction and clears the now-dead
+// inline files), so it must be persisted here or the switch would be silently dropped.
 func (s *Store) UpdateVolumeSource(ctx context.Context, v *VolumeSource) error {
-	_, err := s.exec(ctx, `UPDATE volume_sources SET git_url = ?, git_ref = ?, git_path = ?,
+	_, err := s.exec(ctx, `UPDATE volume_sources SET source_kind = ?, git_url = ?, git_ref = ?, git_path = ?,
         git_credential_id = ?, uid = ?, gid = ?, stack_id = ?, restart_targets = ?,
         auto_sync = ?, webhook_secret_enc = ? WHERE id = ?`,
-		v.GitURL, v.GitRef, v.GitPath, nullStr(v.GitCredentialID), v.UID, v.GID,
+		v.SourceKind, v.GitURL, v.GitRef, v.GitPath, nullStr(v.GitCredentialID), v.UID, v.GID,
 		nullStr(v.StackID), v.RestartTargets, boolInt(v.AutoSync), v.WebhookSecretEnc, v.ID)
 	if err != nil {
 		return fmt.Errorf("store: updating volume source: %w", err)

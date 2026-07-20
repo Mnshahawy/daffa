@@ -146,6 +146,21 @@ watch(
 )
 
 async function save(rotate = false) {
+  // Switching an inline source to git throws away the files stored in Daffa. It is one-way and the
+  // server refuses the reverse, so it earns a confirm — the same caution the stack switch shows.
+  if (editing.value?.source_kind === 'inline' && form.value.source_kind === 'git') {
+    const ok = await confirm({
+      title: `Switch ${form.value.volume} to git?`,
+      body:
+        'The inline files stored in Daffa are discarded and the repository becomes the source of ' +
+        'truth. The volume’s contents are replaced from the repo on the next sync; its UID/GID and ' +
+        'any linked stack are kept.',
+      confirmLabel: 'Switch to git',
+      intent: 'caution',
+    })
+    if (!ok) return
+  }
+
   busy.value = true
   try {
     const body: VolumeSourceRequest = { ...form.value, rotate }
@@ -377,13 +392,30 @@ function webhookUrl(id: string): string {
 
       <div>
         <label class="mb-1.5 block text-sm font-medium">Source</label>
-        <Select v-model="form.source_kind" :disabled="!!editing">
+        <!-- Locked only for a source that is ALREADY git: the server refuses git → inline (the
+             files live in the repo, so there is nothing to convert back). An inline source can be
+             pointed at a repo, which is the switch below. -->
+        <Select v-model="form.source_kind" :disabled="!!editing && editing.source_kind !== 'inline'">
           <option value="git">Git repository — synced from a repo</option>
           <option value="inline">Inline — files authored here</option>
         </Select>
         <p class="subtle mt-1 text-xs">
           Inline is for a volume with no repo behind it — Traefik's static config and dynamic
-          middlewares, edited here and delivered on deploy. The kind is fixed after creation.
+          middlewares, edited here and delivered on deploy.
+          <template v-if="!editing">
+            An inline source can later be switched to git; the reverse is not offered.
+          </template>
+          <template v-else-if="editing.source_kind === 'git'">
+            A git source cannot be converted back to inline — its files live in the repo.
+          </template>
+        </p>
+        <p
+          v-if="editing?.source_kind === 'inline' && form.source_kind === 'git'"
+          class="mt-1 text-xs"
+          :style="{ color: 'var(--warn)' }"
+        >
+          Switching to git discards the inline files stored here; the repository becomes the source
+          of truth and the volume is refilled from it on the next sync.
         </p>
       </div>
 

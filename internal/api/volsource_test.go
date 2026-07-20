@@ -104,6 +104,50 @@ func TestInlineVolumeSourceResolves(t *testing.T) {
 	}
 }
 
+// Switching an inline source to git must PERSIST the new kind and its git target — the store
+// UPDATE omitted source_kind once, which let the handler flip it in memory while the row stayed
+// inline, so the next scheduled sync re-read "inline" and delivered stale files. This locks the
+// round-trip the handler's inline→git switch depends on, and that the dead inline files are cleared.
+func TestVolumeSourceSwitchInlineToGitPersists(t *testing.T) {
+	s, ctx := certServer(t)
+	env, _, err := s.store.UpsertLocalEnvironment(ctx, "Local", "unix:///var/run/docker.sock")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	v := &store.VolumeSource{EnvID: env.ID, Volume: "daffa-traefik-config", SourceKind: "inline"}
+	if err := s.store.CreateVolumeSource(ctx, v); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.store.SetVolSourceFiles(ctx, v.ID, []store.VolSourceFile{{Path: "traefik.yml", Content: "x\n"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	// What the handler does after validating the inline→git switch and pre-flighting the repo.
+	v.SourceKind, v.GitURL, v.GitRef = "git", "https://git.example.com/team/infra.git", "main"
+	if err := s.store.UpdateVolumeSource(ctx, v); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.store.SetVolSourceFiles(ctx, v.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.store.VolumeSourceByID(ctx, v.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.SourceKind != "git" || got.GitURL == "" {
+		t.Fatalf("switch did not persist: kind=%q url=%q", got.SourceKind, got.GitURL)
+	}
+	files, err := s.store.VolSourceFiles(ctx, v.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 0 {
+		t.Fatalf("inline files not cleared after switch: %d remain", len(files))
+	}
+}
+
 func TestVolSourceFilePathValidation(t *testing.T) {
 	bad := [][]volSourceFileInput{
 		{{Path: "/etc/passwd"}},

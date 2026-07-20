@@ -136,6 +136,22 @@ func (s *Server) syncVolumeSource(ctx context.Context, v *store.VolumeSource) (h
 	return hash, commit, warnings, nil
 }
 
+// probeVolumeSourceGit proves a git source is deployable before a switch commits: it clones the
+// repo and resolves the subtree — the exact resolution syncVolumeSource performs — so a bad
+// URL/ref/path or a missing credential is rejected as the operator's 400 now, rather than surfacing
+// as a red status after the source has already been converted. Mirrors the stack switch's pre-flight.
+func (s *Server) probeVolumeSourceGit(ctx context.Context, v *store.VolumeSource) error {
+	auth, err := s.gitAuth(ctx, v.GitCredentialID)
+	if err != nil {
+		return err
+	}
+	_, err = stacks.ResolveTree(ctx, stacks.Source{
+		Kind: "git", URL: v.GitURL, Ref: v.GitRef, Path: v.GitPath, Auth: auth,
+		CABundle: s.managedCABundle(ctx),
+	})
+	return err
+}
+
 // inlineTree builds the same ResolvedTree shape a git clone produces, from the files stored
 // on an inline source. No commit — an inline source has none and should not pretend to.
 func (s *Server) inlineTree(ctx context.Context, v *store.VolumeSource) (*stacks.ResolvedTree, error) {

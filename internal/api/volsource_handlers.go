@@ -345,12 +345,37 @@ func (s *Server) handleUpdateVolumeSource(w http.ResponseWriter, r *http.Request
 		httpx.BadRequest(w, r, err.Error())
 		return
 	}
+
+	// Switching the source kind is a deliberate, validated transition — only inline → git, the
+	// mirror of the stack switch. A git source's files ARE the repository, so there is nothing to
+	// import back into an inline set; snapshotting the last synced tree would silently fork the
+	// volume from the repo it claims to track. Refuse the reverse rather than half-do it. Captured
+	// before applyVolumeSourceRequest, which mutates v.SourceKind in place.
+	switching := req.SourceKind != "" && req.SourceKind != v.SourceKind
+	if switching && (v.SourceKind != "inline" || req.SourceKind != "git") {
+		httpx.BadRequest(w, r,
+			"Only an inline volume source can be switched to git. A git-backed source keeps its "+
+				"files in the repository, so there is nothing to convert back to inline.")
+		return
+	}
+
 	// EnvID and Volume are not updatable: retargeting a source would strand the old
 	// volume with a manifest nothing owns. Delete and recreate, so both halves are
 	// explicit. The request's env/volume fields are simply ignored here.
 	if !s.applyVolumeSourceRequest(w, r, &req, v) {
 		return
 	}
+
+	// Prove the new git source is reachable and its subtree resolves BEFORE committing the switch —
+	// a typo in URL/ref/path is the operator's mistake, so it is a 400 now, not a red status after
+	// the inline files are already gone.
+	if switching {
+		if err := s.probeVolumeSourceGit(r.Context(), v); err != nil {
+			httpx.Fail(w, r, http.StatusBadRequest, "git_unreachable", err.Error())
+			return
+		}
+	}
+
 	secret, err := s.mintWebhookSecret(v, &req)
 	if err != nil {
 		httpx.Error(w, r, err)
@@ -360,7 +385,15 @@ func (s *Server) handleUpdateVolumeSource(w http.ResponseWriter, r *http.Request
 		httpx.Error(w, r, err)
 		return
 	}
-	if v.SourceKind == "inline" {
+	switch {
+	case switching:
+		// The inline files are dead data on a git source now — the repo is the source of truth, and
+		// the volume's contents are replaced by the sync below. Clear them so nothing stale lingers.
+		if err := s.store.SetVolSourceFiles(r.Context(), v.ID, nil); err != nil {
+			httpx.Error(w, r, err)
+			return
+		}
+	case v.SourceKind == "inline":
 		files, _ := volSourceFilesFromRequest(req.Files)
 		if err := s.store.SetVolSourceFiles(r.Context(), v.ID, files); err != nil {
 			httpx.Error(w, r, err)
