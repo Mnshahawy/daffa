@@ -1009,6 +1009,20 @@ ALTER TABLE git_credentials ADD COLUMN ssh_key_id TEXT NOT NULL DEFAULT '';
 ALTER TABLE git_credentials DROP COLUMN ssh_key_enc;
 ALTER TABLE git_credentials DROP COLUMN passphrase_enc;
 `},
+
+	// An agent is enrolled TO a cluster: when it connects, Daffa joins its daemon to that cluster's
+	// Swarm over the tunnel — no `docker swarm join` by hand (docs/clusters.md §5, §14.2). An agent
+	// adds a NODE, never a cluster (§1), so every new agent names its target; the create handler
+	// enforces that. join_env_id is a real foreign key so a removed cluster takes its agents with it
+	// (ON DELETE CASCADE, the same rule nodes.env_id follows) rather than leaving one dialling a
+	// ghost Swarm. It is nullable only because SQLite cannot add a NOT NULL foreign key by ALTER —
+	// pre-existing agents keep a NULL target and stay standalone. join_role is worker or manager;
+	// join_advertise_addr is the node's reachable overlay address ('' ⇒ Docker auto-detects).
+	{name: "0008_agent_join_target", sql: `
+ALTER TABLE agents ADD COLUMN join_env_id         TEXT REFERENCES environments (id) ON DELETE CASCADE;
+ALTER TABLE agents ADD COLUMN join_role           TEXT NOT NULL DEFAULT 'worker';
+ALTER TABLE agents ADD COLUMN join_advertise_addr TEXT NOT NULL DEFAULT '';
+`},
 }
 
 // stopAfter lets a test bring the schema up to a PARTICULAR migration and no further, so

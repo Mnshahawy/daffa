@@ -88,6 +88,9 @@ func TestBodyScopedRoutesAreKnown(t *testing.T) {
 		"POST /api/backups":        true,
 		"POST /api/monitors":       true,
 		"POST /api/volume-sources": true,
+		// Enrolling an agent adds a node to the cluster named in the body, so its handler
+		// checks nodes.edit there via s.mayUseEnv before minting a join token.
+		"POST /api/agents": true,
 		// Inline-compose image upgrades: the env arrives in the body and each handler
 		// checks it via s.mayUseEnv before touching a registry. See .ai/image-upgrades.md.
 		"POST /api/compose/images":      true,

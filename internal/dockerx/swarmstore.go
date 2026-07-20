@@ -3,8 +3,10 @@ package dockerx
 import (
 	"context"
 	"fmt"
+	"net/http"
 
 	"github.com/docker/docker/api/types/swarm"
+	"github.com/docker/docker/client"
 )
 
 // Swarm secrets and configs were once managed here, as free-floating cluster objects. They are
@@ -76,6 +78,44 @@ func (e *Node) SwarmJoinTokens(ctx context.Context) (*JoinTokens, error) {
 		Manager: sw.JoinTokens.Manager,
 		Addr:    addr,
 	}, nil
+}
+
+// SwarmJoin makes THIS daemon join an existing swarm, as a worker or manager depending on the
+// token. remoteAddr is a manager's advertised address (host:2377); advertiseAddr is the joining
+// node's OWN reachable address.
+//
+// advertiseAddr is the whole point of orchestrating the join rather than telling an operator to run
+// `docker swarm join` by hand: a node that advertises its private NIC black-holes the overlay
+// (VXLAN cannot reach it), which is the failure we hit manually. Daffa sets the reachable address —
+// the host it dialed to get here — at join time (docs/clusters.md §5). DataPathAddr rides with it,
+// since the overlay data plane has the same reachability requirement as the control plane.
+func (e *Node) SwarmJoin(ctx context.Context, remoteAddr, token, advertiseAddr string) error {
+	return e.Client.SwarmJoin(ctx, swarm.JoinRequest{
+		ListenAddr:    "0.0.0.0:2377",
+		AdvertiseAddr: advertiseAddr,
+		DataPathAddr:  advertiseAddr,
+		RemoteAddrs:   []string{remoteAddr},
+		JoinToken:     token,
+	})
+}
+
+// SwarmJoinVia joins a daemon reached through dial to a swarm, without touching the pool — the new
+// node is dialed over SSH just long enough to issue the join; its lasting connection is opened by
+// the connect loop afterwards, the same way an added cluster's is.
+func SwarmJoinVia(ctx context.Context, dial Dialer, remoteAddr, token, advertiseAddr string) error {
+	c, err := client.NewClientWithOpts(
+		client.WithHost("http://daffa-join"),
+		client.WithHTTPClient(&http.Client{Transport: &http.Transport{
+			DialContext:       dial,
+			DisableKeepAlives: true,
+		}}),
+		client.WithAPIVersionNegotiation(),
+	)
+	if err != nil {
+		return fmt.Errorf("dockerx: building join client: %w", err)
+	}
+	defer c.Close()
+	return (&Node{Name: "join", Client: c}).SwarmJoin(ctx, remoteAddr, token, advertiseAddr)
 }
 
 // SwarmLeave takes THIS daemon out of the swarm.

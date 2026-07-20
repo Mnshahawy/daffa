@@ -131,6 +131,8 @@ export const Cap = {
   SettingsView: { ns: Ns.Admin, bit: 16 },
   /** Add, edit and remove identity providers, role mappings and notification rules. */
   SettingsEdit: { ns: Ns.Admin, bit: 32 },
+  /** Run Daffa's setup script on a machine over SSH — installing Docker on a bare host. A root command on someone else's box, so it is fleet-wide and separate from adding a cluster. */
+  ClustersProvision: { ns: Ns.Admin, bit: 1024 },
   /** See a cluster and its disk usage. Without this, a cluster is invisible — it does not appear in the switcher at all. */
   ClustersView: { ns: Ns.Admin, bit: 64 },
   /** Rename clusters, and enroll or revoke agents. An agent brings a new machine Daffa can reach — so this is fleet-wide. */

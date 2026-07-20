@@ -349,6 +349,14 @@ func (s *Server) apiRoutes() []route {
 		//oapi:example req {"name": "prod-eu", "host": "10.0.0.9", "user": "daffa", "key_id": "sshkey_…"}
 		{pattern: "POST /api/clusters", cap: caps.ClustersEdit, scope: scopeGlobal, h: s.handleCreateSSHCluster,
 			req: sshClusterRequest{}, resp: sshClusterCreatedResponse{}, ts: "createCluster"},
+		// Installs Docker on a bare machine over SSH, streaming the setup log. Running a root script
+		// on someone else's box is a strictly larger power than registering a connection, so it has
+		// its own capability (docs/clusters.md §8, §14.3). SSE.
+		//oapi:summary Install Docker on a machine over SSH (server-sent events)
+		//oapi:produces text/event-stream
+		//oapi:example req {"host": "10.0.0.9", "user": "root", "key_id": "sshkey_…"}
+		{pattern: "POST /api/clusters/provision", cap: caps.ClustersProvision, scope: scopeGlobal, h: s.handleProvision,
+			req: sshClusterRequest{}},
 		// Removes an SSH cluster: stops its connection and deletes the environment. The local
 		// cluster and agent-backed ones are refused (409) — those are removed by other means.
 		//oapi:summary Remove a cluster added over SSH
@@ -394,13 +402,16 @@ func (s *Server) apiRoutes() []route {
 		//oapi:enum Agent.status online|offline|pending
 		{pattern: "GET /api/agents", cap: caps.ClustersEdit, scope: scopeGlobal, h: s.handleListAgents,
 			resp: []agentView(nil), ts: "agents"},
-		// Declares an agent and mints its one-time join token. The token is in this
-		// response and never anywhere else — it exists only in the operator's clipboard.
-		//oapi:summary Create an agent and mint its one-time join token
+		// Declares an agent for a cluster and mints its one-time join token. The token is in this
+		// response and never anywhere else — it exists only in the operator's clipboard. When the
+		// agent connects, Daffa joins its machine to the named cluster's Swarm (docs/clusters.md §5).
+		// Adding a node is nodes.edit at the target cluster, like the SSH add-node path — the cluster
+		// is in the BODY, so the handler checks it via s.mayUseEnv (scopeBody, pinned by a test).
+		//oapi:summary Create an agent for a cluster and mint its one-time join token
 		//oapi:required CreateAgentRequest.name
-		//oapi:example req {"name": "prod-worker-2"}
-		{pattern: "POST /api/agents", cap: caps.ClustersEdit, scope: scopeGlobal, h: s.handleCreateAgent,
-			req: createAgentRequest{}, resp: newAgentResponse{}},
+		//oapi:example req {"name": "prod-worker-2", "cluster": "env_…", "role": "worker"}
+		{pattern: "POST /api/agents", cap: caps.NodesEdit, scope: scopeBody, h: s.handleCreateAgent,
+			req: createAgentRequest{}, resp: newAgentResponse{}, ts: "createAgent"},
 		// Cuts the tunnel first, then forgets the agent — and the environment with it, if
 		// that node was the last one in it.
 		//oapi:summary Delete an agent and disconnect its tunnel
@@ -527,6 +538,13 @@ func (s *Server) apiRoutes() []route {
 		// Node operations are their own capability. Draining a machine moves EVERYBODY's workload;
 		// scaling one service moves one. An operator trusted with the second has not thereby been
 		// trusted with the first.
+		// Attaches a machine to THIS cluster's Swarm over SSH: Daffa reads the join token from the
+		// manager and issues SwarmJoin itself, setting the new node's advertise address to its own
+		// reachable host — nobody runs `docker swarm join` by hand (docs/clusters.md §5).
+		//oapi:summary Add a node to this cluster's Swarm over SSH
+		//oapi:example req {"host": "10.0.0.10", "user": "daffa", "key_id": "sshkey_…", "role": "worker"}
+		{pattern: "POST /api/clusters/{cluster}/nodes", cap: caps.NodesEdit, scope: scopeEnv, h: s.handleAddNode,
+			req: addNodeRequest{}, resp: addNodeResponse{}, ts: "addNode"},
 		// Say what to change: an availability (active|pause|drain) or a role
 		// (manager|worker) — one per request.
 		//oapi:summary Change a machine's availability or role in the swarm

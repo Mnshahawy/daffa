@@ -180,6 +180,67 @@ export function streamDeployment(
 
 // Terminal frames are raw bytes in both directions; only control messages (resize) are
 // JSON, so there is no parsing of terminal output anywhere in this app.
+// streamProvision runs the Docker-install script on a machine over SSH and relays its log. Unlike
+// the other streams this is a POST — it carries the connection details in a body and is a powerful,
+// mutating action, so EventSource (GET-only) does not fit; it reads the server-sent-events response
+// off a fetch stream by hand. Returns an abort function. Auth is the same-origin session cookie,
+// exactly like the JSON client.
+export function streamProvision(
+  body: unknown,
+  h: { log: (text: string) => void; end: () => void; error: (message: string) => void },
+): () => void {
+  const ctrl = new AbortController()
+  void (async () => {
+    let resp: Response
+    try {
+      resp = await fetch('/api/clusters/provision', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify(body),
+        signal: ctrl.signal,
+      })
+    } catch (e) {
+      if (!ctrl.signal.aborted) h.error(e instanceof Error ? e.message : 'Could not start provisioning.')
+      return
+    }
+    if (!resp.ok || !resp.body) {
+      h.error(`Provisioning failed to start (${resp.status}).`)
+      return
+    }
+
+    const reader = resp.body.getReader()
+    const dec = new TextDecoder()
+    let buf = ''
+    try {
+      for (;;) {
+        const { value, done } = await reader.read()
+        if (done) break
+        buf += dec.decode(value, { stream: true })
+        // SSE frames are separated by a blank line.
+        let sep: number
+        while ((sep = buf.indexOf('\n\n')) >= 0) {
+          const frame = buf.slice(0, sep)
+          buf = buf.slice(sep + 2)
+          let event = 'message'
+          let data = ''
+          for (const line of frame.split('\n')) {
+            if (line.startsWith('event:')) event = line.slice(6).trim()
+            else if (line.startsWith('data:')) data += line.slice(5).trim()
+          }
+          if (!data) continue
+          if (event === 'log') h.log(JSON.parse(data).text)
+          else if (event === 'end') h.end()
+          else if (event === 'error') h.error(JSON.parse(data).message)
+        }
+      }
+    } catch (e) {
+      if (!ctrl.signal.aborted) h.error(e instanceof Error ? e.message : 'The provisioning stream failed.')
+    }
+  })()
+  return () => ctrl.abort()
+}
+
 export function openExec(
   env: string,
   id: string,

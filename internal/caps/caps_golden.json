@@ -64,6 +64,11 @@
     "bit": 7,
     "scope": "global"
   },
+  "clusters.provision": {
+    "ns": "admin",
+    "bit": 10,
+    "scope": "global"
+  },
   "sshkeys.view": {
     "ns": "sshkeys",
     "bit": 0,

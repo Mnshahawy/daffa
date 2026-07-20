@@ -177,6 +177,8 @@ var (
 	ClustersEdit = Cap{NSAdmin, 1 << 7}
 	LoggingView  = Cap{NSAdmin, 1 << 8}
 	LoggingEdit  = Cap{NSAdmin, 1 << 9}
+
+	ClustersProvision = Cap{NSAdmin, 1 << 10}
 )
 
 // MaxBit is the highest bit a capability may occupy WITHIN a namespace.
@@ -383,6 +385,11 @@ var All = []Def{
 	{SettingsView, "settings.view", "settings", ModeView, ScopeGlobal, "See identity provider and notification settings. Never secrets."},
 	{SettingsEdit, "settings.edit", "settings", ModeEdit, ScopeGlobal, "Add, edit and remove identity providers, role mappings and notification rules."},
 
+	// Running a root setup script on a machine is a strictly larger power than registering a
+	// connection to it, so it is its own capability, global-only. It installs Docker (and the
+	// Compose plugin) on a bare machine over SSH — nothing else; Daffa holds no build-tooling
+	// opinion (docs/clusters.md §8).
+	{ClustersProvision, "clusters.provision", "clusters", ModeStandalone, ScopeGlobal, "Run Daffa's setup script on a machine over SSH — installing Docker on a bare host. A root command on someone else's box, so it is fleet-wide and separate from adding a cluster."},
 	{ClustersView, "clusters.view", "clusters", ModeView, ScopeEnv, "See a cluster and its disk usage. Without this, a cluster is invisible — it does not appear in the switcher at all."},
 	// Enrolling a cluster is how it comes to EXIST, so it cannot be scoped to one.
 	{ClustersEdit, "clusters.edit", "clusters", ModeEdit, ScopeGlobal, "Rename clusters, and enroll or revoke agents. An agent brings a new machine Daffa can reach — so this is fleet-wide."},

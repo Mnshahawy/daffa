@@ -187,6 +187,7 @@ export interface SSHClusterRequest {
 export interface SSHConnectionTest {
   ok: boolean
   error?: string
+  reachable: boolean
   server_version?: string
   os?: string
   arch?: string
@@ -262,6 +263,9 @@ export interface Agent {
 
 export interface CreateAgentRequest {
   name: string
+  cluster?: string
+  role?: string
+  advertise_addr?: string
 }
 
 export interface NewAgent {
@@ -362,6 +366,20 @@ export interface ClusterNode {
 
 export interface ScaleRequest {
   replicas: number | null
+}
+
+export interface AddNodeRequest {
+  name?: string
+  host?: string
+  port?: number
+  user?: string
+  key_id?: string
+  endpoint?: string
+  role?: string
+}
+
+export interface AddNodeResponse {
+  node_id: string
 }
 
 export interface NodeUpdateRequest {
@@ -1313,6 +1331,7 @@ export const daffa = {
     api.put<LogConfig>(`/api/clusters/${cluster}/logging`, body),
   clearHostLogConfig: (cluster: string) => api.del<void>(`/api/clusters/${cluster}/logging`),
   agents: () => api.get<Agent[]>('/api/agents'),
+  createAgent: (body: CreateAgentRequest) => api.post<NewAgent>('/api/agents', body),
   deleteAgent: (id: string) => api.del<StatusResponse>(`/api/agents/${id}`),
   containers: (cluster: string) => api.get<Container[]>(`/api/clusters/${cluster}/containers`),
   services: (cluster: string) => api.get<Service[]>(`/api/clusters/${cluster}/services`),
@@ -1327,6 +1346,8 @@ export const daffa = {
     api.post<StatusResponse>(`/api/clusters/${cluster}/services/${id}/rollback`),
   removeService: (cluster: string, id: string) =>
     api.del<StatusResponse>(`/api/clusters/${cluster}/services/${id}`),
+  addNode: (cluster: string, body: AddNodeRequest) =>
+    api.post<AddNodeResponse>(`/api/clusters/${cluster}/nodes`, body),
   updateNode: (cluster: string, id: string, body: NodeUpdateRequest) =>
     api.patch<StatusResponse>(`/api/clusters/${cluster}/nodes/${id}`, body),
   joinTokens: (cluster: string) => api.get<JoinTokens>(`/api/clusters/${cluster}/swarm/tokens`),

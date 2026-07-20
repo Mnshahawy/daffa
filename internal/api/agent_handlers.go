@@ -13,6 +13,7 @@ import (
 	"github.com/hashicorp/yamux"
 
 	"github.com/Mnshahawy/daffa/internal/auth"
+	"github.com/Mnshahawy/daffa/internal/caps"
 	"github.com/Mnshahawy/daffa/internal/dockerx"
 	"github.com/Mnshahawy/daffa/internal/httpx"
 	"github.com/Mnshahawy/daffa/internal/store"
@@ -225,6 +226,14 @@ func (s *Server) connectAgent(ctx context.Context, agent *store.Agent, version s
 		return nil, nil, err
 	}
 
+	// If the agent was enrolled TO a cluster, join its daemon to that cluster's Swarm over the
+	// tunnel — Daffa issues SwarmJoin, nobody runs it by hand (docs/clusters.md §5, §14.2). It runs
+	// before reconcile so that the very next reconcile discovers the new membership and files the
+	// node under the cluster, the same path an SSH node takes.
+	if agent.JoinEnvID != "" {
+		s.joinAgentToCluster(ctx, agent, mustNode(s.pool, env.ID, node.ID))
+	}
+
 	// Ask the daemon what it is, now that we can. A node that turns out to be part of a Swarm we
 	// already know is attached to that Swarm's environment here — which is the whole of "membership
 	// is discovered, never asserted": the agent never told us, and could not have.
@@ -251,6 +260,55 @@ func mustNode(pool *dockerx.Pool, envID, nodeID string) *dockerx.Node {
 		return nil
 	}
 	return n
+}
+
+// joinAgentToCluster issues SwarmJoin through the agent's own tunnel client, so the machine joins
+// the cluster it was enrolled to without anybody running `docker swarm join`. It never fails the
+// connection: a machine that cannot join (ports closed, target gone) stays connected as it is, and
+// the failure is logged and audited rather than dropping the agent. Reconcile does the placement.
+func (s *Server) joinAgentToCluster(ctx context.Context, agent *store.Agent, node *dockerx.Node) {
+	if node == nil {
+		return
+	}
+	// Already in a Swarm? Then it has joined (this is a reconnect, or a manual join) and reconcile
+	// will place it. Re-issuing SwarmJoin on a member just errors, so skip.
+	if info, err := node.Swarm(ctx); err == nil && info.InSwarm {
+		return
+	}
+
+	penv, err := s.pool.Get(agent.JoinEnvID)
+	if err != nil || !penv.IsSwarm() {
+		slog.Warn("agent join target is not a connected swarm", "agent", agent.ID, "cluster", agent.JoinEnvID)
+		return
+	}
+	control, err := penv.Control()
+	if err != nil {
+		slog.Warn("agent join: cluster has no reachable manager", "cluster", agent.JoinEnvID, "err", err)
+		return
+	}
+	tokens, err := control.SwarmJoinTokens(ctx)
+	if err != nil || tokens.Addr == "" {
+		slog.Warn("agent join: no join token or manager address", "cluster", agent.JoinEnvID, "err", err)
+		return
+	}
+	token := tokens.Worker
+	if agent.JoinRole == "manager" {
+		token = tokens.Manager
+	}
+
+	// AdvertiseAddr is the node's own reachable address, empty ⇒ Docker auto-detects on the node.
+	if err := node.SwarmJoin(ctx, tokens.Addr, token, agent.JoinAdvertiseAddr); err != nil {
+		slog.Error("agent SwarmJoin failed", "agent", agent.ID, "cluster", agent.JoinEnvID, "err", err)
+		s.audit(ctx, store.AuditEntry{
+			EnvID: agent.JoinEnvID, Action: "node.join", Target: agent.Name, Outcome: "error",
+			Detail: store.AuditDetail(map[string]string{"transport": "agent", "error": err.Error()}),
+		})
+		return
+	}
+	s.audit(ctx, store.AuditEntry{
+		EnvID: agent.JoinEnvID, Action: "node.join", Target: agent.Name, Outcome: "ok",
+		Detail: store.AuditDetail(map[string]string{"transport": "agent", "role": agent.JoinRole}),
+	})
 }
 
 func (s *Server) disconnectAgent(agentID, envID, nodeID string, session *yamux.Session) {
@@ -319,6 +377,12 @@ func (s *Server) handleListAgents(w http.ResponseWriter, r *http.Request) {
 
 type createAgentRequest struct {
 	Name string `json:"name"`
+	// Cluster, when set, is the environment whose Swarm this agent's machine joins on connect —
+	// Daffa issues the join over the tunnel (docs/clusters.md §5). Empty means the agent is its own
+	// standalone cluster, the original behaviour.
+	Cluster       string `json:"cluster"`
+	Role          string `json:"role"`           // worker (default) | manager
+	AdvertiseAddr string `json:"advertise_addr"` // the node's reachable overlay address; optional
 }
 
 // newAgentResponse is the enrolment answer. The join token appears here and never again —
@@ -344,7 +408,38 @@ func (s *Server) handleCreateAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	agent := &store.Agent{Name: req.Name}
+	// An agent adds a NODE to a cluster's Swarm (docs/clusters.md §1), so it must name the cluster
+	// it joins, and that cluster must already be a Swarm — the same rule the SSH add-node path
+	// follows. Daffa issues the join over the tunnel when the agent connects; the operator never
+	// runs `docker swarm join`.
+	if req.Cluster == "" {
+		httpx.BadRequest(w, r, "Choose the cluster this node joins.")
+		return
+	}
+	// The cluster is in the body, so no middleware checked it: adding a node takes nodes.edit at the
+	// target cluster, and the handler enforces that here (scopeBody, see TestBodyScopedRoutesAreKnown).
+	if !s.mayUseEnv(w, r, caps.NodesEdit, req.Cluster) {
+		return
+	}
+	penv, err := s.pool.Get(req.Cluster)
+	if err != nil {
+		httpx.Fail(w, r, http.StatusNotFound, "no_such_cluster", "That cluster is not connected.")
+		return
+	}
+	if !penv.IsSwarm() {
+		httpx.Fail(w, r, http.StatusBadRequest, "not_a_swarm",
+			"That cluster is a single standalone node. Make it a Swarm first, then add nodes to it.")
+		return
+	}
+	role := req.Role
+	if role != "manager" {
+		role = "worker"
+	}
+
+	agent := &store.Agent{
+		Name: req.Name, JoinEnvID: req.Cluster, JoinRole: role,
+		JoinAdvertiseAddr: strings.TrimSpace(req.AdvertiseAddr),
+	}
 	if u, ok := auth.UserFrom(r.Context()); ok {
 		agent.CreatedBy = u.ID
 	}

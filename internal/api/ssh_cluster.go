@@ -252,19 +252,22 @@ func (s *Server) sshDialConfig(ctx context.Context, node *store.Node) (sshx.Dial
 type sshClusterRequest struct {
 	Name     string `json:"name"`
 	Host     string `json:"host"`
-	Port     int    `json:"port"`      // 0 ⇒ 22
-	User     string `json:"user"`      // the SSH user; needs Docker-socket access on the target
-	KeyID    string `json:"key_id"`    // an ssh_keys id
-	Endpoint string `json:"endpoint"`  // remote Docker endpoint; "" ⇒ unix:///var/run/docker.sock
-	HostKey  string `json:"host_key"`  // optional pin; "" ⇒ trust on first use
+	Port     int    `json:"port"`     // 0 ⇒ 22
+	User     string `json:"user"`     // the SSH user; needs Docker-socket access on the target
+	KeyID    string `json:"key_id"`   // an ssh_keys id
+	Endpoint string `json:"endpoint"` // remote Docker endpoint; "" ⇒ unix:///var/run/docker.sock
+	HostKey  string `json:"host_key"` // optional pin; "" ⇒ trust on first use
 }
 
 // sshTestResponse is a diagnostic, not an API outcome: it comes back 200 whether the dial worked
 // or not, so the wizard renders pass/fail inline. On success it echoes what the daemon reports, so
 // the operator can confirm they reached the machine they meant to.
 type sshTestResponse struct {
-	OK            bool   `json:"ok"`
-	Error         string `json:"error,omitempty"`
+	OK    bool   `json:"ok"`
+	Error string `json:"error,omitempty"`
+	// Reachable is true when the SSH connection itself succeeded, even if Docker did not answer —
+	// which is exactly when the wizard offers to install Docker (provisioning).
+	Reachable     bool   `json:"reachable"`
 	ServerVersion string `json:"server_version,omitempty"`
 	OS            string `json:"os,omitempty"`
 	Arch          string `json:"arch,omitempty"`
@@ -324,14 +327,14 @@ func (s *Server) handleTestSSHConnection(w http.ResponseWriter, r *http.Request)
 	info, err := dockerx.Probe(ctx, sshx.SocketDialer(client, req.Endpoint))
 	if err != nil {
 		httpx.JSON(w, http.StatusOK, sshTestResponse{
-			OK: false, HostKey: pinned,
+			OK: false, Reachable: true, HostKey: pinned,
 			Error: "Reached the machine over SSH, but its Docker daemon did not answer at " +
 				endpointOrDefault(req.Endpoint) + ": " + err.Error(),
 		})
 		return
 	}
 	httpx.JSON(w, http.StatusOK, sshTestResponse{
-		OK: true, ServerVersion: info.ServerVersion, OS: info.OS, Arch: info.Arch, HostKey: pinned,
+		OK: true, Reachable: true, ServerVersion: info.ServerVersion, OS: info.OS, Arch: info.Arch, HostKey: pinned,
 	})
 }
 
@@ -391,6 +394,139 @@ func (s *Server) handleCreateSSHCluster(w http.ResponseWriter, r *http.Request) 
 		}),
 	})
 	httpx.JSON(w, http.StatusOK, sshClusterCreatedResponse{ID: env.ID, NodeID: node.ID})
+}
+
+type addNodeRequest struct {
+	Name     string `json:"name"`
+	Host     string `json:"host"`
+	Port     int    `json:"port"`
+	User     string `json:"user"`
+	KeyID    string `json:"key_id"`
+	Endpoint string `json:"endpoint"`
+	Role     string `json:"role"` // worker (default) | manager
+}
+
+type addNodeResponse struct {
+	NodeID string `json:"node_id"`
+}
+
+// swarmPortsHelp is the exact reachability a join needs, printed on failure. Daffa cannot open a
+// cloud security group and cannot probe node→manager over the Docker API (there is no shell on the
+// node, by design), so the join itself is the test — and a failed join names the ports rather than
+// leaving the operator guessing (docs/clusters.md §5).
+const swarmPortsHelp = "A Swarm join needs, between the new node and the manager: 2377/tcp " +
+	"(cluster management), 7946/tcp and 7946/udp (node discovery), and 4789/udp (the overlay). " +
+	"Open these in both directions — Daffa cannot open a firewall for you — and try again."
+
+// handleAddNode attaches a machine to the selected cluster's Swarm over SSH: Daffa reads the join
+// token and manager address from the cluster's manager, dials the new machine, and issues SwarmJoin
+// itself — nobody runs `docker swarm join` by hand (docs/clusters.md §5). The node's advertise
+// address is set to its own reachable host, the fix for the overlay black-hole we hit manually.
+func (s *Server) handleAddNode(w http.ResponseWriter, r *http.Request) {
+	envID := r.PathValue("cluster")
+
+	var req addNodeRequest
+	if err := httpx.Decode(w, r, &req); err != nil {
+		httpx.BadRequest(w, r, err.Error())
+		return
+	}
+	req.Host, req.User = strings.TrimSpace(req.Host), strings.TrimSpace(req.User)
+	if req.Host == "" || req.User == "" || req.KeyID == "" {
+		httpx.BadRequest(w, r, "A host, a user and an SSH key are required.")
+		return
+	}
+	token := "" // resolved from the cluster's join tokens below, by role
+	manager := req.Role == "manager"
+
+	// The target must already be a Swarm — a node joins a Swarm, and a standalone cluster is not one
+	// yet. Initialising it needs a reachable advertise address for ITS manager, which is a separate
+	// action (the Cluster page's "Make this a Swarm manager"), so this refuses rather than guesses.
+	penv, err := s.pool.Get(envID)
+	if err != nil {
+		httpx.Fail(w, r, http.StatusNotFound, "no_such_cluster", "That cluster is not connected.")
+		return
+	}
+	if !penv.IsSwarm() {
+		httpx.Fail(w, r, http.StatusBadRequest, "not_a_swarm",
+			"This cluster is a single standalone node. Make it a Swarm first (on the Cluster page), then add nodes to it.")
+		return
+	}
+	control, err := penv.Control()
+	if err != nil {
+		httpx.Fail(w, r, http.StatusBadGateway, "no_manager",
+			"The cluster has no reachable Swarm manager to read a join token from.")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	tokens, err := control.SwarmJoinTokens(ctx)
+	if err != nil {
+		httpx.Fail(w, r, http.StatusBadGateway, "join_token_unavailable", err.Error())
+		return
+	}
+	if tokens.Addr == "" {
+		httpx.Fail(w, r, http.StatusBadGateway, "no_manager_addr",
+			"The cluster's manager reports no advertised address, so a node cannot be told where to join.")
+		return
+	}
+	if manager {
+		token = tokens.Manager
+	} else {
+		token = tokens.Worker
+	}
+
+	// Dial the new machine and issue the join. The connection is a throwaway — its lasting one is
+	// opened by the connect loop after the node is persisted, like an added cluster's.
+	client, pinned, err := s.dialForRequest(ctx, sshClusterRequest{
+		Host: req.Host, Port: req.Port, User: req.User, KeyID: req.KeyID,
+	})
+	if err != nil {
+		httpx.Fail(w, r, http.StatusBadRequest, "ssh_unreachable", friendlySSHError(err))
+		return
+	}
+	dial := sshx.SocketDialer(client, req.Endpoint)
+	// AdvertiseAddr = the host we reached it at — the reachable address, not its private NIC.
+	joinErr := dockerx.SwarmJoinVia(ctx, dial, tokens.Addr, token, req.Host)
+	client.Close()
+	if joinErr != nil {
+		httpx.Fail(w, r, http.StatusBadGateway, "join_failed",
+			"The machine could not join the Swarm: "+joinErr.Error()+". "+swarmPortsHelp)
+		return
+	}
+
+	// Joined. Persist it in THIS cluster's environment (not a new one) and let the connect loop
+	// bring up its lasting connection; reconcile then confirms the membership the daemon reports.
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		name = req.Host
+	}
+	node := &store.Node{
+		EnvID: envID, Name: name, Kind: "ssh",
+		SSHHost: req.Host, SSHPort: req.Port, SSHUser: req.User, SSHKeyID: req.KeyID,
+		SSHEndpoint: strings.TrimSpace(req.Endpoint), SSHHostKey: pinned,
+	}
+	if err := s.store.CreateNode(r.Context(), node); err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	s.ensureSSHLoop(node.ID)
+
+	s.audit(r.Context(), store.AuditEntry{
+		EnvID: envID, Action: "node.join", Target: name, Outcome: "ok",
+		Detail: store.AuditDetail(map[string]string{
+			"transport": "ssh", "host": req.Host, "role": nodeRole(manager),
+		}),
+	})
+	httpx.JSON(w, http.StatusOK, addNodeResponse{NodeID: node.ID})
+}
+
+func nodeRole(manager bool) string {
+	if manager {
+		return "manager"
+	}
+	return "worker"
 }
 
 // handleDeleteCluster removes an SSH cluster: stop its connect loop, drop it from the pool, and

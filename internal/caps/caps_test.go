@@ -132,7 +132,7 @@ func TestGlobalOnlyCapsAreNotEnvScopable(t *testing.T) {
 	// "may edit users, on staging" has no meaning to be got right.
 	for _, name := range []string{
 		"users.view", "users.edit", "roles.view", "roles.edit",
-		"settings.view", "settings.edit", "clusters.edit",
+		"settings.view", "settings.edit", "clusters.edit", "clusters.provision",
 	} {
 		c, ok := ByName(name)
 		if !ok {

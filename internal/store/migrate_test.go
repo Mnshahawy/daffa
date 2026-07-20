@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -132,6 +133,65 @@ func TestMigrate0007DropsGitCredKeyColumns(t *testing.T) {
 	}
 	if got, err := s.GitCredentialByID(ctx, fresh.ID); err != nil || got.SSHKeyID != "sshkey_x" {
 		t.Fatalf("fresh cred SSHKeyID = %q, err %v; want sshkey_x", got.SSHKeyID, err)
+	}
+}
+
+// 0008 gives an agent a join target — which cluster's Swarm it joins on connect — as a real
+// foreign key. A pre-existing agent must survive the migration with a NULL (standalone) target, and
+// the foreign key must actually bite: removing the cluster an agent targets takes the agent with it.
+func TestMigrate0008AgentJoinTarget(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	url := "sqlite://" + filepath.Join(dir, "test.db")
+
+	stopAfter = "0007_gitcred_ssh_key_ref"
+	defer func() { stopAfter = "" }()
+
+	s, err := Open(ctx, url)
+	if err != nil {
+		t.Fatalf("open at 0007: %v", err)
+	}
+	defer s.Close()
+
+	// A 0007-era agent — no join columns yet.
+	if _, err := s.db.ExecContext(ctx, s.rebind(`INSERT INTO agents
+        (id, name, token_hash, version, last_seen_at, created_at, created_by)
+        VALUES ('ag_legacy', 'old', NULL, '', NULL, ?, NULL)`), ts(now())); err != nil {
+		t.Fatalf("insert 0007-era agent: %v", err)
+	}
+
+	stopAfter = ""
+	if err := s.migrate(ctx); err != nil {
+		t.Fatalf("migrating to 0008: %v", err)
+	}
+
+	// The pre-existing agent survives, standalone (no target), with the defaulted role.
+	got, err := s.AgentByID(ctx, "ag_legacy")
+	if err != nil {
+		t.Fatalf("reading migrated agent: %v", err)
+	}
+	if got.JoinEnvID != "" || got.JoinRole != "worker" {
+		t.Errorf("migrated agent has unexpected join fields: %+v", got)
+	}
+
+	// A new agent targeting a cluster round-trips, and the FK cascade removes it with the cluster.
+	env := &Environment{Name: "prod"}
+	if err := s.CreateEnvironment(ctx, env); err != nil {
+		t.Fatal(err)
+	}
+	ag := &Agent{Name: "worker-1", JoinEnvID: env.ID, JoinRole: "worker"}
+	if err := s.CreateAgent(ctx, ag); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.AgentByID(ctx, ag.ID); err != nil || got.JoinEnvID != env.ID {
+		t.Fatalf("targeted agent JoinEnvID = %q, err %v; want %q", got.JoinEnvID, err, env.ID)
+	}
+
+	if err := s.DeleteEnvironment(ctx, env.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AgentByID(ctx, ag.ID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("removing the cluster should cascade-delete its agent; got err %v", err)
 	}
 }
 

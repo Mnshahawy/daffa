@@ -699,6 +699,82 @@
         }
       }
     },
+    "/api/clusters/provision": {
+      "post": {
+        "operationId": "postClustersProvision",
+        "tags": [
+          "clusters"
+        ],
+        "summary": "Install Docker on a machine over SSH (server-sent events)",
+        "description": "Installs Docker on a bare machine over SSH, streaming the setup log. Running a root script on someone else's box is a strictly larger power than registering a connection, so it has its own capability (docs/clusters.md §8, §14.3). SSE.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
+        "x-daffa-capability": "clusters.provision",
+        "x-daffa-scope": "global",
+        "requestBody": {
+          "description": "Request bodies are capped at 1 MiB; unknown fields are refused.",
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SSHClusterRequest"
+              },
+              "example": {
+                "host": "10.0.0.9",
+                "user": "root",
+                "key_id": "sshkey_…"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "A stream of server-sent events.",
+            "content": {
+              "text/event-stream": {}
+            }
+          },
+          "400": {
+            "description": "The request is wrong, and the message says how to fix it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No live session or valid token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but the capability is not held at the required scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something went wrong on the server; the audit log has the details.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/clusters/{cluster}": {
       "delete": {
         "operationId": "deleteCluster",
@@ -1267,14 +1343,14 @@
         }
       },
       "post": {
-        "operationId": "postAgents",
+        "operationId": "createAgent",
         "tags": [
           "clusters"
         ],
-        "summary": "Create an agent and mint its one-time join token",
-        "description": "Declares an agent and mints its one-time join token. The token is in this response and never anywhere else — it exists only in the operator's clipboard.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
-        "x-daffa-capability": "clusters.edit",
-        "x-daffa-scope": "global",
+        "summary": "Create an agent for a cluster and mint its one-time join token",
+        "description": "Declares an agent for a cluster and mints its one-time join token. The token is in this response and never anywhere else — it exists only in the operator's clipboard. When the agent connects, Daffa joins its machine to the named cluster's Swarm (docs/clusters.md §5). Adding a node is nodes.edit at the target cluster, like the SSH add-node path — the cluster is in the BODY, so the handler checks it via s.mayUseEnv (scopeBody, pinned by a test).\n\nThe target cluster arrives in the request body; the handler checks the capability there after decoding.",
+        "x-daffa-capability": "nodes.edit",
+        "x-daffa-scope": "body",
         "requestBody": {
           "description": "Request bodies are capped at 1 MiB; unknown fields are refused.",
           "required": true,
@@ -1284,7 +1360,9 @@
                 "$ref": "#/components/schemas/CreateAgentRequest"
               },
               "example": {
-                "name": "prod-worker-2"
+                "name": "prod-worker-2",
+                "cluster": "env_…",
+                "role": "worker"
               }
             }
           }
@@ -1312,16 +1390,6 @@
           },
           "401": {
             "description": "No live session or valid token.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Signed in, but the capability is not held at the required scope.",
             "content": {
               "application/json": {
                 "schema": {
@@ -2447,6 +2515,95 @@
             }
           }
         }
+      },
+      "post": {
+        "operationId": "addNode",
+        "tags": [
+          "images, networks, volumes"
+        ],
+        "summary": "Add a node to this cluster's Swarm over SSH",
+        "description": "Node operations are their own capability. Draining a machine moves EVERYBODY's workload; scaling one service moves one. An operator trusted with the second has not thereby been trusted with the first. Attaches a machine to THIS cluster's Swarm over SSH: Daffa reads the join token from the manager and issues SwarmJoin itself, setting the new node's advertise address to its own reachable host — nobody runs `docker swarm join` by hand (docs/clusters.md §5).\n\nRequires the capability at the cluster named in the path.",
+        "x-daffa-capability": "nodes.edit",
+        "x-daffa-scope": "env",
+        "requestBody": {
+          "description": "Request bodies are capped at 1 MiB; unknown fields are refused.",
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddNodeRequest"
+              },
+              "example": {
+                "host": "10.0.0.10",
+                "user": "daffa",
+                "key_id": "sshkey_…",
+                "role": "worker"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AddNodeResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is wrong, and the message says how to fix it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No live session or valid token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but the capability is not held at the required scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Nothing lives at that id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something went wrong on the server; the audit log has the details.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/clusters/{cluster}/services/{id}/scale": {
@@ -2672,7 +2829,7 @@
           "images, networks, volumes"
         ],
         "summary": "Change a machine's availability or role in the swarm",
-        "description": "Node operations are their own capability. Draining a machine moves EVERYBODY's workload; scaling one service moves one. An operator trusted with the second has not thereby been trusted with the first. Say what to change: an availability (active|pause|drain) or a role (manager|worker) — one per request.\n\nRequires the capability at the cluster named in the path.",
+        "description": "Say what to change: an availability (active|pause|drain) or a role (manager|worker) — one per request.\n\nRequires the capability at the cluster named in the path.",
         "x-daffa-capability": "nodes.edit",
         "x-daffa-scope": "env",
         "parameters": [
@@ -12271,6 +12428,9 @@
           "error": {
             "type": "string"
           },
+          "reachable": {
+            "type": "boolean"
+          },
           "server_version": {
             "type": "string"
           },
@@ -12285,7 +12445,8 @@
           }
         },
         "required": [
-          "ok"
+          "ok",
+          "reachable"
         ]
       },
       "CreatedCluster": {
@@ -12541,6 +12702,15 @@
         "type": "object",
         "properties": {
           "name": {
+            "type": "string"
+          },
+          "cluster": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "advertise_addr": {
             "type": "string"
           }
         },
@@ -12908,6 +13078,44 @@
           "replicas"
         ],
         "additionalProperties": false
+      },
+      "AddNodeRequest": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "host": {
+            "type": "string"
+          },
+          "port": {
+            "type": "integer"
+          },
+          "user": {
+            "type": "string"
+          },
+          "key_id": {
+            "type": "string"
+          },
+          "endpoint": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AddNodeResponse": {
+        "type": "object",
+        "properties": {
+          "node_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "node_id"
+        ]
       },
       "NodeUpdateRequest": {
         "type": "object",

@@ -14,7 +14,7 @@
 import type { CapSet } from './caps'
 // Type-only: migrated interfaces are referenced back from the generated file. A type
 // import adds no runtime edge, so the evaluation-order story in the header holds.
-import type { CertAuthority, Certificate, Deployment, EnvVarItem, NewAgent, StackSecretItem, Stats, User } from './api'
+import type { CertAuthority, Certificate, Deployment, EnvVarItem, StackSecretItem, Stats, User } from './api'
 import { api } from './api'
 import { nodeQuery } from './api-helpers'
 
@@ -218,7 +218,6 @@ export const manualDaffa = {
 
   renewCert: (id: string, rotateKey = false) =>
     api.post<Certificate>(`/api/certs/${id}/renew`, { rotate_key: rotateKey }),
-  createAgent: (name: string) => api.post<NewAgent>('/api/agents', { name }),
   metrics: (env: string, params: { range: MetricRange; container?: string; stack?: string }) => {
     const q = new URLSearchParams({ range: params.range })
     if (params.container) q.set('container', params.container)

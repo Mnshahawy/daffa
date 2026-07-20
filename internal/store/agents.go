@@ -16,21 +16,30 @@ type Agent struct {
 	LastSeenAt time.Time
 	CreatedAt  time.Time
 	CreatedBy  string
+
+	// Join target: which Swarm this agent's daemon should join when it connects, and how. All
+	// empty means the agent is its own standalone cluster (the original behaviour). See
+	// docs/clusters.md §5 and the orchestration in connectAgent.
+	JoinEnvID         string
+	JoinRole          string // worker | manager
+	JoinAdvertiseAddr string // the node's reachable address for the overlay; '' ⇒ auto-detect
 }
 
 // Enrolled reports whether the agent has ever exchanged its join token for a real one.
 func (a *Agent) Enrolled() bool { return a.TokenHash != "" }
 
-const agentCols = `id, name, token_hash, version, last_seen_at, created_at, created_by`
+const agentCols = `id, name, token_hash, version, last_seen_at, created_at, created_by,
+    join_env_id, join_role, join_advertise_addr`
 
 func scanAgent(sc interface{ Scan(...any) error }) (*Agent, error) {
 	var a Agent
-	var tokenHash, lastSeen, createdBy sql.NullString
+	var tokenHash, lastSeen, createdBy, joinEnvID sql.NullString
 	var createdAt string
-	if err := sc.Scan(&a.ID, &a.Name, &tokenHash, &a.Version, &lastSeen, &createdAt, &createdBy); err != nil {
+	if err := sc.Scan(&a.ID, &a.Name, &tokenHash, &a.Version, &lastSeen, &createdAt, &createdBy,
+		&joinEnvID, &a.JoinRole, &a.JoinAdvertiseAddr); err != nil {
 		return nil, err
 	}
-	a.TokenHash, a.CreatedBy = tokenHash.String, createdBy.String
+	a.TokenHash, a.CreatedBy, a.JoinEnvID = tokenHash.String, createdBy.String, joinEnvID.String
 	a.CreatedAt = parseTS(createdAt)
 	if lastSeen.Valid {
 		a.LastSeenAt = parseTS(lastSeen.String)
@@ -45,9 +54,13 @@ func (s *Store) CreateAgent(ctx context.Context, a *Agent) error {
 	if a.CreatedAt.IsZero() {
 		a.CreatedAt = now()
 	}
+	if a.JoinRole == "" {
+		a.JoinRole = "worker"
+	}
 	_, err := s.exec(ctx, `INSERT INTO agents (`+agentCols+`)
-        VALUES (?, ?, NULL, '', NULL, ?, ?)`,
-		a.ID, a.Name, ts(a.CreatedAt), nullStr(a.CreatedBy))
+        VALUES (?, ?, NULL, '', NULL, ?, ?, ?, ?, ?)`,
+		a.ID, a.Name, ts(a.CreatedAt), nullStr(a.CreatedBy),
+		nullStr(a.JoinEnvID), a.JoinRole, a.JoinAdvertiseAddr)
 	if err != nil {
 		return fmt.Errorf("store: creating agent: %w", err)
 	}
