@@ -41,12 +41,28 @@ const registryProviders: RegistryProvider[] = [
 
 const chosenProvider = ref<RegistryProvider | null>(null)
 
+const nameFor = (p: RegistryProvider) => (p.id === 'selfhosted' ? '' : p.id)
+
+// What the LAST provider suggested for url/name. Switching Docker Hub→GHCR has to move those from
+// docker.io/dockerhub to ghcr.io/ghcr; without remembering the previous suggestion the only options
+// are to clobber a value the user typed on purpose, or (the bug this fixes) to leave Docker Hub's
+// host sitting under a GHCR selection. So: follow the suggestion until it has been hand-edited. Same
+// approach as the IdP presets in AuthenticationView.
+const providerSuggestion = ref({ url: '', name: '' })
+
 function pickProvider(p: RegistryProvider) {
-  chosenProvider.value = chosenProvider.value?.id === p.id ? null : p
-  if (!chosenProvider.value) return
-  // Fill, don't overwrite: a host or name someone already typed is theirs.
-  if (p.host && !form.value.url) form.value.url = p.host
-  if (!form.value.name) form.value.name = p.id === 'selfhosted' ? '' : p.id
+  // A re-click toggles the selection off; leave the form as-is so a half-typed credential survives.
+  if (chosenProvider.value?.id === p.id) {
+    chosenProvider.value = null
+    return
+  }
+  chosenProvider.value = p
+  // Fill url/name, but overwrite only when they are still empty or still hold the PREVIOUS
+  // provider's suggestion — a host or name someone typed on purpose is theirs.
+  if (!form.value.url || form.value.url === providerSuggestion.value.url) form.value.url = p.host
+  if (!form.value.name || form.value.name === providerSuggestion.value.name)
+    form.value.name = nameFor(p)
+  providerSuggestion.value = { url: p.host, name: nameFor(p) }
 }
 
 const create = useMutation({
@@ -66,6 +82,7 @@ const create = useMutation({
     }
     form.value = { name: '', url: '', username: '', password: '' }
     chosenProvider.value = null
+    providerSuggestion.value = { url: '', name: '' }
     toast.ok('Registry added.')
     qc.invalidateQueries({ queryKey: ['registries'] })
   },

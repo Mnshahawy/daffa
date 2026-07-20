@@ -69,11 +69,26 @@ const selfHost = ref('')
 const keyStatus = ref<{ ok: boolean; verified: boolean; message: string } | null>(null)
 const fetchingKeys = ref(false)
 
+const nameFor = (p: GitProvider) => (p.id === 'selfhosted' ? '' : `${p.label} deploy`)
+
+// What the LAST provider suggested for the name. Without remembering it, switching GitHub→GitLab
+// leaves "GitHub deploy" sitting under a GitLab selection (the bug this fixes): the field is no
+// longer empty, so a plain fill-if-empty check skips it. Follow the suggestion until it has been
+// hand-edited — the same approach as the IdP presets in AuthenticationView.
+const providerSuggestion = ref('')
+
 function pickProvider(p: GitProvider) {
-  chosenProvider.value = chosenProvider.value?.id === p.id ? null : p
   keyStatus.value = null
-  if (!chosenProvider.value) return
-  if (!form.value.name) form.value.name = p.id === 'selfhosted' ? '' : `${p.label} deploy`
+  // A re-click toggles the selection off; leave the form as-is so a half-typed credential survives.
+  if (chosenProvider.value?.id === p.id) {
+    chosenProvider.value = null
+    return
+  }
+  chosenProvider.value = p
+  // Overwrite the name only when it is still empty or still holds the PREVIOUS provider's
+  // suggestion — a name someone typed on purpose is theirs.
+  if (!form.value.name || form.value.name === providerSuggestion.value) form.value.name = nameFor(p)
+  providerSuggestion.value = nameFor(p)
   // A hosted provider knows its host, so pin its keys right away when the SSH path is in view.
   if (p.host && form.value.kind === 'ssh') fetchHostKeys(p.host)
 }
@@ -112,6 +127,7 @@ const create = useMutation({
     form.value = blank()
     adding.value = false
     chosenProvider.value = null
+    providerSuggestion.value = ''
     selfHost.value = ''
     keyStatus.value = null
     toast.ok('Credential saved.')
