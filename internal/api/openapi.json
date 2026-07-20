@@ -4422,6 +4422,114 @@
         }
       }
     },
+    "/api/stacks/{id}/env/{key}/reveal": {
+      "get": {
+        "operationId": "revealStackEnv",
+        "tags": [
+          "stacks"
+        ],
+        "summary": "Reveal one secret env var's plaintext (audited; needs secrets.reveal)",
+        "description": "The write-only rule's ONE gated exception (docs/secrets.md): reveal a single sealed value on demand. secrets.reveal is standalone — stacks.edit does not imply it — and each reveal is audited. scopeStack checks the cap at the stack's own env.\n\nRequires the capability at the stack's owning cluster. An unknown id and an unauthorized one both answer 404 — outsiders cannot distinguish them.",
+        "x-daffa-capability": "secrets.reveal",
+        "x-daffa-scope": "stack",
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RevealedValue"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No live session or valid token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown id — or one the caller may not see; the two are indistinguishable on purpose.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something went wrong on the server; the audit log has the details.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/stacks/{id}/secrets/{name}/reveal": {
+      "get": {
+        "operationId": "revealStackSecret",
+        "tags": [
+          "stacks"
+        ],
+        "summary": "Reveal one secret file's plaintext (audited; needs secrets.reveal)",
+        "description": "Requires the capability at the stack's owning cluster. An unknown id and an unauthorized one both answer 404 — outsiders cannot distinguish them.",
+        "x-daffa-capability": "secrets.reveal",
+        "x-daffa-scope": "stack",
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RevealedValue"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No live session or valid token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown id — or one the caller may not see; the two are indistinguishable on purpose.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something went wrong on the server; the audit log has the details.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/stacks/{id}/autodeploy": {
       "put": {
         "operationId": "setAutoDeploy",
@@ -13720,6 +13828,17 @@
         },
         "required": [
           "name"
+        ]
+      },
+      "RevealedValue": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "value"
         ]
       },
       "StackRequest": {

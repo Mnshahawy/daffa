@@ -789,6 +789,90 @@ func (s *Server) handleSetStackSecrets(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, statusResponse{Status: "ok"})
 }
 
+// ── revealing sealed values ──────────────────────────────────────────────────────
+//
+// The ONE deliberate exception to "sealed values are write-only through the API" (docs/secrets.md).
+// It exists because an operator sometimes genuinely needs to read a value back — to hand it to a
+// teammate, to check what is actually deployed — and the honest answer is a gated, audited reveal
+// rather than making them redeploy to find out or keep the value in a second place.
+//
+// Three things keep the crack narrow. It needs secrets.reveal, a STANDALONE capability nobody holds
+// by default and that stacks.edit does not imply — setting a value and reading every value already
+// there are different trusts. Each reveal is ONE value, on demand: the join-token posture, so
+// plaintext is fetched by an explicit act, never sitting decrypted on a page left open. And every
+// reveal is AUDITED with the key/name (never the value), so the plaintext leaving Daffa is always an
+// event with a person's name on it.
+
+// revealedValue is the plaintext of one sealed thing — a secret env var's value or a secret file's
+// content, both shaped the same on the wire.
+type revealedValue struct {
+	Value string `json:"value"`
+}
+
+func (s *Server) handleRevealStackEnv(w http.ResponseWriter, r *http.Request) {
+	stack, ok := s.stack(w, r)
+	if !ok {
+		return
+	}
+	key := r.PathValue("key")
+	rows, err := s.store.StackEnv(r.Context(), stack.ID)
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	for _, row := range rows {
+		if row.Key != key {
+			continue
+		}
+		plain, err := s.sealer.Open(row.ValueEnc)
+		if err != nil {
+			httpx.Fail(w, r, http.StatusInternalServerError, "unseal_failed",
+				"That value could not be decrypted — was the master key replaced?")
+			return
+		}
+		// Audited before the response: a reveal that reached the client but left no trace is the one
+		// failure this whole feature must not have.
+		s.audit(r.Context(), store.AuditEntry{
+			EnvID: stack.EnvID, Action: "stack.env.reveal", Target: stack.Name, Outcome: "ok",
+			Detail: store.AuditDetail(map[string]any{"key": key}), // the key, never the value
+		})
+		httpx.JSON(w, http.StatusOK, revealedValue{Value: plain})
+		return
+	}
+	httpx.Fail(w, r, http.StatusNotFound, "no_such_var", "This stack has no such variable.")
+}
+
+func (s *Server) handleRevealStackSecret(w http.ResponseWriter, r *http.Request) {
+	stack, ok := s.stack(w, r)
+	if !ok {
+		return
+	}
+	name := r.PathValue("name")
+	rows, err := s.store.StackSecrets(r.Context(), stack.ID)
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	for _, row := range rows {
+		if row.Name != name {
+			continue
+		}
+		plain, err := s.sealer.Open(row.ContentEnc)
+		if err != nil {
+			httpx.Fail(w, r, http.StatusInternalServerError, "unseal_failed",
+				"That secret could not be decrypted — was the master key replaced?")
+			return
+		}
+		s.audit(r.Context(), store.AuditEntry{
+			EnvID: stack.EnvID, Action: "stack.secret.reveal", Target: stack.Name, Outcome: "ok",
+			Detail: store.AuditDetail(map[string]any{"name": name}), // the name, never the content
+		})
+		httpx.JSON(w, http.StatusOK, revealedValue{Value: plain})
+		return
+	}
+	httpx.Fail(w, r, http.StatusNotFound, "no_such_secret", "This stack has no such secret.")
+}
+
 // validSecretName keeps a secret name to a safe filename: it becomes daffa-secrets/<name> in
 // the bundle and /run/secrets/<name> in the container, so a '/' or '..' could escape the
 // directory. stacks.BuildPlanned refuses those too; this is the legible, early refusal.

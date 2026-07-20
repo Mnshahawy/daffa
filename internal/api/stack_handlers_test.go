@@ -312,6 +312,66 @@ func TestSetStackSecretsAllowedOnSwarm(t *testing.T) {
 	}
 }
 
+// A sealed value is write-only EXCEPT through the reveal endpoints, which decrypt Daffa's own copy
+// and return it — the plaintext round-trips, and an unknown key/name is a 404, not an empty string.
+// Cap enforcement is the route guard's job (TestEveryRouteIsGuarded pins secrets.reveal on both);
+// this tests the handler's decrypt-and-return once past it.
+func TestRevealStackEnvAndSecret(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(ctx, "sqlite://"+filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	key, err := config.NewMasterKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealer, err := config.NewSealer(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{store: st, sealer: sealer, notify: notify.New(st, fakeSealer{}, slog.New(slog.DiscardHandler))}
+
+	env := &store.Environment{Name: "prod"}
+	if err := st.CreateEnvironment(ctx, env); err != nil {
+		t.Fatal(err)
+	}
+	stack := &store.Stack{EnvID: env.ID, Name: "web", Engine: "swarm", SourceKind: "inline",
+		InlineYAML: "services:\n  app:\n    image: nginx\n"}
+	if err := st.CreateStack(ctx, stack); err != nil {
+		t.Fatal(err)
+	}
+
+	envSealed, _ := sealer.Seal("s3cr3t-token")
+	if err := st.SetStackEnv(ctx, stack.ID, []store.StackEnv{{Key: "API_KEY", ValueEnc: envSealed, IsSecret: true}}); err != nil {
+		t.Fatal(err)
+	}
+	secSealed, _ := sealer.Seal("-----BEGIN PRIVATE KEY-----\n")
+	if err := st.SetStackSecrets(ctx, stack.ID, []store.StackSecret{{Name: "tls_key", ContentEnc: secSealed}}); err != nil {
+		t.Fatal(err)
+	}
+
+	reveal := func(h http.HandlerFunc, path, param, value string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.SetPathValue(param, value)
+		req = req.WithContext(withStack(ctx, stack))
+		rec := httptest.NewRecorder()
+		h(rec, req)
+		return rec
+	}
+
+	if rec := reveal(s.handleRevealStackEnv, "/api/stacks/"+stack.ID+"/env/API_KEY/reveal", "key", "API_KEY"); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "s3cr3t-token") {
+		t.Fatalf("reveal env: code %d body %s", rec.Code, rec.Body)
+	}
+	if rec := reveal(s.handleRevealStackSecret, "/api/stacks/"+stack.ID+"/secrets/tls_key/reveal", "name", "tls_key"); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "BEGIN PRIVATE KEY") {
+		t.Fatalf("reveal secret: code %d body %s", rec.Code, rec.Body)
+	}
+	if rec := reveal(s.handleRevealStackEnv, "/api/stacks/"+stack.ID+"/env/NOPE/reveal", "key", "NOPE"); rec.Code != http.StatusNotFound {
+		t.Fatalf("reveal unknown key: code %d, want 404", rec.Code)
+	}
+}
+
 // checkSecretRefs splits by engine: compose refuses any daffa-secrets/ reference outright, swarm
 // only refuses one with no stored secret behind it.
 func TestCheckSecretRefsEngineAware(t *testing.T) {

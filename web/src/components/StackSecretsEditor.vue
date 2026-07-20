@@ -4,8 +4,10 @@ import { useQuery } from '@tanstack/vue-query'
 import { daffa, type StackSecretItem } from '@/lib/api'
 import AppIcon from './ui/AppIcon.vue'
 import BaseButton from './ui/BaseButton.vue'
+import SecretField from './SecretField.vue'
 
-const props = defineProps<{ stackId: string; canWrite: boolean }>()
+// canReveal gates the unmask control on a secret's content (the server enforces it too).
+const props = defineProps<{ stackId: string; canWrite: boolean; canReveal: boolean }>()
 const emit = defineEmits<{ save: [StackSecretItem[]] }>()
 
 const { data } = useQuery({
@@ -13,9 +15,8 @@ const { data } = useQuery({
   queryFn: () => daffa.stackSecrets(props.stackId),
 })
 
-// `existing` tracks which rows came back from the server with a name and no content. Blank content
-// on one of those means "keep it", not "make it empty" — so the placeholder has to say so, and a
-// fresh row must not wear that placeholder.
+// `existing` tracks which rows came back from the server with a name and no content — its content is
+// masked, revealed on demand, and editable in place (blank on an existing row means "keep it").
 const secrets = ref<{ name: string; content: string; existing: boolean }[]>([])
 const saved = ref(false)
 
@@ -33,6 +34,10 @@ function add() {
 
 function remove(i: number) {
   secrets.value.splice(i, 1)
+}
+
+function reveal(name: string): Promise<string> {
+  return daffa.revealStackSecret(props.stackId, name).then((r) => r.value)
 }
 
 async function save() {
@@ -108,16 +113,17 @@ async function save() {
 
         <div class="min-w-0 flex-1">
           <label :for="`secret-content-${i}`" class="sr-only">Secret content</label>
-          <!-- A textarea, not an input: these are FILES — a PEM key or a JSON blob is many lines.
-               Existing rows come back empty on purpose; the placeholder promises blank keeps it. -->
-          <textarea
-            :id="`secret-content-${i}`"
+          <!-- One editor: an existing secret's content is masked and revealed on demand (its bytes
+               were never sent), then editable in place; a new one is authored in the clear. These
+               are FILES — a PEM key or a JSON blob — so it is a textarea with the eye at the corner. -->
+          <SecretField
             v-model="s.content"
-            :disabled="!canWrite"
-            rows="3"
-            :placeholder="s.existing ? '•••••• (unchanged — leave blank to keep)' : 'file contents'"
-            class="field py-1.5 font-mono text-xs"
-            data-cursor="text"
+            :input-id="`secret-content-${i}`"
+            :existing="s.existing"
+            :can-write="canWrite"
+            :can-reveal="canReveal"
+            :reveal="() => reveal(s.name)"
+            multiline
           />
         </div>
 

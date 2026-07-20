@@ -77,6 +77,8 @@ export const Cap = {
   VolsourcesView: { ns: Ns.Deploy, bit: 64 },
   /** Create, edit, sync and delete volume sources. A sync overwrites the volume's Daffa-delivered files with the repository's. */
   VolsourcesEdit: { ns: Ns.Deploy, bit: 128 },
+  /** Reveal the plaintext of a stack's secret environment variables and secret files. Sealed values are otherwise write-only; every reveal is recorded in the audit log. Separate from editing — setting a secret does not grant reading it back. */
+  SecretsReveal: { ns: Ns.Deploy, bit: 256 },
   /** See backup jobs and whether they are succeeding. */
   BackupsView: { ns: Ns.Data, bit: 1 },
   /** Create, edit, enable and run backup jobs. */

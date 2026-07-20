@@ -665,6 +665,15 @@ func (s *Server) apiRoutes() []route {
 		//oapi:summary List a stack's secret names — the bytes are write-only
 		{pattern: "GET /api/stacks/{id}/secrets", cap: caps.StacksView, scope: scopeStack, h: s.handleStackSecrets,
 			resp: []stackSecretView(nil), ts: "stackSecrets"},
+		// The write-only rule's ONE gated exception (docs/secrets.md): reveal a single sealed value
+		// on demand. secrets.reveal is standalone — stacks.edit does not imply it — and each reveal
+		// is audited. scopeStack checks the cap at the stack's own env.
+		//oapi:summary Reveal one secret env var's plaintext (audited; needs secrets.reveal)
+		{pattern: "GET /api/stacks/{id}/env/{key}/reveal", cap: caps.SecretsReveal, scope: scopeStack, h: s.handleRevealStackEnv,
+			resp: revealedValue{}, ts: "revealStackEnv"},
+		//oapi:summary Reveal one secret file's plaintext (audited; needs secrets.reveal)
+		{pattern: "GET /api/stacks/{id}/secrets/{name}/reveal", cap: caps.SecretsReveal, scope: scopeStack, h: s.handleRevealStackSecret,
+			resp: revealedValue{}, ts: "revealStackSecret"},
 		// Creating does not deploy: the stack is a record until its first `up`. On a
 		// multi-node swarm a Compose stack must name node_id — the machine its containers
 		// land on; a Swarm stack must not, because placement is the scheduler's.

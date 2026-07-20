@@ -129,6 +129,13 @@ var (
 	GitCredsEdit   = Cap{NSDeploy, 1 << 5}
 	VolSourcesView = Cap{NSDeploy, 1 << 6}
 	VolSourcesEdit = Cap{NSDeploy, 1 << 7}
+	// SecretsReveal is the power to READ a stack's sealed material back — the plaintext of a secret
+	// env var or a secret file. It is standalone on purpose: NOT implied by stacks.edit (writing a
+	// secret and reading one back are different trusts — the operator who can set a value has not
+	// thereby earned the right to see every value already there), and it grants nothing else. Every
+	// reveal is audited. This is the one deliberate crack in "sealed values are write-only through
+	// the API" (docs/secrets.md), and it is a crack you must be handed a key to.
+	SecretsReveal = Cap{NSDeploy, 1 << 8}
 
 	// ── data ────────────────────────────────────────────────────────────────────
 	BackupsView     = Cap{NSData, 1 << 0}
@@ -288,6 +295,7 @@ var All = []Def{
 	// source uses stays behind gitcreds.*.
 	{VolSourcesView, "volsources.view", "volsources", ModeView, ScopeEnv, "See volume sources — repository, ref, subtree, live commit and sync status."},
 	{VolSourcesEdit, "volsources.edit", "volsources", ModeEdit, ScopeEnv, "Create, edit, sync and delete volume sources. A sync overwrites the volume's Daffa-delivered files with the repository's."},
+	{SecretsReveal, "secrets.reveal", "secrets", ModeStandalone, ScopeEnv, "Reveal the plaintext of a stack's secret environment variables and secret files. Sealed values are otherwise write-only; every reveal is recorded in the audit log. Separate from editing — setting a secret does not grant reading it back."},
 
 	// ── data ────────────────────────────────────────────────────────────────────
 	{BackupsView, "backups.view", "backups", ModeView, ScopeEnv, "See backup jobs and whether they are succeeding."},

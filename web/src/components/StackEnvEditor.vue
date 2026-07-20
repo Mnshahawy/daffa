@@ -4,8 +4,10 @@ import { useQuery } from '@tanstack/vue-query'
 import { daffa, type EnvVarItem } from '@/lib/api'
 import AppIcon from './ui/AppIcon.vue'
 import BaseButton from './ui/BaseButton.vue'
+import SecretField from './SecretField.vue'
 
-const props = defineProps<{ stackId: string; canWrite: boolean }>()
+// canReveal gates the unmask control on secret values (the server enforces it too).
+const props = defineProps<{ stackId: string; canWrite: boolean; canReveal: boolean }>()
 const emit = defineEmits<{ save: [EnvVarItem[]] }>()
 
 const { data } = useQuery({
@@ -13,29 +15,38 @@ const { data } = useQuery({
   queryFn: () => daffa.stackEnv(props.stackId),
 })
 
-const vars = ref<EnvVarItem[]>([])
+// `existing` marks a row that came back from the server — a secret whose value is masked and
+// revealed on demand. It is not sent back; save() maps rows to the plain EnvVarItem shape.
+type Row = EnvVarItem & { existing: boolean }
+const vars = ref<Row[]>([])
 const saved = ref(false)
 
 watch(
   data,
   (d) => {
-    vars.value = (d ?? []).map((v) => ({ ...v }))
+    vars.value = (d ?? []).map((v) => ({ ...v, existing: true }))
   },
   { immediate: true },
 )
 
 function add() {
-  vars.value.push({ key: '', value: '', is_secret: false })
+  vars.value.push({ key: '', value: '', is_secret: false, existing: false })
 }
 
 function remove(i: number) {
   vars.value.splice(i, 1)
 }
 
+function reveal(key: string): Promise<string> {
+  return daffa.revealStackEnv(props.stackId, key).then((r) => r.value)
+}
+
 async function save() {
   emit(
     'save',
-    vars.value.filter((v) => v.key.trim()),
+    vars.value
+      .filter((v) => v.key.trim())
+      .map((v) => ({ key: v.key, value: v.value, is_secret: v.is_secret })),
   )
   saved.value = true
   setTimeout(() => (saved.value = false), 2000)
@@ -82,12 +93,23 @@ async function save() {
 
         <div class="min-w-0 flex-1">
           <label :for="`env-value-${i}`" class="sr-only">Value</label>
+          <!-- A secret is one editable field: masked, with the reveal control inset at the end, and
+               editable in place (blank on an existing one keeps it). A plain var is a plain input. -->
+          <SecretField
+            v-if="v.is_secret"
+            v-model="v.value"
+            :input-id="`env-value-${i}`"
+            :existing="v.existing"
+            :can-write="canWrite"
+            :can-reveal="canReveal"
+            :reveal="() => reveal(v.key)"
+          />
           <input
+            v-else
             :id="`env-value-${i}`"
             v-model="v.value"
             :disabled="!canWrite"
-            :type="v.is_secret ? 'password' : 'text'"
-            :placeholder="v.is_secret && !v.value ? '•••••• (unchanged)' : 'value'"
+            placeholder="value"
             class="field py-1.5 font-mono text-xs"
             data-cursor="text"
           />

@@ -92,6 +92,7 @@ var tsNames = map[reflect.Type]string{
 	reflect.TypeOf(taskView{}):                  "Task",
 	reflect.TypeOf(clusterNodeView{}):           "ClusterNode",
 	reflect.TypeOf(nodeDiskView{}):              "NodeDisk",
+	reflect.TypeOf(revealedValue{}):             "RevealedValue",
 	reflect.TypeOf(dockerx.HostDiskStat{}):      "HostDisk",
 	reflect.TypeOf(dockerx.Info{}):              "DockerInfo",
 	// Certificates & encryption keys, keyrings, backups, credential stores: the wire

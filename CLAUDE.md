@@ -74,7 +74,10 @@ Every feature follows the same layers, and they must land together:
 
 - **Sealed at rest**: every `_enc` column is AES-256-GCM under `<DataDir>/master.key`
   (`config.Sealer`). Losing the key means re-entering secrets, not losing data. Sealed
-  values are write-only through the API.
+  values are write-only through the API — with ONE gated exception: `secrets.reveal` (a
+  standalone deploy cap, not implied by `stacks.edit`) unseals a single stack env var or
+  secret file on demand via `/env/{key}/reveal` and `/secrets/{name}/reveal`, and every
+  reveal is audited. The UI surface is `SecretField.vue` (masked; eye button only with the cap).
 - **Never on the box**: age backup keys. The server stores public recipients only and
   actively rejects `AGE-SECRET-KEY-`; decryption happens in the CLI on the operator's
   machine (`--identity`). Key generation returns the private half exactly once

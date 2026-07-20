@@ -549,6 +549,10 @@ export interface StackSecretItem {
   content?: string
 }
 
+export interface RevealedValue {
+  value: string
+}
+
 export interface StackRequest {
   env_id?: string
   node_id?: string
@@ -1375,6 +1379,10 @@ export const daffa = {
   stackDeployments: (id: string) => api.get<Deployment[]>(`/api/stacks/${id}/deployments`),
   stackEnv: (id: string) => api.get<EnvVarItem[]>(`/api/stacks/${id}/env`),
   stackSecrets: (id: string) => api.get<StackSecretItem[]>(`/api/stacks/${id}/secrets`),
+  revealStackEnv: (id: string, key: string) =>
+    api.get<RevealedValue>(`/api/stacks/${id}/env/${key}/reveal`),
+  revealStackSecret: (id: string, name: string) =>
+    api.get<RevealedValue>(`/api/stacks/${id}/secrets/${name}/reveal`),
   createStack: (body: StackRequest) => api.post<Stack>('/api/stacks', body),
   updateStack: (id: string, body: StackRequest) => api.put<Stack>(`/api/stacks/${id}`, body),
   setAutoDeploy: (id: string, body: AutoDeployRequest) =>

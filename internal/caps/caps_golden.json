@@ -229,6 +229,11 @@
     "bit": 0,
     "scope": "global"
   },
+  "secrets.reveal": {
+    "ns": "deploy",
+    "bit": 8,
+    "scope": "env"
+  },
   "volsources.edit": {
     "ns": "deploy",
     "bit": 7,

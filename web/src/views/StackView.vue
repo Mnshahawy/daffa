@@ -927,6 +927,7 @@ function triggeredBy(d: { trigger_kind: string; started_by_name?: string }): str
       <StackEnvEditor
         :stack-id="id"
         :can-write="session.can(Cap.StacksEdit, stack.env_id)"
+        :can-reveal="session.can(Cap.SecretsReveal, stack.env_id)"
         @save="saveEnv"
       />
     </template>
@@ -936,6 +937,7 @@ function triggeredBy(d: { trigger_kind: string; started_by_name?: string }): str
       <StackSecretsEditor
         :stack-id="id"
         :can-write="session.can(Cap.StacksEdit, stack.env_id)"
+        :can-reveal="session.can(Cap.SecretsReveal, stack.env_id)"
         @save="saveSecrets"
       />
     </template>

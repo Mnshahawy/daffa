@@ -76,6 +76,14 @@ export const iconPaths = {
 
   // ── chrome ──
   search: ['M10.5 17a6.5 6.5 0 1 0 0-13 6.5 6.5 0 0 0 0 13z', 'm20 20-4.9-4.9'],
+  // Reveal / hide a masked value. The eye, and the eye with the world's most legible "not".
+  eye: ['M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z', 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z'],
+  eyeOff: [
+    'M10.7 5.1A9.9 9.9 0 0 1 12 5c7 0 10 7 10 7a13.2 13.2 0 0 1-1.7 2.7',
+    'M6.6 6.6A13.3 13.3 0 0 0 2 12s3 7 10 7a9.9 9.9 0 0 0 5.4-1.6',
+    'M9.9 9.9a3 3 0 0 0 4.2 4.2',
+    'm2 2 20 20',
+  ],
   chevronDown: ['m6 9 6 6 6-6'],
   chevronRight: ['m9 6 6 6-6 6'],
   chevronsLeft: ['m11 17-5-5 5-5', 'm18 17-5-5 5-5'],
