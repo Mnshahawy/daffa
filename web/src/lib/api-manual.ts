@@ -14,7 +14,7 @@
 import type { CapSet } from './caps'
 // Type-only: migrated interfaces are referenced back from the generated file. A type
 // import adds no runtime edge, so the evaluation-order story in the header holds.
-import type { CertAuthority, Certificate, Deployment, EnvVarItem, StackSecretItem, Stats, User } from './api'
+import type { CertAuthority, Certificate, Deployment, DockerInfo, EnvVarItem, StackSecretItem, Stats, User } from './api'
 import { api } from './api'
 import { nodeQuery } from './api-helpers'
 
@@ -162,6 +162,13 @@ export const manualDaffa = {
       `/api/clusters/${env}/stats${nodeQuery(node, { ids: ids.join(',') })}`,
     ),
 
+  // Daemon info for one node. Node is per-arity, not per-kind (see nodeQuery): a standalone
+  // cluster has one node and omits it; a Swarm names which machine's daemon to read, and the
+  // server answers for its manager when none is named — so the Cluster page can point the whole
+  // instrument strip (running, images, cpus, memory) at whichever node the operator selected.
+  info: (env: string, node?: string) =>
+    api.get<DockerInfo>(`/api/clusters/${env}/info${nodeQuery(node)}`),
+
   removeImage: (env: string, id: string, force = false) =>
     api.del(`/api/clusters/${env}/images/${encodeURIComponent(id)}${force ? '?force=true' : ''}`),
 
@@ -218,10 +225,15 @@ export const manualDaffa = {
 
   renewCert: (id: string, rotateKey = false) =>
     api.post<Certificate>(`/api/certs/${id}/renew`, { rotate_key: rotateKey }),
-  metrics: (env: string, params: { range: MetricRange; container?: string; stack?: string }) => {
+  metrics: (
+    env: string,
+    params: { range: MetricRange; container?: string; stack?: string; host?: boolean; node?: string },
+  ) => {
     const q = new URLSearchParams({ range: params.range })
     if (params.container) q.set('container', params.container)
     if (params.stack) q.set('stack', params.stack)
+    if (params.host) q.set('host', 'true')
+    if (params.node) q.set('node', params.node)
     return api.get<MetricPoint[]>(`/api/clusters/${env}/metrics?${q}`)
   },
 

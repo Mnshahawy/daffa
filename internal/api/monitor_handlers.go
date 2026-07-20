@@ -29,6 +29,8 @@ func (s *Server) handleSeries(w http.ResponseWriter, r *http.Request) {
 		EnvID:     env,
 		Container: r.URL.Query().Get("container"),
 		Stack:     r.URL.Query().Get("stack"),
+		Host:      r.URL.Query().Get("host") == "true",
+		Node:      r.URL.Query().Get("node"),
 		From:      from,
 		To:        to,
 		MaxPoints: 240,

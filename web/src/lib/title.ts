@@ -29,6 +29,7 @@ for (const tab of allSettingsTabs) staticTitles.set(tab.name, [tab.label, 'Setti
 
 staticTitles.set('login', ['Sign in'])
 staticTitles.set('no-access', ['No access'])
+staticTitles.set('not-found', ['Not found'])
 
 /**
  * The section a detail page belongs to. It is the best the router can do on its own — the entity

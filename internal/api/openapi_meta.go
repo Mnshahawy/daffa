@@ -91,6 +91,8 @@ var tsNames = map[reflect.Type]string{
 	reflect.TypeOf(newAgentResponse{}):          "NewAgent",
 	reflect.TypeOf(taskView{}):                  "Task",
 	reflect.TypeOf(clusterNodeView{}):           "ClusterNode",
+	reflect.TypeOf(nodeDiskView{}):              "NodeDisk",
+	reflect.TypeOf(dockerx.HostDiskStat{}):      "HostDisk",
 	reflect.TypeOf(dockerx.Info{}):              "DockerInfo",
 	// Certificates & encryption keys, keyrings, backups, credential stores: the wire
 	// names the handwritten client already gave these views.

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import { daffa } from '@/lib/api'
@@ -126,6 +126,47 @@ const { data: tasks, isLoading } = useQuery({
 })
 
 const tab = ref<'tasks' | 'logs'>('tasks')
+
+// FILTER BY STATE. A service redeployed a few times buries its running tasks under a drift of
+// shut-down ones Swarm replaced — so the table defaults to "Active" (what Swarm currently WANTS,
+// desired running), which keeps every live and failing task while hiding the historical noise.
+//
+// The rest of the menu is built from the states this service ACTUALLY has: no point offering
+// "Failed" when nothing failed. Two cross-cutting views bookend the real states — Active (the
+// default) and All. 'active'/'all' are sentinels; any other value is a literal task state.
+const taskFilter = ref<string>('active')
+
+// The order the daemon's own lifecycle runs in, so the menu reads running → … → failed rather than
+// alphabetically. Anything unforeseen sorts to the end rather than vanishing.
+const STATE_ORDER = [
+  'running', 'starting', 'preparing', 'assigned', 'accepted', 'ready', 'pending',
+  'new', 'allocated', 'complete', 'shutdown', 'failed', 'rejected', 'orphaned', 'remove',
+]
+const cap = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s)
+
+const presentStates = computed(() => {
+  const counts = new Map<string, number>()
+  for (const t of tasks.value ?? []) counts.set(t.state, (counts.get(t.state) ?? 0) + 1)
+  return [...counts.entries()]
+    .sort((a, b) => (STATE_ORDER.indexOf(a[0]) + 1 || 99) - (STATE_ORDER.indexOf(b[0]) + 1 || 99))
+    .map(([state, count]) => ({ state, count }))
+})
+
+const activeCount = computed(() => (tasks.value ?? []).filter((t) => t.desired === 'running').length)
+
+const filteredTasks = computed(() => {
+  const all = tasks.value ?? []
+  if (taskFilter.value === 'all') return all
+  if (taskFilter.value === 'active') return all.filter((t) => t.desired === 'running')
+  return all.filter((t) => t.state === taskFilter.value)
+})
+
+// A state can vanish while it is the selected filter — the last failed task gets reaped, say. Fall
+// back to Active rather than leave the dropdown pointing at an option that no longer exists.
+watch(presentStates, (states) => {
+  const f = taskFilter.value
+  if (f !== 'active' && f !== 'all' && !states.some((s) => s.state === f)) taskFilter.value = 'active'
+})
 
 // A task names its machine with the SWARM's node id. A container link needs DAFFA's — they are
 // different identifiers for the same machine, and the node table is precisely the join between
@@ -270,6 +311,19 @@ function ago(ts: string): string {
           stats. Their logs still work — the manager collects those.
         </p>
 
+        <!-- Filter by state — options built from the states this service actually has. Defaults to
+             Active so a redeployed service's live tasks are not buried under the ones Swarm replaced. -->
+        <div class="mb-3 flex items-center justify-end gap-2">
+          <label class="eyebrow" for="task-state-filter">State</label>
+          <select id="task-state-filter" v-model="taskFilter" class="field w-auto py-1 text-xs">
+            <option value="active">Active ({{ activeCount }})</option>
+            <option v-for="s in presentStates" :key="s.state" :value="s.state">
+              {{ cap(s.state) }} ({{ s.count }})
+            </option>
+            <option value="all">All ({{ tasks?.length ?? 0 }})</option>
+          </select>
+        </div>
+
         <div class="surface overflow-hidden rounded-[var(--radius-card)]">
           <table class="w-full text-sm">
             <thead>
@@ -283,8 +337,13 @@ function ago(ts: string): string {
             </thead>
 
             <tbody>
+              <tr v-if="!filteredTasks.length" class="border-b last:border-0" :style="{ borderColor: 'var(--border)' }">
+                <td colspan="5" class="muted py-4 pl-4 text-sm">
+                  No {{ taskFilter === 'all' ? '' : taskFilter }} tasks right now.
+                </td>
+              </tr>
               <tr
-                v-for="t in tasks"
+                v-for="t in filteredTasks"
                 :key="t.id"
                 class="border-b transition last:border-0 hover:bg-[var(--surface-sunken)]"
                 :style="{ borderColor: 'var(--border)' }"

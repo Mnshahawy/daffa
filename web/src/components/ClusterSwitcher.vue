@@ -25,7 +25,10 @@ function envBadge(env: Environment): string {
   if (env.swarm) {
     return env.nodes.length === 1 ? 'swarm' : `swarm · ${env.nodes.length}`
   }
-  return env.nodes[0]?.kind === 'local' ? 'socket' : 'agent'
+  const kind = env.nodes[0]?.kind
+  if (kind === 'local') return 'socket'
+  if (kind === 'ssh') return 'ssh'
+  return 'agent'
 }
 
 const session = useSession()

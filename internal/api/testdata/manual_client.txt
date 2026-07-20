@@ -11,6 +11,7 @@ method swarmLeave
 method container
 method action
 method stats
+method info
 method removeImage
 method removeVolume
 method removeNetwork
@@ -21,7 +22,6 @@ method deployments
 method discoverGitHostKeys
 method activateCA
 method renewCert
-method createAgent
 method metrics
 type RoleHeld
 type Me

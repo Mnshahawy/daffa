@@ -18,6 +18,10 @@ const props = defineProps<{
   container?: string
   /** Filter to one stack. Its containers are SUMMED — see the store's Series. */
   stack?: string
+  /** The MACHINE's own CPU/memory (the whole box), not the container aggregate. For the cluster page. */
+  host?: boolean
+  /** With `host`, narrow to one node of a Swarm. Omit to sum every node's machine metrics. */
+  node?: string
   /** Defaults to the host currently selected in the switcher. */
   env?: string
 }>()
@@ -31,12 +35,22 @@ const env = computed(() => props.env ?? session.envId)
 const { data, isFetching } = useQuery({
   // The range and the filter are part of the key, so switching range refetches rather than
   // redrawing the previous window's data under a new label.
-  queryKey: computed(() => ['metrics', env.value, props.container, props.stack, range.value]),
+  queryKey: computed(() => [
+    'metrics',
+    env.value,
+    props.container,
+    props.stack,
+    props.host,
+    props.node,
+    range.value,
+  ]),
   queryFn: () =>
     daffa.metrics(env.value, {
       range: range.value,
       container: props.container,
       stack: props.stack,
+      host: props.host,
+      node: props.node,
     }),
   enabled: computed(() => !!env.value),
   // The sampler writes every 30s by default. Refetching faster than that only redraws the same

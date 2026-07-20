@@ -1,4 +1,4 @@
-.PHONY: help dev build agent web test test-pg lint clean docker docker-agent user docs hooks
+.PHONY: help dev build agent web generate test test-pg lint clean docker docker-agent user docs hooks
 
 VERSION ?= dev
 # 8080 is a crowded port on a developer's machine (it is also the default for half the
@@ -8,6 +8,7 @@ PORT ?= 8099
 help:
 	@echo "make build          build the SPA, then the binary with it embedded"
 	@echo "make agent          build the agent-only binary (no SPA; bin/daffa-agent)"
+	@echo "make generate       regenerate caps.ts, openapi.json and api.ts from their Go source"
 	@echo "make user           create a local admin account (prompts for a password)"
 	@echo "make dev            run the server on :$(PORT) against the local Docker socket"
 	@echo "make test           go test (SQLite only)"
@@ -28,6 +29,14 @@ hooks:
 
 web:
 	cd web && pnpm install && pnpm build
+
+# Regenerate every checked-in artifact that has a Go source of truth: caps.ts from the capability
+# registry (internal/caps), and openapi.json + api.ts from the route table (internal/api). This is
+# exactly what CI and the pre-commit hook run to prove the tree is in sync — run it after editing
+# caps.go or the apiRoutes table, then commit the result. Never hand-edit the outputs.
+generate:
+	go generate ./internal/caps ./internal/api
+	@echo "→ web/src/lib/caps.ts, internal/api/openapi.json, web/src/lib/api.ts"
 
 # The docs site is a standalone VitePress project under site/. Its dev script runs the asset
 # prebuild first (sourcing the OpenAPI spec and logo), so this is the whole command.

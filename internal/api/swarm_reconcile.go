@@ -111,8 +111,14 @@ func (s *Server) reconcileNode(ctx context.Context, envID string, node *dockerx.
 		return
 	}
 
-	// The daemon IS in a swarm, and its environment already agrees. Nothing to do.
+	// The daemon IS in a swarm, and its STORED environment already agrees. The store is right, but
+	// the pool's in-memory copy of the swarm id — which every swarm operation actually reads
+	// (s.control, the services/nodes handlers) — can still have drifted out from under it: a
+	// reconnect that re-attached the env, a restart race. Re-assert it from the authoritative daemon
+	// value so a stale pool self-heals on the next sweep instead of showing a live Swarm as a
+	// standalone host until the process restarts.
 	if env.SwarmID == info.ClusterID {
+		s.pool.SetEnvSwarm(env.ID, info.ClusterID)
 		return
 	}
 
@@ -188,7 +194,11 @@ func (s *Server) attachWorkerToSwarm(ctx context.Context, env *store.Environment
 		return // no reachable manager claims this node yet — try again on the next sweep
 	}
 	if owner.ID == env.ID {
-		return // already where it belongs
+		// Already where it belongs. Re-assert the pool's in-memory swarm id from the store while we
+		// are here, so a freshly joined worker's environment reads as the Swarm it is immediately,
+		// not only after the next manager sweep. The store is authoritative; the pool can drift.
+		s.pool.SetEnvSwarm(env.ID, env.SwarmID)
+		return
 	}
 
 	// Same guard as the ClusterID move path: only a bare, single-node environment may be dissolved

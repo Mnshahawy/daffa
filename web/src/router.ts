@@ -121,9 +121,9 @@ export const router = createRouter({
           meta: { cap: Cap.NetworksView },
         },
         {
-          path: 'host',
-          name: 'host',
-          component: () => import('./views/HostView.vue'),
+          path: 'cluster',
+          name: 'cluster',
+          component: () => import('./views/ClusterView.vue'),
           meta: { cap: Cap.ClustersView },
         },
         {
@@ -234,6 +234,15 @@ export const router = createRouter({
           name: 'tokens',
           component: () => import('./views/TokensView.vue'),
         },
+        // Catch-all: any path under the shell that matches nothing above. A CHILD of the shell so a
+        // 404 keeps the rail and switcher — the reader is one click from a real page, not stranded.
+        // No meta.cap (being lost is not a permission); the guard still bounces a signed-out visitor
+        // to /login first, which is the right precedence. Kept last so it is the lowest-priority match.
+        {
+          path: ':pathMatch(.*)*',
+          name: 'not-found',
+          component: () => import('./views/NotFoundView.vue'),
+        },
       ],
     },
   ],
@@ -283,7 +292,7 @@ function landingFor(session: ReturnType<typeof useSession>): string {
     [Cap.ImagesView, 'images'],
     [Cap.VolumesView, 'volumes'],
     [Cap.NetworksView, 'networks'],
-    [Cap.ClustersView, 'host'],
+    [Cap.ClustersView, 'cluster'],
     [Cap.AuditView, 'audit'],
     [Cap.UsersView, 'settings-users'],
     [Cap.RolesView, 'settings-roles'],

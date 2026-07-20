@@ -5,6 +5,10 @@
 export interface LogLine {
   stream: 'stdout' | 'stderr'
   text: string
+  // Service logs only: which task/replica ("web.3") and machine a line came from. A merged stream
+  // of many replicas needs this to be readable; a single container's log leaves both empty.
+  task?: string
+  node?: string
 }
 
 export interface DockerEvent {
@@ -16,6 +20,9 @@ export interface DockerEvent {
 type Handlers<T> = {
   onMessage: (payload: T) => void
   onError?: (message: string) => void
+  // A non-fatal notice from the server mid-stream — e.g. a Swarm node the manager cannot reach, so
+  // some tasks' logs are missing. The stream keeps flowing; this is shown as a warning, not a break.
+  onWarn?: (message: string) => void
 }
 
 function subscribe<T>(url: string, event: string, h: Handlers<T>): () => void {
@@ -26,6 +33,17 @@ function subscribe<T>(url: string, event: string, h: Handlers<T>): () => void {
       h.onMessage(JSON.parse((e as MessageEvent).data) as T)
     } catch {
       // A malformed frame is not worth tearing the stream down for.
+    }
+  })
+
+  es.addEventListener('warn', (e) => {
+    const data = (e as MessageEvent).data
+    if (data && h.onWarn) {
+      try {
+        h.onWarn(JSON.parse(data).message)
+      } catch {
+        h.onWarn('Some logs may be missing.')
+      }
     }
   })
 

@@ -281,8 +281,30 @@ func (s *Server) control(w http.ResponseWriter, r *http.Request) (*dockerx.Node,
 }
 
 func (s *Server) handleEnvInfo(w http.ResponseWriter, r *http.Request) {
-	node, ok := s.node(w, r)
+	env, ok := s.env(w, r)
 	if !ok {
+		return
+	}
+
+	// A specific ?node= wins; otherwise, rather than refuse a multi-node cluster for want of one,
+	// answer for its manager — the daemon a cluster-level question is really about. A standalone
+	// cluster has one node, so this is that node.
+	var node *dockerx.Node
+	if id := r.URL.Query().Get("node"); id != "" {
+		n, err := env.Node(id)
+		if err != nil {
+			httpx.Fail(w, r, http.StatusNotFound, "no_such_node",
+				"That cluster has no such node, or Daffa cannot reach it.")
+			return
+		}
+		node = n
+	} else if n, err := env.Control(); err == nil {
+		node = n
+	} else if n, err := env.One(); err == nil {
+		node = n
+	} else {
+		httpx.Fail(w, r, http.StatusBadGateway, "no_reachable_node",
+			"Daffa cannot reach a daemon for this cluster.")
 		return
 	}
 

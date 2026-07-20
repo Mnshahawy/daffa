@@ -11,6 +11,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 
 	"github.com/Mnshahawy/daffa/internal/dockerx"
+	"github.com/Mnshahawy/daffa/internal/stacks"
 	"github.com/Mnshahawy/daffa/internal/store"
 )
 
@@ -59,6 +60,13 @@ type Collector struct {
 	// back under a new key and the cache invalidates itself.
 	cores map[string]float64
 
+	// hostPrev is the previous /proc/stat reading of each NODE's machine, keyed by env/node id —
+	// the baseline a host CPU% is a delta against, mirroring prev for containers.
+	hostPrev map[string]hostReading
+	// probeImage is the image the host-stats probe runs (docs/clusters.md): the same pinned
+	// docker:cli the deploy runner uses, so it is already present after any deploy.
+	probeImage string
+
 	// eval is called with each round's timestamp once the samples are written. Split out so
 	// the collector can be tested without an evaluator, and so the evaluator always runs
 	// against the freshest sample rather than on a ticker of its own that races this one.
@@ -71,13 +79,21 @@ type reading struct {
 	systemTotal uint64
 }
 
+type hostReading struct {
+	at    time.Time
+	total uint64
+	idle  uint64
+}
+
 func NewCollector(st *store.Store, pool *dockerx.Pool, log *slog.Logger) *Collector {
 	return &Collector{
-		store: st,
-		pool:  pool,
-		log:   log,
-		prev:  map[string]reading{},
-		cores: map[string]float64{},
+		store:      st,
+		pool:       pool,
+		log:        log,
+		prev:       map[string]reading{},
+		cores:      map[string]float64{},
+		hostPrev:   map[string]hostReading{},
+		probeImage: stacks.RunnerImage,
 	}
 }
 
@@ -181,6 +197,19 @@ func (c *Collector) collectNode(ctx context.Context, envID string, node *dockerx
 	ctx, cancel := context.WithTimeout(ctx, nodeSampleTimeout)
 	defer cancel()
 
+	out := c.collectContainers(ctx, envID, node, at, interval, alive)
+
+	// The machine itself — recorded even when the node runs no containers, which is the whole
+	// difference from before: a bare host still gets CPU/memory history, and the Cluster page shows
+	// the box's load rather than the sum of its containers.
+	if hs := c.hostSample(ctx, envID, node, at, interval); hs != nil {
+		out = append(out, *hs)
+	}
+	return out
+}
+
+// collectContainers samples every container on the node — the original per-container path.
+func (c *Collector) collectContainers(ctx context.Context, envID string, node *dockerx.Node, at time.Time, interval time.Duration, alive map[string]types.Container) []store.Sample {
 	list, err := node.Client.ContainerList(ctx, container.ListOptions{})
 	if err != nil {
 		c.log.Debug("monitor: listing containers", "env", envID, "err", err)
@@ -239,6 +268,61 @@ func (c *Collector) collectNode(ctx context.Context, envID string, node *dockerx
 	}
 
 	return out
+}
+
+// hostSample reads the machine's CPU% and memory through the host-stats probe and turns it into a
+// sentinel Sample (container_name = store.HostSentinel). Memory is a gauge and is always recorded;
+// CPU needs a delta against the previous round, so on the first sighting the row carries the memory
+// and a zero CPU rather than being dropped — the machine memory is worth more than the one blip.
+func (c *Collector) hostSample(ctx context.Context, envID string, node *dockerx.Node, at time.Time, interval time.Duration) *store.Sample {
+	stat, err := node.HostStats(ctx, c.probeImage)
+	if err != nil {
+		c.log.Debug("monitor: host stats", "env", envID, "node", node.Name, "err", err)
+		return nil
+	}
+
+	used := int64(stat.MemTotalKB-stat.MemAvailKB) * 1024
+	total := int64(stat.MemTotalKB) * 1024
+	// container_id carries the NODE id for a host row, so a multi-node Swarm's per-node machine
+	// metrics can be read back one node at a time (Series filters on it), while the whole-cluster
+	// query still sums every node's :host rows.
+	s := &store.Sample{
+		TS: at, EnvID: envID, ContainerID: node.ID, ContainerName: store.HostSentinel,
+		MemBytes: used, MemLimit: total,
+	}
+	if total > 0 {
+		s.MemPct = float64(used) / float64(total) * 100
+	}
+	if pct, ok := c.hostCPU(envID+"/"+node.ID, stat, at, interval); ok {
+		s.CPUPct = pct
+	}
+	return s
+}
+
+// hostCPU turns two /proc/stat readings into a machine CPU% (0–100), keeping a per-node baseline
+// exactly the way cpu() does for containers. Utilisation is one minus the idle share of the delta.
+func (c *Collector) hostCPU(key string, stat *dockerx.HostStat, at time.Time, interval time.Duration) (float64, bool) {
+	last, seen := c.hostPrev[key]
+	c.hostPrev[key] = hostReading{at: at, total: stat.CPUTotal, idle: stat.CPUIdle}
+	if !seen {
+		return 0, false // first sighting: no delta yet
+	}
+	if !at.After(last.at) || at.Sub(last.at) > 3*interval {
+		return 0, false // stale baseline: the host was unreachable, or sampling was toggled off and on
+	}
+	totalDelta := float64(stat.CPUTotal) - float64(last.total)
+	idleDelta := float64(stat.CPUIdle) - float64(last.idle)
+	if totalDelta <= 0 || idleDelta < 0 {
+		return 0, false // counters went backwards — a reboot
+	}
+	pct := (1 - idleDelta/totalDelta) * 100
+	if pct < 0 {
+		pct = 0
+	}
+	if pct > 100 {
+		pct = 100
+	}
+	return pct, true
 }
 
 // cpu differences this reading against the last one, and is where every edge case of owning

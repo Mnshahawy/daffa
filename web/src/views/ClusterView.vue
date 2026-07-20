@@ -26,12 +26,6 @@ const { data: environments } = useQuery({
 
 const host = computed(() => environments.value?.find((e) => e.id === session.envId))
 
-const { data: info } = useQuery({
-  queryKey: ['info', () => session.envId],
-  queryFn: () => daffa.info(session.envId),
-  enabled,
-})
-
 // Disk usage is genuinely expensive on the daemon (it walks every layer), so it is not
 // on the 15s cadence the rest of the app uses. It changes slowly; asking constantly
 // would cost more than it tells you.
@@ -47,6 +41,48 @@ const { data: nodes } = useQuery({
   queryKey: ['cluster-nodes', () => session.envId],
   queryFn: () => daffa.clusterNodes(session.envId),
   enabled: computed(() => !!session.envId),
+})
+
+// ── which node the page is about ──────────────────────────────────────────────────
+//
+// The node table is the selector: click a machine and the whole page — daemon summary, disk, and
+// the CPU/memory history — reads THAT node instead of the manager. Before this, only disk followed
+// a separate dropdown and every other number silently meant the manager; the table already lists
+// the nodes, so it is the natural place to choose between them.
+//
+// A node is addressable only when Daffa has an agent on it (node_id set); an unreachable Swarm
+// member has no daemon to ask, so its row is not selectable. The default is the node this cluster
+// IS — its leader/manager (what the manager-answering endpoints already returned), falling back to
+// whatever single reachable machine there is on a standalone host.
+const selectedNode = ref('')
+const reachableNodes = computed(() => (nodes.value ?? []).filter((n) => n.node_id))
+const multiNode = computed(() => reachableNodes.value.length > 1)
+const defaultNode = computed(
+  () =>
+    reachableNodes.value.find((n) => n.leader)?.node_id || reachableNodes.value[0]?.node_id || '',
+)
+// A stale selection (the chosen node drained away, or the switcher moved to another cluster) falls
+// back to the default rather than pinning the page to a node that is no longer there.
+const activeNode = computed(() =>
+  reachableNodes.value.some((n) => n.node_id === selectedNode.value)
+    ? selectedNode.value
+    : defaultNode.value,
+)
+const activeNodeName = computed(
+  () => (nodes.value ?? []).find((n) => n.node_id === activeNode.value)?.name ?? '',
+)
+
+function selectNode(nodeId?: string) {
+  if (nodeId) selectedNode.value = nodeId
+}
+
+// The daemon summary (running, images, cpus, memory — the instrument strip and the identity line)
+// for the selected node. Keyed on the node so switching refetches; an empty node lets the server
+// answer for the manager, which is the default anyway.
+const { data: info } = useQuery({
+  queryKey: ['info', () => session.envId, () => activeNode.value],
+  queryFn: () => daffa.info(session.envId, activeNode.value || undefined),
+  enabled,
 })
 
 const qc = useQueryClient()
@@ -229,6 +265,7 @@ async function clearLogConfig() {
   }
 }
 
+// Disk is fanned out across every node (each machine has its own layers), fetched once on load.
 const { data: df, isLoading: dfLoading } = useQuery({
   queryKey: ['df', () => session.envId],
   queryFn: () => daffa.df(session.envId),
@@ -236,13 +273,31 @@ const { data: df, isLoading: dfLoading } = useQuery({
   staleTime: 60_000,
 })
 
+// Disk for the selected node (fanned out above). The node is chosen in the node table.
+const selectedNodeDisk = computed(() => (df.value ?? []).find((d) => d.node_id === activeNode.value))
+const selectedDisk = computed(() => selectedNodeDisk.value?.disk)
+
+// The machine's whole root filesystem — the denominator Docker's footprint is a fraction of. It is
+// best-effort (a probe container), so it can be absent while the Docker breakdown is present.
+const machineDisk = computed(() => selectedNodeDisk.value?.machine ?? null)
+const machinePct = computed(() =>
+  machineDisk.value && machineDisk.value.total > 0
+    ? Math.round((machineDisk.value.used / machineDisk.value.total) * 100)
+    : 0,
+)
+// Amber past three-quarters, red near full: a disk about to fill is the failure this whole card
+// exists to warn about, so it changes colour before it is too late to act on.
+const machineBar = computed(() =>
+  machinePct.value >= 90 ? 'var(--danger)' : machinePct.value >= 75 ? 'var(--warn)' : 'var(--accent)',
+)
+
 const rows = computed(() =>
-  df.value
+  selectedDisk.value
     ? [
-        { label: 'Images', ...df.value.images, prune: 'images' as const, pruneLabel: 'Prune dangling' },
-        { label: 'Containers', ...df.value.containers, prune: 'containers' as const, pruneLabel: 'Prune stopped' },
-        { label: 'Volumes', ...df.value.volumes, prune: 'volumes' as const, pruneLabel: 'Prune anonymous' },
-        { label: 'Build cache', ...df.value.build_cache, prune: 'build-cache' as const, pruneLabel: 'Prune cache' },
+        { label: 'Images', ...selectedDisk.value.images, prune: 'images' as const, pruneLabel: 'Prune dangling' },
+        { label: 'Containers', ...selectedDisk.value.containers, prune: 'containers' as const, pruneLabel: 'Prune stopped' },
+        { label: 'Volumes', ...selectedDisk.value.volumes, prune: 'volumes' as const, pruneLabel: 'Prune anonymous' },
+        { label: 'Build cache', ...selectedDisk.value.build_cache, prune: 'build-cache' as const, pruneLabel: 'Prune cache' },
       ]
     : [],
 )
@@ -348,11 +403,18 @@ const instruments = computed<{ label: string; value: string; of?: string }[]>(()
         </div>
       </div>
 
-      <!-- Nodes: what this environment is made of. -->
+      <!-- Nodes: what this environment is made of, AND the page's node selector. On a multi-node
+           Swarm, clicking a reachable machine points the daemon summary, disk and history below at
+           it; the active row carries the accent bar. -->
       <div v-if="nodes?.length">
-        <h2 class="eyebrow mb-2">
-          {{ host?.swarm ? `Nodes · ${nodes.length}` : 'Node' }}
-        </h2>
+        <div class="mb-2 flex items-baseline justify-between gap-3">
+          <h2 class="eyebrow">
+            {{ host?.swarm ? `Nodes · ${nodes.length}` : 'Node' }}
+          </h2>
+          <span v-if="multiNode" class="subtle text-xs">
+            Select a machine to point this page at it
+          </span>
+        </div>
 
         <div class="surface overflow-hidden rounded-[var(--radius-card)]">
           <table class="w-full text-sm">
@@ -372,8 +434,16 @@ const instruments = computed<{ label: string; value: string; of?: string }[]>(()
               <tr
                 v-for="n in nodes"
                 :key="n.swarm_node_id || n.node_id"
-                class="border-b transition last:border-0 hover:bg-[var(--surface-sunken)]"
-                :style="{ borderColor: 'var(--border)' }"
+                class="border-b transition last:border-0"
+                :class="multiNode && n.node_id ? 'cursor-pointer hover:bg-[var(--surface-sunken)]' : ''"
+                :style="{
+                  borderColor: 'var(--border)',
+                  ...(multiNode && n.node_id === activeNode
+                    ? { background: 'var(--accent-soft)', boxShadow: 'inset 3px 0 0 0 var(--accent)' }
+                    : {}),
+                }"
+                :aria-selected="multiNode && n.node_id === activeNode"
+                @click="multiNode && selectNode(n.node_id)"
               >
                 <td class="py-3 pl-4 pr-4">
                   <div class="font-medium">{{ n.name }}</div>
@@ -412,7 +482,7 @@ const instruments = computed<{ label: string; value: string; of?: string }[]>(()
                   EVERYBODY's workload while scaling one service moves one — an operator trusted
                   with the second has not thereby been trusted with the first.
                 -->
-                <td class="py-3 pr-4 text-right">
+                <td class="py-3 pr-4 text-right" @click.stop>
                   <div v-if="canEditNodes && n.in_swarm" class="flex justify-end gap-1">
                     <BaseButton
                       v-if="n.availability !== 'active'"
@@ -488,14 +558,51 @@ const instruments = computed<{ label: string; value: string; of?: string }[]>(()
           class="flex items-baseline justify-between border-b px-5 py-3"
           :style="{ borderColor: 'var(--border)' }"
         >
-          <span class="font-medium">Disk usage</span>
-          <span v-if="df" class="muted font-mono text-xs">
-            {{ bytes(df.total_size) }} used ·
+          <div class="flex items-baseline gap-3">
+            <span class="font-medium">Disk usage</span>
+            <!-- Which node's layers, chosen in the node table above. -->
+            <span v-if="multiNode" class="subtle text-xs">on {{ activeNodeName }}</span>
+          </div>
+          <span v-if="selectedDisk" class="muted font-mono text-xs">
+            <span class="subtle">Docker</span> {{ bytes(selectedDisk.total_size) }} used ·
             <strong class="font-medium" :style="{ color: 'var(--text)' }">
-              {{ bytes(df.reclaimable) }}
+              {{ bytes(selectedDisk.reclaimable) }}
             </strong>
             reclaimable
           </span>
+        </div>
+
+        <!-- The machine's whole root filesystem: the denominator the Docker table above is a slice
+             of. Best-effort (a probe container), so it is simply absent when it could not be read —
+             the Docker breakdown never waits on it. -->
+        <div
+          v-if="machineDisk"
+          class="border-b px-5 py-3"
+          :style="{ borderColor: 'var(--border)' }"
+        >
+          <div class="mb-2 flex items-baseline justify-between gap-3">
+            <span class="eyebrow">Machine disk</span>
+            <span class="muted font-mono text-xs">
+              <strong class="font-medium" :style="{ color: 'var(--text)' }">
+                {{ bytes(machineDisk.used) }}
+              </strong>
+              of {{ bytes(machineDisk.total) }} · {{ machinePct }}% full ·
+              {{ bytes(machineDisk.free) }} free
+            </span>
+          </div>
+          <div
+            class="h-2 w-full overflow-hidden rounded-full"
+            :style="{ background: 'var(--surface-sunken)' }"
+            role="progressbar"
+            :aria-valuenow="machinePct"
+            aria-valuemin="0"
+            aria-valuemax="100"
+          >
+            <div
+              class="h-full rounded-full"
+              :style="{ width: `${machinePct}%`, background: machineBar }"
+            />
+          </div>
         </div>
 
         <p v-if="dfLoading" class="muted px-5 py-4 text-sm">Measuring…</p>
@@ -569,10 +676,14 @@ const instruments = computed<{ label: string; value: string; of?: string }[]>(()
         </p>
       </div>
 
-      <!-- Everything running on this host, summed. Disk usage above is what is SITTING here;
-           this is what is being USED, which is the other half of the question. -->
+      <!-- The MACHINE's own load — the whole box's CPU and memory, read from its /proc, not the sum
+           of the containers on it. Per node on a Swarm (the node chosen in the table above). Disk
+           usage above is what is SITTING here; this is what is being USED. -->
       <div class="surface rounded-[var(--radius-card)] p-5">
-        <MetricPanel />
+        <div v-if="multiNode" class="subtle mb-3 text-xs">
+          Machine metrics for <span class="font-medium">{{ activeNodeName }}</span>
+        </div>
+        <MetricPanel host :node="activeNode" :key="activeNode" />
       </div>
     </div>
   </div>

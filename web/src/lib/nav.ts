@@ -147,7 +147,7 @@ export const navGroups: NavGroup[] = [
         keywords: 'bridge overlay dns',
       },
       {
-        name: 'host',
+        name: 'cluster',
         label: 'Cluster',
         icon: 'server',
         cap: Cap.ClustersView,

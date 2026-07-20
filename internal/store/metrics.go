@@ -33,6 +33,12 @@ type Sample struct {
 const metricCols = `ts_unix, env_id, container_id, container_name, stack, service,
     cpu_pct, cpu_cores, mem_bytes, mem_limit, mem_pct`
 
+// HostSentinel is the container_name a MACHINE metric row carries — the whole-host CPU/memory the
+// collector reads from /proc, as opposed to a real container's stats. A ':' cannot appear in a
+// Docker container name, so it can never collide with one. Host rows are filtered IN for a machine
+// series and filtered OUT of every container aggregate (see Series).
+const HostSentinel = ":host"
+
 // day is the partition a timestamp belongs to: a UTC calendar day.
 //
 // The timestamps here are epoch SECONDS, not the RFC3339Nano text every other table in Daffa
@@ -308,7 +314,15 @@ type SeriesQuery struct {
 	EnvID     string
 	Container string // container_name
 	Stack     string
-	From, To  time.Time
+	// Host asks for the MACHINE's metrics (CPU% of the whole box, memory used/total) rather than
+	// the container aggregate — the host-sentinel rows the collector writes per node. It is
+	// mutually exclusive with Container/Stack.
+	Host bool
+	// Node narrows a host series to one node of a Swarm (a node id — the container_id a host row
+	// carries). Empty sums every node's machine metrics into the cluster total. Only meaningful
+	// with Host.
+	Node     string
+	From, To time.Time
 	// MaxPoints caps what crosses the wire. Seven days of 30-second samples is 20,000 points
 	// per container; sending them all to draw 600 pixels is a megabyte of JSON and a browser
 	// doing the downsampling we could have done in SQL.
@@ -342,13 +356,28 @@ func (s *Store) Series(ctx context.Context, q SeriesQuery) ([]Point, error) {
 
 	where := []string{"ts_unix >= ?", "ts_unix < ?", "env_id = ?"}
 	args := []any{q.From.UTC().Unix(), q.To.UTC().Unix(), q.EnvID}
-	if q.Container != "" {
+	if q.Host {
+		// The machine's own rows, and ONLY those — summed across a cluster's nodes gives the
+		// cluster's total memory and aggregate CPU; narrowed by Node, one machine's own load.
 		where = append(where, "container_name = ?")
-		args = append(args, q.Container)
-	}
-	if q.Stack != "" {
-		where = append(where, "stack = ?")
-		args = append(args, q.Stack)
+		args = append(args, HostSentinel)
+		if q.Node != "" {
+			where = append(where, "container_id = ?")
+			args = append(args, q.Node)
+		}
+	} else {
+		// Everything EXCEPT the machine rows, so the container aggregate does not double-count the
+		// host sample sitting in the same table.
+		where = append(where, "container_name != ?")
+		args = append(args, HostSentinel)
+		if q.Container != "" {
+			where = append(where, "container_name = ?")
+			args = append(args, q.Container)
+		}
+		if q.Stack != "" {
+			where = append(where, "stack = ?")
+			args = append(args, q.Stack)
+		}
 	}
 
 	// Inner: collapse each instant to one row (summing the containers in scope at that

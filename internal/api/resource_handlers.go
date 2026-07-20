@@ -9,6 +9,7 @@ import (
 
 	"github.com/Mnshahawy/daffa/internal/dockerx"
 	"github.com/Mnshahawy/daffa/internal/httpx"
+	"github.com/Mnshahawy/daffa/internal/stacks"
 	"github.com/Mnshahawy/daffa/internal/store"
 )
 
@@ -261,17 +262,49 @@ func (s *Server) handleRemoveNetwork(w http.ResponseWriter, r *http.Request) {
 
 // ── disk usage & prune ──────────────────────────────────────────────────────────
 
+// nodeDiskView is one machine's disk usage. Disk is per-node — a manager cannot see another
+// machine's layers — so this is fanned out across the cluster and rendered one row per node.
+//
+// Two different numbers, deliberately together: Disk is Docker's own footprint (layers, volumes,
+// build cache, what could be reclaimed), and Machine is the whole root filesystem it sits on. The
+// first is meaningless without the second — "607 MB reclaimable" matters differently on a disk with
+// 2 GB free than one with 200. Machine is best-effort: it costs a probe container, so a node that
+// answers Docker's df but not the probe still renders, just without the denominator.
+type nodeDiskView struct {
+	NodeID   string                `json:"node_id"`
+	NodeName string                `json:"node_name"`
+	Disk     *dockerx.DiskUsage    `json:"disk"`
+	Machine  *dockerx.HostDiskStat `json:"machine,omitempty"`
+}
+
+// handleDiskUsage reports disk usage for EVERY node of the cluster, not just one. Disk is genuinely
+// per-machine and expensive (the daemon walks every layer), so this is a one-shot fan-out the page
+// asks for on load, never a poll. A node that does not answer is dropped, not fatal — the switcher
+// already names the offline one.
 func (s *Server) handleDiskUsage(w http.ResponseWriter, r *http.Request) {
-	node, ok := s.node(w, r)
+	env, ok := s.env(w, r)
 	if !ok {
 		return
 	}
-	du, err := node.DiskUsage(r.Context())
-	if err != nil {
-		httpx.Fail(w, r, http.StatusBadGateway, "docker_unreachable", err.Error())
-		return
+	out := fanOut(r.Context(), env,
+		func(ctx context.Context, n *dockerx.Node) ([]nodeDiskView, error) {
+			du, err := n.DiskUsage(ctx)
+			if err != nil {
+				return nil, err
+			}
+			// The machine's own filesystem, best-effort: its failure (probe image unavailable, an
+			// SSH node that forbids the bind) must not drop a node whose Docker df is fine.
+			machine, err := n.HostDisk(ctx, stacks.RunnerImage)
+			if err != nil {
+				machine = nil
+			}
+			return []nodeDiskView{{NodeID: n.ID, NodeName: n.Name, Disk: du, Machine: machine}}, nil
+		},
+		func(v *nodeDiskView, n *dockerx.Node) { v.NodeID, v.NodeName = n.ID, n.Name })
+	if out == nil {
+		out = []nodeDiskView{}
 	}
-	httpx.JSON(w, http.StatusOK, du)
+	httpx.JSON(w, http.StatusOK, out)
 }
 
 // handlePrune is admin-only (the route enforces it): it deletes things in bulk, and

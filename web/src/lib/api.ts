@@ -211,6 +211,13 @@ export interface DockerInfo {
   arch: string
 }
 
+export interface NodeDisk {
+  node_id: string
+  node_name: string
+  disk: DiskUsage | null
+  machine?: HostDisk
+}
+
 export interface DiskUsage {
   images: Usage
   containers: Usage
@@ -224,6 +231,12 @@ export interface Usage {
   count: number
   size: number
   reclaimable: number
+}
+
+export interface HostDisk {
+  total: number
+  used: number
+  free: number
 }
 
 export interface RenameRequest {
@@ -300,6 +313,8 @@ export interface Port {
 export interface LogLine {
   stream: 'stdout' | 'stderr'
   text: string
+  task?: string
+  node?: string
 }
 
 export interface Stats {
@@ -1324,8 +1339,7 @@ export const daffa = {
     api.post<SSHConnectionTest>('/api/clusters/test-connection', body),
   createCluster: (body: SSHClusterRequest) => api.post<CreatedCluster>('/api/clusters', body),
   deleteCluster: (cluster: string) => api.del<Record<string, string>>(`/api/clusters/${cluster}`),
-  info: (cluster: string) => api.get<DockerInfo>(`/api/clusters/${cluster}/info`),
-  df: (cluster: string) => api.get<DiskUsage>(`/api/clusters/${cluster}/df`),
+  df: (cluster: string) => api.get<NodeDisk[]>(`/api/clusters/${cluster}/df`),
   hostLogConfig: (cluster: string) => api.get<HostLogConfig>(`/api/clusters/${cluster}/logging`),
   saveHostLogConfig: (cluster: string, body: LogConfigRequest) =>
     api.put<LogConfig>(`/api/clusters/${cluster}/logging`, body),

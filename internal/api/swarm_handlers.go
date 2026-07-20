@@ -119,9 +119,12 @@ func (s *Server) handleServiceLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	follow := r.URL.Query().Get("follow") == "true"
 
-	err = control.ServiceLogs(r.Context(), r.PathValue("id"), tail, follow, func(line dockerx.LogLine) error {
-		return sse.Send("log", line)
-	})
+	err = control.ServiceLogs(r.Context(), r.PathValue("id"), tail, follow,
+		func(line dockerx.LogLine) error { return sse.Send("log", line) },
+		// A node the manager cannot reach is a WARNING, not a failure: the reachable tasks' logs
+		// still arrive. It rides its own event so the client shows a notice, not a broken stream.
+		func(msg string) error { return sse.Send("warn", map[string]string{"message": msg}) },
+	)
 	if err != nil && r.Context().Err() == nil {
 		_ = sse.Send("error", map[string]string{"message": err.Error()})
 	}

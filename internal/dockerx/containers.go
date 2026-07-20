@@ -177,6 +177,10 @@ func (e *Node) DoAction(ctx context.Context, id string, a Action, force bool) er
 type LogLine struct {
 	Stream string `json:"stream"` // stdout | stderr
 	Text   string `json:"text"`
+	// Attribution for a SERVICE log, where one stream is many tasks on many nodes merged into one.
+	// Empty for a single-container log — there is only one source, so naming it would say nothing.
+	Task string `json:"task,omitempty"` // e.g. "web.3" — the service task/replica the line came from
+	Node string `json:"node,omitempty"` // the hostname of the machine it ran on
 }
 
 // StreamLogs follows a container's logs and calls emit for each line until ctx ends

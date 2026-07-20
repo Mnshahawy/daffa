@@ -930,12 +930,12 @@
     },
     "/api/clusters/{cluster}/info": {
       "get": {
-        "operationId": "info",
+        "operationId": "getClustersByClusterInfo",
         "tags": [
           "clusters"
         ],
         "summary": "Read the Docker daemon's summary for one node",
-        "description": "Requires the capability at the cluster named in the path.",
+        "description": "Hand-written client (api-manual.ts): the ?node= arity rule the generator cannot express, shared with containers/stats. Still spec-documented via resp.\n\nRequires the capability at the cluster named in the path.",
         "x-daffa-capability": "clusters.view",
         "x-daffa-scope": "env",
         "parameters": [
@@ -1009,28 +1009,20 @@
         "tags": [
           "clusters"
         ],
-        "summary": "Read one node's disk usage, split by what could reclaim it",
+        "summary": "Read disk usage for every node of the cluster, split by what could reclaim it",
         "description": "Requires the capability at the cluster named in the path.",
         "x-daffa-capability": "clusters.view",
         "x-daffa-scope": "env",
-        "parameters": [
-          {
-            "name": "node",
-            "in": "query",
-            "required": false,
-            "description": "the target node id; required only when the cluster has more than one",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
         "responses": {
           "200": {
             "description": "OK.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DiskUsage"
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/NodeDisk"
+                  }
                 }
               }
             }
@@ -9867,6 +9859,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "host",
+            "in": "query",
+            "required": false,
+            "description": "the machine's own CPU/memory instead of the container aggregate",
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -12507,6 +12508,35 @@
           "arch"
         ]
       },
+      "NodeDisk": {
+        "type": "object",
+        "properties": {
+          "node_id": {
+            "type": "string"
+          },
+          "node_name": {
+            "type": "string"
+          },
+          "disk": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/DiskUsage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "machine": {
+            "$ref": "#/components/schemas/HostDisk"
+          }
+        },
+        "required": [
+          "node_id",
+          "node_name",
+          "disk"
+        ]
+      },
       "DiskUsage": {
         "type": "object",
         "properties": {
@@ -12555,6 +12585,25 @@
           "count",
           "size",
           "reclaimable"
+        ]
+      },
+      "HostDisk": {
+        "type": "object",
+        "properties": {
+          "total": {
+            "type": "integer"
+          },
+          "used": {
+            "type": "integer"
+          },
+          "free": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "used",
+          "free"
         ]
       },
       "RenameRequest": {
@@ -12832,6 +12881,12 @@
             ]
           },
           "text": {
+            "type": "string"
+          },
+          "task": {
+            "type": "string"
+          },
+          "node": {
             "type": "string"
           }
         },

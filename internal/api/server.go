@@ -362,14 +362,15 @@ func (s *Server) apiRoutes() []route {
 		//oapi:summary Remove a cluster added over SSH
 		{pattern: "DELETE /api/clusters/{cluster}", cap: caps.ClustersEdit, scope: scopeGlobal, h: s.handleDeleteCluster,
 			resp: map[string]string(nil), ts: "deleteCluster"},
+		// Hand-written client (api-manual.ts): the ?node= arity rule the generator cannot express,
+		// shared with containers/stats. Still spec-documented via resp.
 		//oapi:summary Read the Docker daemon's summary for one node
 		//oapi:query node string the target node id; required only when the cluster has more than one
 		{pattern: "GET /api/clusters/{cluster}/info", cap: caps.ClustersView, scope: scopeEnv, h: s.handleEnvInfo,
-			resp: dockerx.Info{}, ts: "info"},
-		//oapi:summary Read one node's disk usage, split by what could reclaim it
-		//oapi:query node string the target node id; required only when the cluster has more than one
+			resp: dockerx.Info{}},
+		//oapi:summary Read disk usage for every node of the cluster, split by what could reclaim it
 		{pattern: "GET /api/clusters/{cluster}/df", cap: caps.ClustersView, scope: scopeEnv, h: s.handleDiskUsage,
-			resp: dockerx.DiskUsage{}, ts: "df"},
+			resp: []nodeDiskView(nil), ts: "df"},
 		// Names the cluster the way an operator thinks of it. Refused (409) when another cluster
 		// already answers to the name — two identical entries in the switcher is a way to
 		// restart the wrong machine.
@@ -1212,6 +1213,7 @@ func (s *Server) apiRoutes() []route {
 		//oapi:query range string one of 1h, 6h, 24h, 7d (default 1h)
 		//oapi:query container string narrow to one container name
 		//oapi:query stack string narrow to one stack
+		//oapi:query host boolean the machine's own CPU/memory instead of the container aggregate
 		{pattern: "GET /api/clusters/{cluster}/metrics", cap: caps.ContainersView, scope: scopeEnv, h: s.handleSeries,
 			resp: []store.Point(nil)},
 

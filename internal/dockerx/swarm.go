@@ -3,6 +3,7 @@ package dockerx
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -370,13 +371,23 @@ func (e *Node) ListSwarmNodes(ctx context.Context) ([]SwarmNode, error) {
 // This is the one cluster-wide stream Docker proxies for us: the manager collects from every node
 // running a task, so it works with no agent on the workers at all. Exec and stats are not proxied
 // and never will be — see Env.NodeBySwarmID, which is how those get routed instead.
-func (e *Node) ServiceLogs(ctx context.Context, id string, tail string, follow bool, emit func(LogLine) error) error {
+//
+// Two things beyond a container log. First, each line is ATTRIBUTED: a merged stream of many
+// replicas is unreadable if you cannot tell which one spoke, so Details is enabled and the task/node
+// the daemon tags each line with is resolved to "service.slot" on a named machine. Second, an
+// unreachable node is a WARNING, not the end of the stream — warn carries that notice so the logs of
+// every reachable task keep flowing rather than being truncated by one dead worker.
+func (e *Node) ServiceLogs(ctx context.Context, id, tail string, follow bool, emit func(LogLine) error, warn func(string) error) error {
+	// Resolve the hex task/node ids the daemon tags lines with, once, into names a person reads.
+	taskName, nodeName := e.logAttribution(ctx, id)
+
 	rc, err := e.Client.ServiceLogs(ctx, id, container.LogsOptions{
 		ShowStdout: true,
 		ShowStderr: true,
 		Tail:       tail,
 		Follow:     follow,
 		Timestamps: false,
+		Details:    true, // prepend each line with its task/node — the whole point of attribution
 	})
 	if err != nil {
 		return fmt.Errorf("dockerx: streaming logs for service %s: %w", id, err)
@@ -390,12 +401,39 @@ func (e *Node) ServiceLogs(ctx context.Context, id string, tail string, follow b
 		_ = rc.Close()
 	}()
 
+	// Every line arrives as "k=v,k=v <message>" (Details); attributeLine strips that prefix and
+	// swaps the ids for names before the line goes out.
+	attribute := func(l LogLine) error {
+		return emit(attributeLine(l, taskName, nodeName))
+	}
 	// Service logs are ALWAYS multiplexed. There is no TTY case to fall back to: a service has
 	// many tasks on many machines, so there is no single terminal for them to share.
-	stdout, stderr := newLineWriter("stdout", emit), newLineWriter("stderr", emit)
-	if _, err := stdcopy.StdCopy(stdout, stderr, rc); err != nil {
+	stdout, stderr := newLineWriter("stdout", attribute), newLineWriter("stderr", attribute)
+
+	// Why a LOOP around StdCopy. When a node is unavailable the daemon does NOT fail the stream — it
+	// writes a "some logs could not be retrieved" notice on its system-error channel and keeps
+	// sending the reachable tasks' logs. But StdCopy stops dead at that frame and returns it as an
+	// error, so taken at face value one unreachable worker would truncate the logs of every healthy
+	// one — exactly the followed-stream failure this replaces. So the system-error is caught,
+	// surfaced once as a warning, and reading resumes on the next frame. The daemon closes the
+	// stream when it is genuinely finished, and StdCopy then returns a clean nil, which ends the loop.
+	warned := map[string]bool{}
+	for {
+		_, err := stdcopy.StdCopy(stdout, stderr, rc)
+		if err == nil {
+			break // the daemon closed the stream: done
+		}
 		if ctx.Err() != nil || isClosed(err) {
-			return nil // the client hung up; not an error
+			break // the client hung up; not an error
+		}
+		if note, ok := daemonStreamNote(err); ok {
+			if warn != nil && !warned[note] {
+				warned[note] = true
+				if werr := warn(note); werr != nil {
+					return werr
+				}
+			}
+			continue // resume: the reachable tasks are still streaming
 		}
 		return fmt.Errorf("dockerx: demultiplexing logs for service %s: %w", id, err)
 	}
@@ -403,4 +441,103 @@ func (e *Node) ServiceLogs(ctx context.Context, id string, tail string, follow b
 		return err
 	}
 	return stderr.flush()
+}
+
+// logAttribution builds the id→name maps a service log needs: swarm task id → "service.slot", and
+// swarm node id → hostname. Best-effort — a line from a task older than the daemon's task-history
+// limit simply falls back to a short id, which is still better than nothing.
+func (e *Node) logAttribution(ctx context.Context, id string) (task, node map[string]string) {
+	task, node = map[string]string{}, map[string]string{}
+
+	name := id
+	if svc, _, err := e.Client.ServiceInspectWithRaw(ctx, id, types.ServiceInspectOptions{}); err == nil {
+		name = svc.Spec.Name
+	}
+
+	f := filters.NewArgs()
+	f.Add("service", id)
+	if tasks, err := e.Client.TaskList(ctx, types.TaskListOptions{Filters: f}); err == nil {
+		for _, t := range tasks {
+			if t.Slot > 0 {
+				task[t.ID] = fmt.Sprintf("%s.%d", name, t.Slot) // replicated: the replica index
+			} else {
+				task[t.ID] = name // global: one per node — the Node field is what tells them apart
+			}
+		}
+	}
+	if nodes, err := e.Client.NodeList(ctx, types.NodeListOptions{}); err == nil {
+		for _, n := range nodes {
+			node[n.ID] = n.Description.Hostname
+		}
+	}
+	return task, node
+}
+
+// attributeLine lifts the task/node ids off a Details-tagged service log line and swaps them for
+// names. The daemon prepends "k=v,k=v " to every line when Details is set — url-escaped, sorted by
+// key (api/server/httputils.WriteLogStream), so the values never contain a space or comma and the
+// FIRST space is the boundary before the message. A line that is not that shape is passed through.
+func attributeLine(l LogLine, taskName, nodeName map[string]string) LogLine {
+	prefix, msg, ok := strings.Cut(l.Text, " ")
+	if !ok || !strings.Contains(prefix, "com.docker.swarm.") {
+		return l
+	}
+
+	var taskID, nodeID string
+	for _, kv := range strings.Split(prefix, ",") {
+		k, v, ok := strings.Cut(kv, "=")
+		if !ok {
+			continue
+		}
+		val, err := url.QueryUnescape(v)
+		if err != nil {
+			val = v
+		}
+		switch k {
+		case "com.docker.swarm.task.id":
+			taskID = val
+		case "com.docker.swarm.node.id":
+			nodeID = val
+		}
+	}
+	if taskID == "" && nodeID == "" {
+		return l // not the prefix we expected — leave the text untouched
+	}
+
+	l.Text = msg
+	if taskID != "" {
+		if name := taskName[taskID]; name != "" {
+			l.Task = name
+		} else {
+			l.Task = shortHex(taskID)
+		}
+	}
+	if nodeID != "" {
+		if host := nodeName[nodeID]; host != "" {
+			l.Node = host
+		} else {
+			l.Node = shortHex(nodeID)
+		}
+	}
+	return l
+}
+
+// daemonStreamNote recognises the frame StdCopy surfaces when the daemon reports a problem MID
+// stream — for service logs, "some logs could not be retrieved: node X is not available". StdCopy
+// wraps a system-error frame with a fixed prefix; anything else is a real demux/read failure.
+func daemonStreamNote(err error) (string, bool) {
+	const prefix = "error from daemon in stream: "
+	if s := err.Error(); strings.HasPrefix(s, prefix) {
+		return strings.TrimSpace(strings.TrimPrefix(s, prefix)), true
+	}
+	return "", false
+}
+
+// shortHex is the fallback label for an id no lookup resolved — the leading chars Docker itself
+// shows, enough to tell two apart without filling a line.
+func shortHex(s string) string {
+	if len(s) > 12 {
+		return s[:12]
+	}
+	return s
 }
