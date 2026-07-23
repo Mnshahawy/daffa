@@ -188,7 +188,7 @@ const create = useMutation({
           v-if="mine.length"
           v-model="filter"
           placeholder="Name or repository…"
-          class="w-64"
+          class="w-full sm:w-64"
         />
         <BaseButton
           v-if="session.can(Cap.StacksEdit)"
@@ -402,7 +402,7 @@ const create = useMutation({
       <div
         v-for="g in grouped"
         :key="g.name || '_'"
-        class="surface overflow-hidden rounded-[var(--radius-card)]"
+        class="surface overflow-x-auto rounded-[var(--radius-card)]"
       >
         <!-- Ungrouped stacks get no heading at all. A group called "Other" is a group nobody
              chose, and it makes the ungrouped case look like a decision. -->
@@ -467,7 +467,10 @@ const create = useMutation({
                   </span>
                 </div>
 
-                <div class="subtle mt-0.5 truncate font-mono text-xs">
+                <!-- break-all, not truncate: the table lays out automatically, so a nowrap URL
+                     sets the column's minimum width and truncate never engages — the whole
+                     table just grows past a phone viewport instead. -->
+                <div class="subtle mt-0.5 break-all font-mono text-xs">
                   <template v-if="s.source_kind === 'git'">
                     {{ s.git_url }}<span v-if="s.git_ref"> @ {{ s.git_ref }}</span>
                   </template>

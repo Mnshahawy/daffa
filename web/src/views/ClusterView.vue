@@ -416,14 +416,14 @@ const instruments = computed<{ label: string; value: string; of?: string }[]>(()
           </span>
         </div>
 
-        <div class="surface overflow-hidden rounded-[var(--radius-card)]">
+        <div class="surface overflow-x-auto rounded-[var(--radius-card)]">
           <table class="w-full text-sm">
             <thead>
               <tr class="border-b" :style="{ borderColor: 'var(--border)' }">
                 <th class="eyebrow px-4 py-2 text-left font-medium">Machine</th>
                 <th class="eyebrow py-2 pr-4 text-left font-medium">State</th>
-                <th class="eyebrow py-2 pr-4 text-left font-medium">Role</th>
-                <th class="eyebrow py-2 pr-4 text-right font-medium">CPU / Memory</th>
+                <th class="eyebrow hidden py-2 pr-4 text-left font-medium md:table-cell">Role</th>
+                <th class="eyebrow hidden py-2 pr-4 text-right font-medium md:table-cell">CPU / Memory</th>
                 <th class="eyebrow py-2 pr-4 text-right font-medium">
                   <span class="sr-only">Actions</span>
                 </th>
@@ -465,14 +465,14 @@ const instruments = computed<{ label: string; value: string; of?: string }[]>(()
                   </div>
                 </td>
 
-                <td class="muted py-3 pr-4 font-mono text-xs">
+                <td class="muted hidden py-3 pr-4 font-mono text-xs md:table-cell">
                   {{ n.role ?? '—' }}
                   <span v-if="n.availability && n.availability !== 'active'" class="subtle">
                     · {{ n.availability }}
                   </span>
                 </td>
 
-                <td class="muted py-3 pr-4 text-right font-mono text-xs">
+                <td class="muted hidden py-3 pr-4 text-right font-mono text-xs md:table-cell">
                   <span v-if="n.cpus">{{ n.cpus }} CPU · {{ bytes(n.memory ?? 0) }}</span>
                   <span v-else class="subtle">—</span>
                 </td>
@@ -483,7 +483,7 @@ const instruments = computed<{ label: string; value: string; of?: string }[]>(()
                   with the second has not thereby been trusted with the first.
                 -->
                 <td class="py-3 pr-4 text-right" @click.stop>
-                  <div v-if="canEditNodes && n.in_swarm" class="flex justify-end gap-1">
+                  <div v-if="canEditNodes && n.in_swarm" class="flex flex-wrap justify-end gap-1">
                     <BaseButton
                       v-if="n.availability !== 'active'"
                       intent="secondary"
@@ -555,7 +555,7 @@ const instruments = computed<{ label: string; value: string; of?: string }[]>(()
       <!-- Disk -->
       <div class="surface overflow-hidden rounded-[var(--radius-card)]">
         <div
-          class="flex items-baseline justify-between border-b px-5 py-3"
+          class="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 border-b px-5 py-3"
           :style="{ borderColor: 'var(--border)' }"
         >
           <div class="flex items-baseline gap-3">
@@ -580,7 +580,7 @@ const instruments = computed<{ label: string; value: string; of?: string }[]>(()
           class="border-b px-5 py-3"
           :style="{ borderColor: 'var(--border)' }"
         >
-          <div class="mb-2 flex items-baseline justify-between gap-3">
+          <div class="mb-2 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
             <span class="eyebrow">Machine disk</span>
             <span class="muted font-mono text-xs">
               <strong class="font-medium" :style="{ color: 'var(--text)' }">
@@ -607,11 +607,13 @@ const instruments = computed<{ label: string; value: string; of?: string }[]>(()
 
         <p v-if="dfLoading" class="muted px-5 py-4 text-sm">Measuring…</p>
 
-        <table v-else class="w-full text-sm">
+        <!-- The card stays overflow-hidden for its corners; the table scrolls in its own box. -->
+        <div v-else class="overflow-x-auto">
+          <table class="w-full text-sm">
           <thead>
             <tr class="border-b" :style="{ borderColor: 'var(--border)' }">
               <th class="eyebrow py-2 pl-5 pr-4 text-left font-medium">Kind</th>
-              <th class="eyebrow py-2 pr-4 text-right font-medium">Count</th>
+              <th class="eyebrow hidden py-2 pr-4 text-right font-medium md:table-cell">Count</th>
               <th class="eyebrow py-2 pr-4 text-right font-medium">Size</th>
               <th class="eyebrow py-2 pr-4 text-right font-medium">Reclaimable</th>
               <th class="eyebrow py-2 pr-4 text-right font-medium">
@@ -628,7 +630,7 @@ const instruments = computed<{ label: string; value: string; of?: string }[]>(()
               :style="{ borderColor: 'var(--border)' }"
             >
               <td class="py-3 pl-5 pr-4 font-medium">{{ row.label }}</td>
-              <td class="muted py-3 pr-4 text-right font-mono text-xs">{{ row.count }}</td>
+              <td class="muted hidden py-3 pr-4 text-right font-mono text-xs md:table-cell">{{ row.count }}</td>
               <td class="py-3 pr-4 text-right font-mono text-xs">{{ bytes(row.size) }}</td>
               <td class="py-3 pr-4 text-right font-mono text-xs">
                 <!-- Amber, not red: reclaimable space is an opportunity, not a fault. -->
@@ -642,13 +644,14 @@ const instruments = computed<{ label: string; value: string; of?: string }[]>(()
               </td>
             </tr>
           </tbody>
-        </table>
+          </table>
+        </div>
       </div>
 
       <!-- Container log defaults: the other disk story. The table above is what images and
            volumes are sitting on; unrotated json-file logs are what quietly joins them. -->
       <div v-if="canViewLogging" class="surface rounded-[var(--radius-card)] p-5">
-        <div class="mb-1 flex items-baseline justify-between">
+        <div class="mb-1 flex flex-wrap items-baseline justify-between gap-x-3">
           <h3 class="text-sm font-semibold">Container log defaults</h3>
           <span v-if="logConfig" class="subtle text-xs">
             in effect: <span class="font-mono">{{ logConfig.effective?.driver ?? 'none' }}</span>

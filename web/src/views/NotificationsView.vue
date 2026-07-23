@@ -615,7 +615,7 @@ async function removeRule(id: string) {
     <!-- Preview -->
     <div
       v-if="preview"
-      class="fixed inset-0 z-50 flex items-center justify-center p-6"
+      class="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6"
       style="background: rgba(0, 0, 0, 0.5)"
       @click.self="preview = null"
     >
@@ -623,7 +623,7 @@ async function removeRule(id: string) {
         class="surface flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-[var(--radius-card)]"
       >
         <div
-          class="flex items-center justify-between border-b px-4 py-2"
+          class="flex flex-wrap items-center justify-between gap-2 border-b px-4 py-2"
           :style="{ borderColor: 'var(--border)' }"
         >
           <span class="text-sm font-medium">{{ preview.event }}</span>

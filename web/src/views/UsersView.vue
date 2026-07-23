@@ -336,7 +336,7 @@ async function resetPassword() {
                 </td>
 
                 <td v-if="canEdit" class="py-3 pr-4">
-                  <div class="flex items-center justify-end gap-1">
+                  <div class="flex flex-wrap items-center justify-end gap-1">
                     <BaseButton intent="ghost" size="xs" @click="startRoles(u)">Roles</BaseButton>
                     <BaseButton
                       v-if="u.kind === 'local'"

@@ -218,7 +218,7 @@ async function onRemove(k: SSHKey) {
       </template>
     </EmptyState>
 
-    <div v-else class="surface overflow-hidden rounded-[var(--radius-card)]">
+    <div v-else class="surface overflow-x-auto rounded-[var(--radius-card)]">
       <table class="w-full text-sm">
         <thead>
           <tr class="border-b" :style="{ borderColor: 'var(--border)' }">
@@ -237,12 +237,14 @@ async function onRemove(k: SSHKey) {
           >
             <td class="py-3 pl-4 pr-4 align-top">
               <div class="font-medium">{{ k.name }}</div>
-              <div class="subtle mt-0.5 font-mono text-xs">{{ k.algo }} · {{ k.fingerprint }}</div>
+              <div class="subtle mt-0.5 break-all font-mono text-xs">{{ k.algo }} · {{ k.fingerprint }}</div>
             </td>
 
             <td class="py-3 pr-4 align-top">
               <div class="flex items-center gap-2">
-                <code class="muted block max-w-[24rem] truncate font-mono text-xs">{{ k.public_key }}</code>
+                <!-- The cap must be a fixed unit: a percentage max-width cannot clamp a table
+                     column's intrinsic width, so the nowrap key would size the column anyway. -->
+                <code class="muted block max-w-[8rem] truncate font-mono text-xs sm:max-w-[24rem]">{{ k.public_key }}</code>
                 <CopyButton intent="ghost" size="xs" :text="k.public_key" />
               </div>
             </td>

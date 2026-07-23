@@ -305,14 +305,14 @@ async function onRemoveDelivery(d: CertDelivery) {
         </BaseButton>
       </form>
 
-      <div v-if="certs.length" class="surface overflow-hidden rounded-[var(--radius-card)]">
+      <div v-if="certs.length" class="surface overflow-x-auto rounded-[var(--radius-card)]">
         <table class="w-full text-sm">
           <thead>
             <tr class="border-b" :style="{ borderColor: 'var(--border)' }">
               <th class="eyebrow px-4 py-2 text-left font-medium">Certificate</th>
               <th class="eyebrow py-2 pr-3 text-left font-medium">Status</th>
-              <th class="eyebrow py-2 pr-3 text-left font-medium">Authority</th>
-              <th class="eyebrow py-2 pr-3 text-right font-medium">Expiry</th>
+              <th class="eyebrow hidden py-2 pr-3 text-left font-medium md:table-cell">Authority</th>
+              <th class="eyebrow hidden py-2 pr-3 text-right font-medium md:table-cell">Expiry</th>
               <th class="eyebrow py-2 pr-4 text-right font-medium">Actions</th>
             </tr>
           </thead>
@@ -325,11 +325,14 @@ async function onRemoveDelivery(d: CertDelivery) {
                   <span v-if="c.usages?.includes('client')" class="rounded-md px-1.5 py-0.5 text-xs" :style="{ background: 'var(--surface-sunken)', color: 'var(--text-muted)' }" :title="c.usages.includes('server') ? 'Carries both serverAuth and clientAuth — an mTLS identity' : 'clientAuth only'">{{ c.usages.includes('server') ? 'mTLS' : 'client' }}</span>
                 </div>
                 <div class="subtle mt-0.5 truncate font-mono text-xs" :title="c.sans.join(' ')">{{ c.sans.join(' ') }}</div>
+                <!-- The expiry column is hidden on a phone, but a cert's expiry is the thing
+                     this page exists to answer for — so it rides along under the name. -->
+                <div class="subtle mt-0.5 font-mono text-xs md:hidden" :title="c.not_after">expires {{ expiry(c.not_after) }}</div>
                 <div v-if="c.last_error" class="mt-0.5 truncate text-xs" :style="{ color: 'var(--danger)' }" :title="c.last_error">{{ c.last_error }}</div>
               </td>
               <td class="py-3 pr-3"><StatusPill :status="certStatus(c)" /></td>
-              <td class="subtle py-3 pr-3 text-xs">{{ c.ca_name || 'uploaded' }}</td>
-              <td class="subtle py-3 pr-3 text-right font-mono text-xs" :title="c.not_after">{{ expiry(c.not_after) }}</td>
+              <td class="subtle hidden py-3 pr-3 text-xs md:table-cell">{{ c.ca_name || 'uploaded' }}</td>
+              <td class="subtle hidden py-3 pr-3 text-right font-mono text-xs md:table-cell" :title="c.not_after">{{ expiry(c.not_after) }}</td>
               <td class="py-3 pr-4 text-right">
                 <div v-if="canEditCerts" class="flex items-center justify-end gap-1">
                   <BaseButton v-if="c.ca_id" intent="secondary" size="xs" :disabled="renewCert.isPending.value" @click="renewCert.mutate(c.id)">
@@ -412,13 +415,13 @@ async function onRemoveDelivery(d: CertDelivery) {
         </BaseButton>
       </form>
 
-      <div v-if="deliveries.length" class="surface overflow-hidden rounded-[var(--radius-card)]">
+      <div v-if="deliveries.length" class="surface overflow-x-auto rounded-[var(--radius-card)]">
         <table class="w-full text-sm">
           <thead>
             <tr class="border-b" :style="{ borderColor: 'var(--border)' }">
               <th class="eyebrow px-4 py-2 text-left font-medium">Delivery</th>
               <th class="eyebrow py-2 pr-3 text-left font-medium">Status</th>
-              <th class="eyebrow py-2 pr-3 text-right font-medium">Last synced</th>
+              <th class="eyebrow hidden py-2 pr-3 text-right font-medium md:table-cell">Last synced</th>
               <th class="eyebrow py-2 pr-4 text-right font-medium">Actions</th>
             </tr>
           </thead>
@@ -433,7 +436,7 @@ async function onRemoveDelivery(d: CertDelivery) {
                 <div v-if="d.last_error" class="mt-0.5 truncate text-xs" :style="{ color: 'var(--danger)' }" :title="d.last_error">{{ d.last_error }}</div>
               </td>
               <td class="py-3 pr-3"><StatusPill :status="deliveryStatus(d)" /></td>
-              <td class="subtle py-3 pr-3 text-right font-mono text-xs">
+              <td class="subtle hidden py-3 pr-3 text-right font-mono text-xs md:table-cell">
                 <time v-if="d.synced_at" :title="d.synced_at">{{ new Date(d.synced_at).toLocaleString() }}</time>
                 <span v-else>never</span>
               </td>

@@ -124,7 +124,7 @@ async function onRemove(v: Volume) {
           v-if="volumes?.length"
           v-model="filter"
           placeholder="Name or container…"
-          class="w-64"
+          class="w-full sm:w-64"
         />
         <PruneButton target="volumes" label="Prune anonymous" />
       </template>
@@ -141,13 +141,13 @@ async function onRemove(v: Volume) {
 
     <p v-else-if="!shown.length" class="muted text-sm">No volumes match “{{ filter }}”.</p>
 
-    <div v-else class="surface overflow-hidden rounded-[var(--radius-card)]">
+    <div v-else class="surface overflow-x-auto rounded-[var(--radius-card)]">
       <table class="w-full text-sm">
         <thead>
           <tr class="border-b" :style="{ borderColor: 'var(--border)' }">
             <th class="eyebrow px-4 py-2 text-left font-medium">Volume</th>
             <th class="eyebrow py-2 pr-4 text-left font-medium">Mounted by</th>
-            <th class="eyebrow py-2 pr-4 text-right font-medium">Size</th>
+            <th class="eyebrow hidden py-2 pr-4 text-right font-medium md:table-cell">Size</th>
             <th class="eyebrow py-2 pr-4 text-right font-medium">
               <span class="sr-only">Actions</span>
             </th>
@@ -210,7 +210,7 @@ async function onRemove(v: Volume) {
               </span>
             </td>
 
-            <td class="muted py-3 pr-4 text-right font-mono text-xs">
+            <td class="muted hidden py-3 pr-4 text-right font-mono text-xs md:table-cell">
               {{ v.size >= 0 ? bytes(v.size) : '—' }}
             </td>
 

@@ -229,13 +229,13 @@ async function onRemove(r: RegistryItem) {
       body="Daffa pulls anonymously, which is all a public image needs. Add a registry here and every stack that pulls from that host is authenticated — the password never leaves the deploy container."
     />
 
-    <div v-else class="surface overflow-hidden rounded-[var(--radius-card)]">
+    <div v-else class="surface overflow-x-auto rounded-[var(--radius-card)]">
       <table class="w-full text-sm">
         <thead>
           <tr class="border-b" :style="{ borderColor: 'var(--border)' }">
             <th class="eyebrow px-4 py-2 text-left font-medium">Name</th>
             <th class="eyebrow py-2 pr-4 text-left font-medium">Registry</th>
-            <th class="eyebrow py-2 pr-4 text-left font-medium">Username</th>
+            <th class="eyebrow hidden py-2 pr-4 text-left font-medium md:table-cell">Username</th>
             <th class="eyebrow py-2 pr-4 text-right font-medium">Actions</th>
           </tr>
         </thead>
@@ -248,8 +248,8 @@ async function onRemove(r: RegistryItem) {
             :style="{ borderColor: 'var(--border)' }"
           >
             <td class="py-3 pl-4 pr-4 font-medium">{{ r.name }}</td>
-            <td class="subtle py-3 pr-4 font-mono text-xs">{{ r.url }}</td>
-            <td class="subtle py-3 pr-4 text-xs">{{ r.username || '—' }}</td>
+            <td class="subtle break-all py-3 pr-4 font-mono text-xs">{{ r.url }}</td>
+            <td class="subtle hidden py-3 pr-4 text-xs md:table-cell">{{ r.username || '—' }}</td>
             <td class="py-3 pr-4 text-right">
               <BaseButton
                 intent="danger"

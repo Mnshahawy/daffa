@@ -195,7 +195,15 @@ function chipStyle(on: boolean) {
           <table class="w-full text-sm">
             <thead>
               <tr class="border-b" :style="{ borderColor: 'var(--border)' }">
-                <th class="eyebrow px-4 py-1.5 text-left font-medium">Object</th>
+                <!-- The matrix is inherently wide, so on a phone it scrolls sideways — but the
+                     Object column is what gives a row of tickboxes meaning, so it stays pinned.
+                     max-md only: the opaque background a sticky cell needs would otherwise mask
+                     the row hover on desktop. -->
+                <th
+                  class="eyebrow px-4 py-1.5 text-left font-medium max-md:sticky max-md:left-0 max-md:bg-[var(--surface)]"
+                >
+                  Object
+                </th>
                 <th class="eyebrow w-24 py-1.5 text-center font-medium">View</th>
                 <th class="eyebrow w-24 py-1.5 pr-4 text-center font-medium">Edit</th>
               </tr>
@@ -207,7 +215,7 @@ function chipStyle(on: boolean) {
                 class="border-b transition last:border-0 hover:bg-[var(--surface-sunken)]"
                 :style="{ borderColor: 'var(--border)' }"
               >
-                <td class="py-2.5 pr-4 pl-4">
+                <td class="py-2.5 pr-4 pl-4 max-md:sticky max-md:left-0 max-md:bg-[var(--surface)]">
                   <span class="font-medium">{{ labels[row.object] ?? row.object }}</span>
                   <p v-if="row.view" class="muted mt-0.5 text-xs">{{ row.view.description }}</p>
                 </td>

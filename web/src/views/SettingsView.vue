@@ -32,7 +32,29 @@ const groups = computed(() =>
     <PageHeader title="Settings" description="Configured once, then forgotten about." />
 
     <div class="flex flex-col gap-6 md:flex-row">
-      <nav class="shrink-0 space-y-5 md:w-60">
+      <!-- Below md the sidebar would stack ABOVE the content — a full screen of nav sitting
+           between you and the tab you just chose. Same trade the app shell makes on narrow
+           screens: a scrolling strip keeps the tabs and their order, drops the group headings
+           and hints, which have nowhere to go. -->
+      <nav class="flex gap-1 overflow-x-auto pb-1 md:hidden">
+        <RouterLink
+          v-for="t in groups.flatMap((g) => g.items)"
+          :key="t.name"
+          :to="{ name: t.name }"
+          class="flex shrink-0 items-center gap-1.5 rounded-[var(--radius-control)] px-2.5 py-1.5 text-sm transition"
+          :class="route.name === t.name ? 'font-medium' : 'muted'"
+          :style="
+            route.name === t.name
+              ? { background: 'var(--accent-soft)', color: 'var(--accent-text)' }
+              : undefined
+          "
+        >
+          <AppIcon :name="t.icon" class="size-4" />
+          {{ t.label }}
+        </RouterLink>
+      </nav>
+
+      <nav class="hidden shrink-0 space-y-5 md:block md:w-60">
         <div v-for="g in groups" :key="g.title">
           <div class="eyebrow px-2.5 pb-1.5">{{ g.title }}</div>
 

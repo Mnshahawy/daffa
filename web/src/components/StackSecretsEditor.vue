@@ -92,14 +92,18 @@ async function save() {
         from a file rather than an environment variable.
       </p>
 
-      <div v-else class="mb-1.5 flex items-start gap-2">
+      <div v-else class="mb-1.5 hidden items-start gap-2 sm:flex">
         <span class="eyebrow w-56 shrink-0">Name</span>
         <span class="eyebrow min-w-0 flex-1">Content</span>
         <span v-if="canWrite" class="w-[1.625rem] shrink-0" />
       </div>
 
-      <div v-for="(s, i) in secrets" :key="i" class="mb-2 flex items-start gap-2">
-        <div class="w-56 shrink-0">
+      <div
+        v-for="(s, i) in secrets"
+        :key="i"
+        class="mb-3 flex flex-wrap items-start gap-2 sm:mb-2 sm:flex-nowrap"
+      >
+        <div class="w-full shrink-0 sm:w-56">
           <label :for="`secret-name-${i}`" class="sr-only">Secret name</label>
           <input
             :id="`secret-name-${i}`"
@@ -140,7 +144,7 @@ async function save() {
         </BaseButton>
       </div>
 
-      <div v-if="canWrite" class="mt-3 flex items-center gap-2">
+      <div v-if="canWrite" class="mt-3 flex flex-wrap items-center gap-2">
         <BaseButton @click="add">
           <AppIcon name="plus" class="size-3.5" />
           Add secret

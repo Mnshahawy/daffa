@@ -71,15 +71,19 @@ async function save() {
 
       <!-- The columns say what they are. Two unlabelled boxes and a tickbox is a form you have to
            guess at, and KEY/value is exactly the pair people transpose. -->
-      <div v-else class="mb-1.5 flex items-center gap-2">
+      <div v-else class="mb-1.5 hidden items-center gap-2 sm:flex">
         <span class="eyebrow w-56 shrink-0">Key</span>
         <span class="eyebrow min-w-0 flex-1">Value</span>
         <span class="eyebrow w-20 shrink-0">Secret</span>
         <span v-if="canWrite" class="w-[1.625rem] shrink-0" />
       </div>
 
-      <div v-for="(v, i) in vars" :key="i" class="mb-2 flex items-center gap-2">
-        <div class="w-56 shrink-0">
+      <div
+        v-for="(v, i) in vars"
+        :key="i"
+        class="mb-3 flex flex-wrap items-center gap-2 sm:mb-2 sm:flex-nowrap"
+      >
+        <div class="w-full shrink-0 sm:w-56">
           <label :for="`env-key-${i}`" class="sr-only">Variable name</label>
           <input
             :id="`env-key-${i}`"
@@ -143,7 +147,7 @@ async function save() {
         </BaseButton>
       </div>
 
-      <div v-if="canWrite" class="mt-3 flex items-center gap-2">
+      <div v-if="canWrite" class="mt-3 flex flex-wrap items-center gap-2">
         <BaseButton @click="add">
           <AppIcon name="plus" class="size-3.5" />
           Add variable

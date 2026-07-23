@@ -85,7 +85,7 @@ async function onRemove(img: Image) {
       :description="images ? `${bytes(reclaimable)} of this is not in use by any container.` : undefined"
     >
       <template #actions>
-        <SearchInput v-if="images?.length" v-model="filter" placeholder="Tag or id…" class="w-64" />
+        <SearchInput v-if="images?.length" v-model="filter" placeholder="Tag or id…" class="w-full sm:w-64" />
         <PruneButton target="images" label="Prune dangling" />
       </template>
     </PageHeader>
@@ -101,7 +101,7 @@ async function onRemove(img: Image) {
 
     <p v-else-if="!shown.length" class="muted text-sm">No images match “{{ filter }}”.</p>
 
-    <div v-else class="surface overflow-hidden rounded-[var(--radius-card)]">
+    <div v-else class="surface overflow-x-auto rounded-[var(--radius-card)]">
       <table class="w-full text-sm">
         <!-- Size is the reason anybody opens this page. It is mono and right-aligned so the
              big ones stand out down the column rather than having to be read one by one. -->
@@ -109,7 +109,7 @@ async function onRemove(img: Image) {
           <tr class="border-b" :style="{ borderColor: 'var(--border)' }">
             <th class="eyebrow px-4 py-2 text-left font-medium">Image</th>
             <th class="eyebrow py-2 pr-4 text-left font-medium">Usage</th>
-            <th class="eyebrow py-2 pr-4 text-right font-medium">Size</th>
+            <th class="eyebrow hidden py-2 pr-4 text-right font-medium md:table-cell">Size</th>
             <th class="eyebrow py-2 pr-4 text-right font-medium">
               <span class="sr-only">Actions</span>
             </th>
@@ -124,10 +124,14 @@ async function onRemove(img: Image) {
             :style="{ borderColor: 'var(--border)' }"
           >
             <td class="py-3 pl-4 pr-4">
-              <div class="font-medium" :class="img.dangling ? 'muted italic' : ''">
+              <div class="break-all font-medium" :class="img.dangling ? 'muted italic' : ''">
                 {{ label(img) }}
               </div>
-              <div class="subtle mt-0.5 font-mono text-xs">{{ img.id.slice(7, 19) }}</div>
+              <!-- Size is why anybody opens this page, so when its column is hidden it moves
+                   into the identity cell rather than off the screen. -->
+              <div class="subtle mt-0.5 font-mono text-xs">
+                {{ img.id.slice(7, 19) }}<span class="md:hidden"> · {{ bytes(img.size) }}</span>
+              </div>
             </td>
 
             <td class="py-3 pr-4">
@@ -141,7 +145,7 @@ async function onRemove(img: Image) {
               <span v-else class="subtle text-xs">unused</span>
             </td>
 
-            <td class="muted py-3 pr-4 text-right font-mono text-xs">{{ bytes(img.size) }}</td>
+            <td class="muted hidden py-3 pr-4 text-right font-mono text-xs md:table-cell">{{ bytes(img.size) }}</td>
 
             <td class="py-3 pr-4 text-right">
               <!-- Removing an image destroys layers. Red, and it is the only red on the row. -->

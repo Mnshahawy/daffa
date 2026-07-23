@@ -194,12 +194,12 @@ function dropRow(i: number) {
       </div>
 
       <div v-if="extra.length" class="space-y-1.5">
-        <div v-for="(row, i) in extra" :key="i" class="flex items-center gap-1.5">
+        <div v-for="(row, i) in extra" :key="i" class="flex flex-wrap items-center gap-1.5 sm:flex-nowrap">
           <input
             v-model="row.key"
             :aria-label="`Option ${i + 1} name`"
             placeholder="labels"
-            class="field w-48 font-mono text-xs"
+            class="field w-full font-mono text-xs sm:w-48"
             :disabled="disabled"
             data-cursor="text"
           />

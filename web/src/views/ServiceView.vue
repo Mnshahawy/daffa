@@ -324,13 +324,13 @@ function ago(ts: string): string {
           </select>
         </div>
 
-        <div class="surface overflow-hidden rounded-[var(--radius-card)]">
+        <div class="surface overflow-x-auto rounded-[var(--radius-card)]">
           <table class="w-full text-sm">
             <thead>
               <tr class="border-b" :style="{ borderColor: 'var(--border)' }">
                 <th class="eyebrow px-4 py-2 text-left font-medium">Task</th>
-                <th class="eyebrow py-2 pr-4 text-left font-medium">Node</th>
-                <th class="eyebrow py-2 pr-4 text-left font-medium">Desired</th>
+                <th class="eyebrow hidden py-2 pr-4 text-left font-medium md:table-cell">Node</th>
+                <th class="eyebrow hidden py-2 pr-4 text-left font-medium md:table-cell">Desired</th>
                 <th class="eyebrow py-2 pr-4 text-left font-medium">State</th>
                 <th class="eyebrow py-2 pr-4 text-right font-medium">Since</th>
               </tr>
@@ -351,16 +351,22 @@ function ago(ts: string): string {
                 <td class="py-3 pl-4 pr-4">
                   <div class="font-medium">{{ service?.name }}.{{ t.slot || 1 }}</div>
                   <div class="subtle mt-0.5 font-mono text-xs">{{ t.id.slice(0, 12) }}</div>
+                  <!-- On a Swarm, WHICH machine is the answer half the time — the hidden Node
+                       column resurfaces here rather than being lost on a phone. -->
+                  <div class="subtle mt-0.5 font-mono text-xs md:hidden">
+                    <template v-if="t.node">{{ t.node }}</template>
+                    <span v-else class="italic">not placed</span>
+                  </div>
                 </td>
 
-                <td class="py-3 pr-4 text-xs">
+                <td class="hidden py-3 pr-4 text-xs md:table-cell">
                   <span v-if="t.node" class="font-mono">{{ t.node }}</span>
                   <!-- Never placed. That IS the answer, and it is not a blank cell. -->
                   <span v-else class="subtle italic">not placed</span>
                   <div v-if="t.node && !t.reachable" class="subtle mt-0.5">no agent</div>
                 </td>
 
-                <td class="muted py-3 pr-4 font-mono text-xs">{{ t.desired }}</td>
+                <td class="muted hidden py-3 pr-4 font-mono text-xs md:table-cell">{{ t.desired }}</td>
 
                 <td class="py-3 pr-4">
                   <StatusPill :status="taskStatus(t)" />
@@ -370,7 +376,7 @@ function ago(ts: string): string {
                   -->
                   <div
                     v-if="t.error"
-                    class="mt-1 font-mono text-xs"
+                    class="mt-1 break-words font-mono text-xs"
                     :style="{ color: 'var(--danger)' }"
                   >
                     {{ t.error }}

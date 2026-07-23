@@ -71,13 +71,13 @@ function encryptionStatus(s: Snapshot): Status {
     <template v-else>
       <div class="eyebrow mb-2">Snapshots ({{ snapshots.length }})</div>
 
-      <div class="max-h-56 overflow-y-auto">
+      <div class="max-h-56 overflow-x-auto overflow-y-auto">
         <table class="w-full text-xs">
           <thead>
             <tr class="border-b" :style="{ borderColor: 'var(--border)' }">
               <th class="eyebrow py-1.5 pr-3 text-left font-medium">Key</th>
-              <th class="eyebrow py-1.5 pr-3 text-right font-medium">Size</th>
-              <th class="eyebrow py-1.5 pr-3 text-right font-medium">Taken</th>
+              <th class="eyebrow hidden py-1.5 pr-3 text-right font-medium md:table-cell">Size</th>
+              <th class="eyebrow hidden py-1.5 pr-3 text-right font-medium md:table-cell">Taken</th>
               <th class="eyebrow py-1.5 pr-3 text-left font-medium">Encryption</th>
               <th class="eyebrow py-1.5 text-right font-medium">Restore</th>
             </tr>
@@ -94,8 +94,8 @@ function encryptionStatus(s: Snapshot): Status {
               }"
             >
               <td class="max-w-0 truncate py-1.5 pr-3 font-mono" :title="s.key">{{ s.key }}</td>
-              <td class="muted py-1.5 pr-3 text-right font-mono">{{ bytes(s.size) }}</td>
-              <td class="muted py-1.5 pr-3 text-right font-mono">
+              <td class="muted hidden py-1.5 pr-3 text-right font-mono md:table-cell">{{ bytes(s.size) }}</td>
+              <td class="muted hidden py-1.5 pr-3 text-right font-mono md:table-cell">
                 <time :title="s.modified">{{ new Date(s.modified).toLocaleDateString() }}</time>
               </td>
               <td class="py-1.5 pr-3">

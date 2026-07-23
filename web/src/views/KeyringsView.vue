@@ -286,13 +286,13 @@ async function onRemoveDelivery(d: KeyringDelivery) {
         </template>
       </EmptyState>
 
-      <div v-else-if="keyrings?.length" class="surface overflow-hidden rounded-[var(--radius-card)]">
+      <div v-else-if="keyrings?.length" class="surface overflow-x-auto rounded-[var(--radius-card)]">
         <table class="w-full text-sm">
           <thead>
             <tr class="border-b" :style="{ borderColor: 'var(--border)' }">
               <th class="eyebrow px-4 py-2 text-left font-medium">Keyring</th>
               <th class="eyebrow py-2 pr-3 text-left font-medium">Rotation</th>
-              <th class="eyebrow py-2 pr-3 text-right font-medium">Current version</th>
+              <th class="eyebrow hidden py-2 pr-3 text-right font-medium md:table-cell">Current version</th>
               <th class="eyebrow py-2 pr-3 text-right font-medium">Versions</th>
               <th class="eyebrow py-2 pr-4 text-right font-medium">Actions</th>
             </tr>
@@ -307,7 +307,7 @@ async function onRemoveDelivery(d: KeyringDelivery) {
                   </div>
                 </td>
                 <td class="py-3 pr-3"><StatusPill :status="keyringStatus(k)" /></td>
-                <td class="subtle py-3 pr-3 text-right font-mono text-xs">
+                <td class="subtle hidden py-3 pr-3 text-right font-mono text-xs md:table-cell">
                   <template v-if="activeVersion(k)">
                     {{ activeVersion(k)!.id }}
                     <span class="ml-1">({{ age(activeVersion(k)!.created_at) }})</span>
@@ -445,13 +445,13 @@ async function onRemoveDelivery(d: KeyringDelivery) {
         </BaseButton>
       </form>
 
-      <div v-if="deliveries?.length" class="surface overflow-hidden rounded-[var(--radius-card)]">
+      <div v-if="deliveries?.length" class="surface overflow-x-auto rounded-[var(--radius-card)]">
         <table class="w-full text-sm">
           <thead>
             <tr class="border-b" :style="{ borderColor: 'var(--border)' }">
               <th class="eyebrow px-4 py-2 text-left font-medium">Delivery</th>
               <th class="eyebrow py-2 pr-3 text-left font-medium">Status</th>
-              <th class="eyebrow py-2 pr-3 text-right font-medium">Last synced</th>
+              <th class="eyebrow hidden py-2 pr-3 text-right font-medium md:table-cell">Last synced</th>
               <th class="eyebrow py-2 pr-4 text-right font-medium">Actions</th>
             </tr>
           </thead>
@@ -465,7 +465,7 @@ async function onRemoveDelivery(d: KeyringDelivery) {
                 <div v-if="d.last_error" class="mt-0.5 truncate text-xs" :style="{ color: 'var(--danger)' }" :title="d.last_error">{{ d.last_error }}</div>
               </td>
               <td class="py-3 pr-3"><StatusPill :status="deliveryStatus(d)" /></td>
-              <td class="subtle py-3 pr-3 text-right font-mono text-xs">
+              <td class="subtle hidden py-3 pr-3 text-right font-mono text-xs md:table-cell">
                 <time v-if="d.synced_at" :title="d.synced_at">{{ new Date(d.synced_at).toLocaleString() }}</time>
                 <span v-else>never</span>
               </td>

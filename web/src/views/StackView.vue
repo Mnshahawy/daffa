@@ -651,14 +651,15 @@ function triggeredBy(d: { trigger_kind: string; started_by_name?: string }): str
       {{ w.text }}
     </div>
 
-    <!-- Tabs -->
-    <div class="mb-5 flex gap-1" role="tablist">
+    <!-- Tabs. The strip scrolls sideways on a phone rather than wrapping — seven tabs stacked
+         two-deep stop reading as one row of tabs. -->
+    <div class="mb-5 flex gap-1 overflow-x-auto" role="tablist">
       <button
         v-for="t in tabs"
         :key="t.id"
         role="tab"
         :aria-selected="tab === t.id"
-        class="rounded-[var(--radius-control)] px-3 py-1.5 text-sm transition"
+        class="shrink-0 whitespace-nowrap rounded-[var(--radius-control)] px-3 py-1.5 text-sm transition"
         :class="tab === t.id ? 'font-medium' : 'muted hover:text-[var(--text)]'"
         :style="
           tab === t.id
@@ -714,45 +715,47 @@ function triggeredBy(d: { trigger_kind: string; started_by_name?: string }): str
           Services
         </div>
 
-        <table class="w-full text-sm">
-          <thead>
-            <tr class="border-b" :style="{ borderColor: 'var(--border)' }">
-              <th class="eyebrow px-4 py-2 text-left font-medium">State</th>
-              <th class="eyebrow py-2 pr-4 text-left font-medium">Service</th>
-              <th class="eyebrow py-2 pr-4 text-left font-medium">Image</th>
-            </tr>
-          </thead>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="border-b" :style="{ borderColor: 'var(--border)' }">
+                <th class="eyebrow px-4 py-2 text-left font-medium">State</th>
+                <th class="eyebrow py-2 pr-4 text-left font-medium">Service</th>
+                <th class="eyebrow py-2 pr-4 text-left font-medium">Image</th>
+              </tr>
+            </thead>
 
-          <tbody>
-            <tr
-              v-for="svc in status.services"
-              :key="svc.name"
-              class="border-b last:border-0"
-              :style="{ borderColor: 'var(--border)' }"
-            >
-              <td class="px-4 py-3">
-                <StatusPill :status="containerStatus(svc.state, svc.status)" />
-                <div v-if="containerUptime(svc.status)" class="subtle mt-1 text-xs">
-                  up {{ containerUptime(svc.status) }}
-                </div>
-              </td>
+            <tbody>
+              <tr
+                v-for="svc in status.services"
+                :key="svc.name"
+                class="border-b last:border-0"
+                :style="{ borderColor: 'var(--border)' }"
+              >
+                <td class="px-4 py-3">
+                  <StatusPill :status="containerStatus(svc.state, svc.status)" />
+                  <div v-if="containerUptime(svc.status)" class="subtle mt-1 text-xs">
+                    up {{ containerUptime(svc.status) }}
+                  </div>
+                </td>
 
-              <td class="py-3 pr-4 font-medium">{{ svc.name }}</td>
+                <td class="py-3 pr-4 font-medium">{{ svc.name }}</td>
 
-              <td class="muted py-3 pr-4 font-mono text-xs">
-                {{ svc.declared }}
-                <!-- A running image that differs from the declared one is the drift you most want
-                     to see; spell it out rather than leaving it to be noticed. -->
-                <span
-                  v-if="svc.running && svc.running !== svc.declared"
-                  :style="{ color: 'var(--warn)' }"
-                >
-                  (running {{ svc.running }})
-                </span>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+                <td class="muted py-3 pr-4 font-mono text-xs">
+                  {{ svc.declared }}
+                  <!-- A running image that differs from the declared one is the drift you most want
+                       to see; spell it out rather than leaving it to be noticed. -->
+                  <span
+                    v-if="svc.running && svc.running !== svc.declared"
+                    :style="{ color: 'var(--warn)' }"
+                  >
+                    (running {{ svc.running }})
+                  </span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </div>
 
       <!-- The stack's resource use: its containers, SUMMED at each instant. A stack using 40% is
@@ -1063,7 +1066,7 @@ function triggeredBy(d: { trigger_kind: string; started_by_name?: string }): str
       >
         <div class="surface flex max-h-[80vh] w-full max-w-3xl flex-col rounded-[var(--radius-card)]">
           <div
-            class="flex items-center justify-between border-b px-5 py-3"
+            class="flex items-center justify-between gap-3 border-b px-5 py-3"
             :style="{ borderColor: 'var(--border)' }"
           >
             <div class="min-w-0">
@@ -1072,7 +1075,7 @@ function triggeredBy(d: { trigger_kind: string; started_by_name?: string }): str
                 {{ stack?.git_path || 'docker-compose.yml' }}@{{ stack?.git_ref || 'HEAD' }}
               </p>
             </div>
-            <div class="flex items-center gap-1">
+            <div class="flex shrink-0 items-center gap-1">
               <CopyButton :text="sourceYaml" />
               <button
                 class="btn btn-ghost btn-sm btn-icon"

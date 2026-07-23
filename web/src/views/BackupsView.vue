@@ -436,7 +436,7 @@ function runStatus(j: BackupJob): Status {
                 @change="toggleKey(k.id)"
               />
               <span class="font-medium">{{ k.name }}</span>
-              <span class="subtle truncate font-mono text-xs">{{ k.recipient }}</span>
+              <span class="subtle min-w-0 truncate font-mono text-xs">{{ k.recipient }}</span>
             </label>
           </div>
           <div
@@ -556,7 +556,7 @@ function runStatus(j: BackupJob): Status {
             <div v-else class="muted mt-1 text-xs">never run</div>
           </div>
 
-          <div class="flex shrink-0 items-center gap-1">
+          <div class="flex w-full flex-wrap items-center gap-1 sm:w-auto sm:shrink-0">
             <!-- Listing snapshots is reading, so it is gated on backups.view like the rest
                  of the page — not on being able to change the job. -->
             <BaseButton

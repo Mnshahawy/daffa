@@ -187,7 +187,7 @@ async function remove(r: Role) {
             <tr class="border-b" :style="{ borderColor: 'var(--border)' }">
               <th class="eyebrow px-4 py-2 text-left font-medium">Role</th>
               <th class="eyebrow hidden py-2 pr-4 text-left font-medium sm:table-cell">Members</th>
-              <th class="eyebrow py-2 pr-4 text-left font-medium">Grants</th>
+              <th class="eyebrow hidden py-2 pr-4 text-left font-medium sm:table-cell">Grants</th>
               <th v-if="canEdit" class="eyebrow py-2 pr-4 text-right font-medium">Actions</th>
             </tr>
           </thead>
@@ -218,7 +218,7 @@ async function remove(r: Role) {
                 {{ r.members }}
               </td>
 
-              <td class="py-3 pr-4 text-xs">
+              <td class="hidden py-3 pr-4 text-xs sm:table-cell">
                 <template v-if="r.is_admin">
                   <span class="muted">
                     everything, including capabilities added in future versions

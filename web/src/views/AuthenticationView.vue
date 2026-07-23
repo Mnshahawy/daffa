@@ -517,7 +517,7 @@ function roleName(id: string): string {
                   />
                 </td>
 
-                <td class="py-3 pr-4 align-top">
+                <td class="max-w-0 py-3 pr-4 align-top">
                   <div class="font-medium">{{ p.name }}</div>
                   <div class="subtle mt-0.5 truncate font-mono text-xs">{{ p.issuer }}</div>
 
@@ -549,7 +549,7 @@ function roleName(id: string): string {
                 </td>
 
                 <td class="py-3 pr-4 align-top">
-                  <div class="flex items-center justify-end gap-1">
+                  <div class="flex flex-col items-end gap-1 md:flex-row md:items-center md:justify-end">
                     <BaseButton
                       intent="ghost"
                       size="xs"

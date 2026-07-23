@@ -257,7 +257,7 @@ async function onRemoveKey(k: EncryptionKey) {
         class="surface mb-5 rounded-[var(--radius-card)] p-5"
         @submit.prevent="createCA.mutate()"
       >
-        <div class="mb-3 flex items-center gap-4 text-sm">
+        <div class="mb-3 flex flex-wrap items-center gap-4 gap-y-2 text-sm">
           <label class="flex items-center gap-2">
             <input v-model="caUpload" type="radio" :value="false" class="accent-[var(--color-accent-500)]" />
             Create a new root
@@ -328,14 +328,14 @@ async function onRemoveKey(k: EncryptionKey) {
         </template>
       </EmptyState>
 
-      <div v-else-if="cas?.length" class="surface overflow-hidden rounded-[var(--radius-card)]">
+      <div v-else-if="cas?.length" class="surface overflow-x-auto rounded-[var(--radius-card)]">
         <table class="w-full text-sm">
           <thead>
             <tr class="border-b" :style="{ borderColor: 'var(--border)' }">
               <th class="eyebrow px-4 py-2 text-left font-medium">Authority</th>
               <th class="eyebrow py-2 pr-3 text-left font-medium">Status</th>
-              <th class="eyebrow py-2 pr-3 text-right font-medium">Expiry</th>
-              <th class="eyebrow py-2 pr-3 text-right font-medium">In use</th>
+              <th class="eyebrow hidden py-2 pr-3 text-right font-medium md:table-cell">Expiry</th>
+              <th class="eyebrow hidden py-2 pr-3 text-right font-medium md:table-cell">In use</th>
               <th class="eyebrow py-2 pr-4 text-right font-medium">Actions</th>
             </tr>
           </thead>
@@ -350,12 +350,12 @@ async function onRemoveKey(k: EncryptionKey) {
                 <div class="subtle mt-0.5 truncate font-mono text-xs">{{ ca.subject }}</div>
               </td>
               <td class="py-3 pr-3"><StatusPill :status="caStatus(ca)" /></td>
-              <td class="subtle py-3 pr-3 text-right font-mono text-xs" :title="ca.not_after">
+              <td class="subtle hidden py-3 pr-3 text-right font-mono text-xs md:table-cell" :title="ca.not_after">
                 {{ expiry(ca.not_after) }}
               </td>
-              <td class="subtle py-3 pr-3 text-right font-mono text-xs">{{ ca.in_use }}</td>
+              <td class="subtle hidden py-3 pr-3 text-right font-mono text-xs md:table-cell">{{ ca.in_use }}</td>
               <td class="py-3 pr-4 text-right">
-                <div v-if="canEditCerts" class="flex items-center justify-end gap-1">
+                <div v-if="canEditCerts" class="flex flex-col items-end gap-1 md:flex-row md:items-center md:justify-end">
                   <BaseButton intent="secondary" size="xs" :disabled="toggleOutbound.isPending.value" :title="ca.outbound_trust ? 'Stop trusting this root for Daffa\'s own registry/git calls' : 'Trust this root for Daffa\'s own registry/git calls'" @click="toggleOutbound.mutate(ca)">
                     {{ ca.outbound_trust ? 'Outbound: on' : 'Outbound: off' }}
                   </BaseButton>
@@ -416,7 +416,7 @@ async function onRemoveKey(k: EncryptionKey) {
       </div>
 
       <form v-if="addingKey" class="surface mb-5 rounded-[var(--radius-card)] p-5" @submit.prevent="createKey.mutate()">
-        <div class="mb-3 flex items-center gap-4 text-sm">
+        <div class="mb-3 flex flex-wrap items-center gap-4 gap-y-2 text-sm">
           <label class="flex items-center gap-2">
             <input v-model="keyImport" type="radio" :value="false" class="accent-[var(--color-accent-500)]" />
             Generate a keypair
@@ -449,13 +449,13 @@ async function onRemoveKey(k: EncryptionKey) {
         </p>
       </form>
 
-      <div v-if="keys?.length" class="surface overflow-hidden rounded-[var(--radius-card)]">
+      <div v-if="keys?.length" class="surface overflow-x-auto rounded-[var(--radius-card)]">
         <table class="w-full text-sm">
           <thead>
             <tr class="border-b" :style="{ borderColor: 'var(--border)' }">
               <th class="eyebrow px-4 py-2 text-left font-medium">Key</th>
-              <th class="eyebrow py-2 pr-3 text-left font-medium">Source</th>
-              <th class="eyebrow py-2 pr-3 text-right font-medium">In use</th>
+              <th class="eyebrow hidden py-2 pr-3 text-left font-medium md:table-cell">Source</th>
+              <th class="eyebrow hidden py-2 pr-3 text-right font-medium md:table-cell">In use</th>
               <th class="eyebrow py-2 pr-4 text-right font-medium">Actions</th>
             </tr>
           </thead>
@@ -465,8 +465,8 @@ async function onRemoveKey(k: EncryptionKey) {
                 <div class="font-medium">{{ k.name }}</div>
                 <div class="subtle mt-0.5 truncate font-mono text-xs" :title="k.recipient">{{ k.recipient }}</div>
               </td>
-              <td class="subtle py-3 pr-3 text-xs">{{ k.source }}</td>
-              <td class="subtle py-3 pr-3 text-right font-mono text-xs">
+              <td class="subtle hidden py-3 pr-3 text-xs md:table-cell">{{ k.source }}</td>
+              <td class="subtle hidden py-3 pr-3 text-right font-mono text-xs md:table-cell">
                 {{ k.in_use }} job{{ k.in_use === 1 ? '' : 's' }}
               </td>
               <td class="py-3 pr-4 text-right">

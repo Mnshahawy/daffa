@@ -116,7 +116,7 @@ function detailPairs(detail?: string): [string, string][] {
         <SearchInput
           v-model="filter"
           placeholder="Action, user, target, or outcome…"
-          class="w-80"
+          class="w-full sm:w-80"
         />
       </template>
     </PageHeader>
@@ -132,12 +132,12 @@ function detailPairs(detail?: string): [string, string][] {
 
     <p v-else-if="!shown.length" class="muted text-sm">Nothing matches “{{ filter }}”.</p>
 
-    <div v-else class="surface overflow-hidden rounded-[var(--radius-card)]">
+    <div v-else class="surface overflow-x-auto rounded-[var(--radius-card)]">
       <table class="w-full text-sm">
         <thead>
           <tr class="border-b" :style="{ borderColor: 'var(--border)' }">
-            <th class="eyebrow px-4 py-2 text-left font-medium">When</th>
-            <th class="eyebrow py-2 pr-4 text-left font-medium">Who</th>
+            <th class="eyebrow hidden px-4 py-2 text-left font-medium md:table-cell">When</th>
+            <th class="eyebrow py-2 pl-4 pr-4 text-left font-medium md:pl-0">Who</th>
             <th class="eyebrow py-2 pr-4 text-left font-medium">Action</th>
             <th class="eyebrow py-2 pr-4 text-left font-medium">Target</th>
             <th class="eyebrow py-2 pr-4 text-left font-medium">Outcome</th>
@@ -165,7 +165,7 @@ function detailPairs(detail?: string): [string, string][] {
                 : { borderColor: 'var(--border)' }
             "
           >
-            <td class="subtle whitespace-nowrap px-4 py-2 font-mono text-xs">
+            <td class="subtle hidden whitespace-nowrap px-4 py-2 font-mono text-xs md:table-cell">
               <time :title="e.at">{{ when(e.at) }}</time>
             </td>
 
@@ -175,12 +175,21 @@ function detailPairs(detail?: string): [string, string][] {
                  behind it at all. Say which, rather than leaving a dash to be read as missing
                  data. Actions a named person took now carry their name; that was a real bug, and
                  it was in the store. -->
-            <td class="whitespace-nowrap py-2 pr-4">
+            <!-- When the When column hides, Who becomes the first column and inherits its
+                 left gutter — otherwise the row starts flush against the card edge (and
+                 against the denied row's red rule). -->
+            <td class="whitespace-nowrap py-2 pl-4 pr-4 md:pl-0">
               <template v-if="e.user">{{ e.user }}</template>
               <span v-else class="subtle" :title="noActorReason(e)">—</span>
             </td>
 
-            <td class="whitespace-nowrap py-2 pr-4 font-mono text-xs">{{ e.action }}</td>
+            <td class="whitespace-nowrap py-2 pr-4 font-mono text-xs">
+              {{ e.action }}
+              <!-- The timestamp still matters on a phone; it stacks here when its column hides. -->
+              <div class="subtle mt-0.5 whitespace-normal text-[11px] md:hidden">
+                <time :title="e.at">{{ when(e.at) }}</time>
+              </div>
+            </td>
 
             <td class="subtle max-w-0 truncate py-2 pr-4 font-mono text-xs" :title="e.target">
               {{ e.target || '—' }}

@@ -107,9 +107,12 @@ async function run(a: Action) {
 
 <template>
   <div v-if="!disabled && actions.length" class="flex items-center justify-end gap-1">
+    <!-- On a phone the inline pair costs more width than the whole row has, so below md every
+         action folds into the kebab — two taps, but the container's name stays on screen. -->
     <BaseButton
       v-for="a in inline"
       :key="a.id"
+      class="max-md:hidden"
       :intent="a.intent"
       size="xs"
       :loading="busy === a.id"
@@ -119,7 +122,7 @@ async function run(a: Action) {
       {{ a.label }}
     </BaseButton>
 
-    <DropdownMenu v-if="overflow.length" align="right">
+    <DropdownMenu align="right" :class="overflow.length ? '' : 'md:hidden'">
       <template #trigger>
         <span class="btn btn-ghost btn-xs btn-icon" aria-label="More actions" title="More actions">
           <AppIcon name="more" class="size-3.5" />
@@ -127,9 +130,10 @@ async function run(a: Action) {
       </template>
 
       <button
-        v-for="a in overflow"
+        v-for="a in actions"
         :key="a.id"
         class="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm transition hover:bg-[var(--surface-sunken)]"
+        :class="a.inline ? 'md:hidden' : ''"
         :style="
           a.intent === 'danger'
             ? { color: 'var(--danger)' }

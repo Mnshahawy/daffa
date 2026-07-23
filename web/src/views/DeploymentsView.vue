@@ -64,7 +64,7 @@ const filters: { value: Status | ''; label: string }[] = [
     >
       <template #actions>
         <!-- Failed first among the filters, because that is the reason anybody opens this page. -->
-        <div class="flex items-center gap-1" role="group" aria-label="Filter by outcome">
+        <div class="flex flex-wrap items-center gap-1 gap-y-2" role="group" aria-label="Filter by outcome">
           <BaseButton
             v-for="f in filters"
             :key="f.value"
@@ -115,7 +115,7 @@ const filters: { value: Status | ''; label: string }[] = [
             <th class="eyebrow hidden py-2 pr-4 text-left font-medium sm:table-cell">Host</th>
             <th class="eyebrow hidden py-2 pr-4 text-left font-medium md:table-cell">Commit</th>
             <th class="eyebrow hidden py-2 pr-4 text-left font-medium lg:table-cell">Trigger</th>
-            <th class="eyebrow py-2 pr-4 text-right font-medium">Took</th>
+            <th class="eyebrow hidden py-2 pr-4 text-right font-medium sm:table-cell">Took</th>
             <th class="eyebrow py-2 pr-4 text-right font-medium">Started</th>
           </tr>
         </thead>
@@ -151,7 +151,7 @@ const filters: { value: Status | ''; label: string }[] = [
 
             <td class="muted hidden py-3 pr-4 text-xs lg:table-cell">{{ triggeredBy(d) }}</td>
 
-            <td class="subtle py-3 pr-4 text-right font-mono text-xs">{{ duration(d) || '—' }}</td>
+            <td class="subtle hidden py-3 pr-4 text-right font-mono text-xs sm:table-cell">{{ duration(d) || '—' }}</td>
 
             <td class="py-3 pr-4 text-right">
               <time class="subtle text-xs whitespace-nowrap" :title="absolute(d.started_at)">

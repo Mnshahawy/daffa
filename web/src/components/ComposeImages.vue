@@ -143,12 +143,12 @@ onMounted(load)
 
 <template>
   <div>
-    <div class="mb-3 flex items-center justify-between">
+    <div class="mb-3 flex items-center justify-between gap-3">
       <p class="muted text-xs">
         Set a tag and Daffa checks it exists in the registry before you deploy. Digest-pinned and
         variable tags are shown but not editable.
       </p>
-      <BaseButton intent="ghost" size="sm" :loading="loading" @click="load">
+      <BaseButton intent="ghost" size="sm" class="shrink-0" :loading="loading" @click="load">
         <AppIcon name="history" class="size-3.5" />
         Refresh
       </BaseButton>
@@ -173,7 +173,7 @@ onMounted(load)
         </div>
 
         <!-- Tag control -->
-        <div v-if="row.kind === 'tag'" class="flex items-center gap-2">
+        <div v-if="row.kind === 'tag'" class="flex flex-wrap items-center gap-2">
           <input
             v-model="row.newTag"
             spellcheck="false"
@@ -216,7 +216,7 @@ onMounted(load)
       {{ row.repo || row.ref }}: {{ row.message }}
     </p>
 
-    <div v-if="rows.length" class="mt-3 flex items-center gap-3">
+    <div v-if="rows.length" class="mt-3 flex flex-wrap items-center gap-3">
       <BaseButton intent="primary" size="sm" :disabled="!canApply || applying" :loading="applying" @click="apply">
         Apply
       </BaseButton>

@@ -392,38 +392,42 @@ const recoveredStatus: Status = { tone: 'success', label: 'Recovered' }
         Firing
       </h3>
 
-      <table class="w-full text-sm">
-        <thead>
-          <tr class="border-b" :style="{ borderColor: 'var(--border)' }">
-            <th class="eyebrow px-4 py-2 text-left font-medium">State</th>
-            <th class="eyebrow py-2 pr-4 text-left font-medium">Service</th>
-            <th class="eyebrow py-2 pr-4 text-left font-medium">Monitor</th>
-            <th class="eyebrow py-2 pr-4 text-right font-medium">Value</th>
-            <th class="eyebrow py-2 pr-4 text-right font-medium">Since</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr
-            v-for="a in firing"
-            :key="a.id"
-            class="border-b last:border-0"
-            :style="{ borderColor: 'var(--border)' }"
-          >
-            <td class="px-4 py-3">
-              <StatusPill :status="firingStatus" />
-            </td>
-            <td class="py-3 pr-4">
-              <span class="font-medium">{{ a.container_name }}</span>
-              <span v-if="a.stack" class="subtle text-xs"> · {{ a.stack }}</span>
-            </td>
-            <td class="py-3 pr-4">{{ a.monitor_name }}</td>
-            <td class="py-3 pr-4 text-right font-mono text-xs font-medium">
-              {{ fmtValue(a, monitorFor(a)) }}
-            </td>
-            <td class="subtle py-3 pr-4 text-right text-xs">{{ ago(a.started_at) }}</td>
-          </tr>
-        </tbody>
-      </table>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="border-b" :style="{ borderColor: 'var(--border)' }">
+              <th class="eyebrow px-4 py-2 text-left font-medium">State</th>
+              <th class="eyebrow py-2 pr-4 text-left font-medium">Service</th>
+              <th class="eyebrow hidden py-2 pr-4 text-left font-medium md:table-cell">Monitor</th>
+              <th class="eyebrow py-2 pr-4 text-right font-medium">Value</th>
+              <th class="eyebrow hidden py-2 pr-4 text-right font-medium sm:table-cell">Since</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr
+              v-for="a in firing"
+              :key="a.id"
+              class="border-b last:border-0"
+              :style="{ borderColor: 'var(--border)' }"
+            >
+              <td class="px-4 py-3">
+                <StatusPill :status="firingStatus" />
+              </td>
+              <td class="py-3 pr-4">
+                <span class="font-medium">{{ a.container_name }}</span>
+                <span v-if="a.stack" class="subtle text-xs"> · {{ a.stack }}</span>
+              </td>
+              <td class="hidden py-3 pr-4 md:table-cell">{{ a.monitor_name }}</td>
+              <td class="py-3 pr-4 text-right font-mono text-xs font-medium">
+                {{ fmtValue(a, monitorFor(a)) }}
+              </td>
+              <td class="subtle hidden py-3 pr-4 text-right text-xs sm:table-cell">
+                {{ ago(a.started_at) }}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </section>
 
     <!-- ── the rules ─────────────────────────────────────────────────────────── -->
@@ -438,62 +442,65 @@ const recoveredStatus: Status = { tone: 'success', label: 'Recovered' }
         , on the <em>Resource monitor fired</em> event.
       </p>
 
-      <table v-if="monitors?.length" class="w-full text-sm">
-        <thead>
-          <tr class="border-b" :style="{ borderColor: 'var(--border)' }">
-            <th class="eyebrow py-2 pr-4 text-left font-medium">State</th>
-            <th class="eyebrow py-2 pr-4 text-left font-medium">Rule</th>
-            <th class="eyebrow py-2 pr-4 text-left font-medium">Cluster</th>
-            <th class="eyebrow py-2 text-right font-medium">Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr
-            v-for="m in monitors"
-            :key="m.id"
-            class="border-b align-top last:border-0"
-            :class="{ 'opacity-60': !m.enabled }"
-            :style="{ borderColor: 'var(--border)' }"
-          >
-            <td class="py-3 pr-4">
-              <StatusPill :status="monitorState(m)" />
-            </td>
+      <div v-if="monitors?.length" class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="border-b" :style="{ borderColor: 'var(--border)' }">
+              <th class="eyebrow py-2 pr-4 text-left font-medium">State</th>
+              <th class="eyebrow py-2 pr-4 text-left font-medium">Rule</th>
+              <!-- Hidden on phones without loss: the sentence already ends "on <cluster>". -->
+              <th class="eyebrow hidden py-2 pr-4 text-left font-medium md:table-cell">Cluster</th>
+              <th class="eyebrow py-2 text-right font-medium">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr
+              v-for="m in monitors"
+              :key="m.id"
+              class="border-b align-top last:border-0"
+              :class="{ 'opacity-60': !m.enabled }"
+              :style="{ borderColor: 'var(--border)' }"
+            >
+              <td class="py-3 pr-4">
+                <StatusPill :status="monitorState(m)" />
+              </td>
 
-            <td class="py-3 pr-4">
-              <div class="font-medium">{{ m.name }}</div>
-              <div class="subtle mt-0.5 text-xs leading-snug">{{ sentence(m) }}</div>
-            </td>
+              <td class="py-3 pr-4">
+                <div class="font-medium">{{ m.name }}</div>
+                <div class="subtle mt-0.5 text-xs leading-snug">{{ sentence(m) }}</div>
+              </td>
 
-            <td class="py-3 pr-4">
-              <span
-                class="subtle inline-block rounded-md border px-1.5 py-0.5 font-mono text-[10px] whitespace-nowrap"
-                :style="{ borderColor: 'var(--border)' }"
-              >
-                {{ envName(m.env_id) }}
-              </span>
-            </td>
-
-            <td class="py-3">
-              <div class="flex items-center justify-end gap-1">
-                <BaseButton v-if="canEdit" intent="secondary" size="xs" @click="edit(m)">
-                  <AppIcon name="pencil" class="size-3.5" />
-                  Edit
-                </BaseButton>
-                <BaseButton
-                  v-if="canEdit"
-                  intent="danger"
-                  size="xs"
-                  :disabled="busy"
-                  @click="remove(m)"
+              <td class="hidden py-3 pr-4 md:table-cell">
+                <span
+                  class="subtle inline-block rounded-md border px-1.5 py-0.5 font-mono text-[10px] whitespace-nowrap"
+                  :style="{ borderColor: 'var(--border)' }"
                 >
-                  <AppIcon name="trash" class="size-3.5" />
-                  Delete
-                </BaseButton>
-              </div>
-            </td>
-          </tr>
-        </tbody>
-      </table>
+                  {{ envName(m.env_id) }}
+                </span>
+              </td>
+
+              <td class="py-3">
+                <div class="flex items-center justify-end gap-1">
+                  <BaseButton v-if="canEdit" intent="secondary" size="xs" @click="edit(m)">
+                    <AppIcon name="pencil" class="size-3.5" />
+                    Edit
+                  </BaseButton>
+                  <BaseButton
+                    v-if="canEdit"
+                    intent="danger"
+                    size="xs"
+                    :disabled="busy"
+                    @click="remove(m)"
+                  >
+                    <AppIcon name="trash" class="size-3.5" />
+                    Delete
+                  </BaseButton>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
 
       <EmptyState
         v-else
@@ -767,36 +774,40 @@ const recoveredStatus: Status = { tone: 'success', label: 'Recovered' }
         </p>
       </div>
 
-      <table class="w-full text-sm">
-        <thead>
-          <tr class="border-b" :style="{ borderColor: 'var(--border)' }">
-            <th class="eyebrow px-4 py-2 text-left font-medium">State</th>
-            <th class="eyebrow py-2 pr-4 text-left font-medium">Service</th>
-            <th class="eyebrow py-2 pr-4 text-left font-medium">Why it cleared</th>
-            <th class="eyebrow py-2 pr-4 text-right font-medium">Recovered</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr
-            v-for="a in recent"
-            :key="a.id"
-            class="border-b last:border-0"
-            :style="{ borderColor: 'var(--border)' }"
-          >
-            <td class="px-4 py-3">
-              <StatusPill :status="recoveredStatus" />
-            </td>
-            <td class="py-3 pr-4">
-              <span class="font-medium">{{ a.container_name }}</span>
-              <span class="subtle text-xs"> · {{ a.monitor_name }}</span>
-            </td>
-            <td class="muted py-3 pr-4 text-xs">{{ a.resolve_reason }}</td>
-            <td class="subtle py-3 pr-4 text-right text-xs">
-              {{ a.resolved_at ? ago(a.resolved_at) : '' }}
-            </td>
-          </tr>
-        </tbody>
-      </table>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="border-b" :style="{ borderColor: 'var(--border)' }">
+              <th class="eyebrow px-4 py-2 text-left font-medium">State</th>
+              <th class="eyebrow py-2 pr-4 text-left font-medium">Service</th>
+              <th class="eyebrow py-2 pr-4 text-left font-medium">Why it cleared</th>
+              <th class="eyebrow hidden py-2 pr-4 text-right font-medium sm:table-cell">
+                Recovered
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr
+              v-for="a in recent"
+              :key="a.id"
+              class="border-b last:border-0"
+              :style="{ borderColor: 'var(--border)' }"
+            >
+              <td class="px-4 py-3">
+                <StatusPill :status="recoveredStatus" />
+              </td>
+              <td class="py-3 pr-4">
+                <span class="font-medium">{{ a.container_name }}</span>
+                <span class="subtle text-xs"> · {{ a.monitor_name }}</span>
+              </td>
+              <td class="muted py-3 pr-4 text-xs">{{ a.resolve_reason }}</td>
+              <td class="subtle hidden py-3 pr-4 text-right text-xs sm:table-cell">
+                {{ a.resolved_at ? ago(a.resolved_at) : '' }}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </section>
   </div>
 </template>

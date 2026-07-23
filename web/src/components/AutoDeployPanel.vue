@@ -121,7 +121,7 @@ async function askRotate() {
 
         <div v-if="stack.watching?.length" class="muted mt-2 text-xs">
           Currently watching:
-          <code v-for="p in stack.watching" :key="p" class="ml-1 font-mono">{{ p }}</code>
+          <code v-for="p in stack.watching" :key="p" class="ml-1 font-mono break-all">{{ p }}</code>
         </div>
 
         <BaseButton

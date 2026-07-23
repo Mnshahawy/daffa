@@ -423,12 +423,12 @@ async function onRemove(c: GitCredential) {
       </template>
     </EmptyState>
 
-    <div v-else class="surface overflow-hidden rounded-[var(--radius-card)]">
+    <div v-else class="surface overflow-x-auto rounded-[var(--radius-card)]">
       <table class="w-full text-sm">
         <thead>
           <tr class="border-b" :style="{ borderColor: 'var(--border)' }">
             <th class="eyebrow px-4 py-2 text-left font-medium">Credential</th>
-            <th class="eyebrow py-2 pr-4 text-right font-medium">In use</th>
+            <th class="eyebrow hidden py-2 pr-4 text-right font-medium md:table-cell">In use</th>
             <th class="eyebrow py-2 pr-4 text-right font-medium">Actions</th>
           </tr>
         </thead>
@@ -453,7 +453,7 @@ async function onRemove(c: GitCredential) {
                 </div>
               </td>
 
-              <td class="subtle py-3 pr-4 text-right font-mono text-xs">
+              <td class="subtle hidden py-3 pr-4 text-right font-mono text-xs md:table-cell">
                 {{ c.in_use }} stack{{ c.in_use === 1 ? '' : 's' }}
               </td>
 
@@ -494,7 +494,7 @@ async function onRemove(c: GitCredential) {
                     v-model="testUrl"
                     required
                     placeholder="https://git.example.com/me/repo.git"
-                    class="field min-w-[18rem] flex-1 font-mono text-xs"
+                    class="field w-full min-w-0 flex-1 font-mono text-xs sm:w-auto"
                     data-cursor="text"
                   />
                   <BaseButton type="submit" intent="primary" size="sm" :loading="test.isPending.value">

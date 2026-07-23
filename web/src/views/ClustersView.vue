@@ -243,13 +243,13 @@ function installCommand(a: NewAgent): string {
     </div>
 
     <!-- The clusters that exist -->
-    <div class="surface mb-6 overflow-hidden rounded-[var(--radius-card)]">
+    <div class="surface mb-6 overflow-x-auto rounded-[var(--radius-card)]">
       <table class="w-full text-sm">
         <thead>
           <tr class="border-b" :style="{ borderColor: 'var(--border)' }">
             <th class="eyebrow px-4 py-2 text-left font-medium">Status</th>
             <th class="eyebrow py-2 pr-4 text-left font-medium">Cluster</th>
-            <th class="eyebrow py-2 pr-4 text-left font-medium">Transport</th>
+            <th class="eyebrow hidden py-2 pr-4 text-left font-medium md:table-cell">Transport</th>
             <th class="eyebrow py-2 pr-4 text-right font-medium">Actions</th>
           </tr>
         </thead>
@@ -267,9 +267,9 @@ function installCommand(a: NewAgent): string {
                   {{ c.nodes.length }} node{{ c.nodes.length === 1 ? '' : 's' }}
                 </div>
               </td>
-              <td class="subtle py-3 pr-4 font-mono text-xs">{{ transport(c) }}</td>
+              <td class="subtle hidden py-3 pr-4 font-mono text-xs md:table-cell">{{ transport(c) }}</td>
               <td class="py-3 pr-4 text-right">
-                <div class="flex items-center justify-end gap-1">
+                <div class="flex flex-wrap items-center justify-end gap-1">
                   <BaseButton
                     v-if="canAddNode(c)"
                     :intent="addingNodeTo === c.id ? 'primary' : 'secondary'"
@@ -523,13 +523,13 @@ function installCommand(a: NewAgent): string {
       </p>
     </div>
 
-    <div v-if="agents?.length" class="surface overflow-hidden rounded-[var(--radius-card)]">
+    <div v-if="agents?.length" class="surface overflow-x-auto rounded-[var(--radius-card)]">
       <table class="w-full text-sm">
         <thead>
           <tr class="border-b" :style="{ borderColor: 'var(--border)' }">
             <th class="eyebrow px-4 py-2 text-left font-medium">Status</th>
             <th class="eyebrow py-2 pr-4 text-left font-medium">Agent</th>
-            <th class="eyebrow py-2 pr-4 text-left font-medium">Version</th>
+            <th class="eyebrow hidden py-2 pr-4 text-left font-medium md:table-cell">Version</th>
             <th class="eyebrow py-2 pr-4 text-right font-medium">Actions</th>
           </tr>
         </thead>
@@ -549,7 +549,7 @@ function installCommand(a: NewAgent): string {
                 <template v-else>never seen</template>
               </div>
             </td>
-            <td class="subtle py-3 pr-4 font-mono text-xs">{{ a.version || '—' }}</td>
+            <td class="subtle hidden py-3 pr-4 font-mono text-xs md:table-cell">{{ a.version || '—' }}</td>
             <td class="py-3 pr-4 text-right">
               <BaseButton intent="danger" size="xs" :disabled="removeAgent.isPending.value" @click="onRemoveAgent(a)">
                 <AppIcon name="trash" class="size-3.5" />

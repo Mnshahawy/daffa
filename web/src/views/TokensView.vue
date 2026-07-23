@@ -152,13 +152,13 @@ async function onRevoke(t: APIToken) {
         </template>
       </EmptyState>
 
-      <div v-else-if="mine?.length" class="surface overflow-hidden rounded-[var(--radius-card)]">
+      <div v-else-if="mine?.length" class="surface overflow-x-auto rounded-[var(--radius-card)]">
         <table class="w-full text-sm">
           <thead>
             <tr class="border-b" :style="{ borderColor: 'var(--border)' }">
               <th class="eyebrow px-4 py-2 text-left font-medium">Token</th>
               <th class="eyebrow py-2 pr-3 text-left font-medium">Expires</th>
-              <th class="eyebrow py-2 pr-3 text-right font-medium">Last used</th>
+              <th class="eyebrow hidden py-2 pr-3 text-right font-medium md:table-cell">Last used</th>
               <th class="eyebrow py-2 pr-4 text-right font-medium">Actions</th>
             </tr>
           </thead>
@@ -171,7 +171,7 @@ async function onRevoke(t: APIToken) {
               <td class="py-3 pr-3 text-xs" :style="t.expired ? { color: 'var(--danger)' } : {}">
                 {{ t.expired ? 'EXPIRED' : t.expires_at ? new Date(t.expires_at).toLocaleDateString() : 'never' }}
               </td>
-              <td class="subtle py-3 pr-3 text-right font-mono text-xs">{{ when(t.last_used_at) }}</td>
+              <td class="subtle hidden py-3 pr-3 text-right font-mono text-xs md:table-cell">{{ when(t.last_used_at) }}</td>
               <td class="py-3 pr-4 text-right">
                 <BaseButton intent="danger" size="xs" :disabled="remove.isPending.value" @click="onRevoke(t)">
                   <AppIcon name="trash" class="size-3.5" />
@@ -194,14 +194,14 @@ async function onRevoke(t: APIToken) {
           once.
         </p>
       </div>
-      <div class="surface overflow-hidden rounded-[var(--radius-card)]">
+      <div class="surface overflow-x-auto rounded-[var(--radius-card)]">
         <table class="w-full text-sm">
           <thead>
             <tr class="border-b" :style="{ borderColor: 'var(--border)' }">
               <th class="eyebrow px-4 py-2 text-left font-medium">Token</th>
               <th class="eyebrow py-2 pr-3 text-left font-medium">Owner</th>
               <th class="eyebrow py-2 pr-3 text-left font-medium">Expires</th>
-              <th class="eyebrow py-2 pr-3 text-right font-medium">Last used</th>
+              <th class="eyebrow hidden py-2 pr-3 text-right font-medium md:table-cell">Last used</th>
               <th class="eyebrow py-2 pr-4 text-right font-medium">Actions</th>
             </tr>
           </thead>
@@ -215,7 +215,7 @@ async function onRevoke(t: APIToken) {
               <td class="py-3 pr-3 text-xs" :style="t.expired ? { color: 'var(--danger)' } : {}">
                 {{ t.expired ? 'EXPIRED' : t.expires_at ? new Date(t.expires_at).toLocaleDateString() : 'never' }}
               </td>
-              <td class="subtle py-3 pr-3 text-right font-mono text-xs">{{ when(t.last_used_at) }}</td>
+              <td class="subtle hidden py-3 pr-3 text-right font-mono text-xs md:table-cell">{{ when(t.last_used_at) }}</td>
               <td class="py-3 pr-4 text-right">
                 <BaseButton intent="danger" size="xs" :disabled="remove.isPending.value" @click="onRevoke(t)">
                   <AppIcon name="trash" class="size-3.5" />

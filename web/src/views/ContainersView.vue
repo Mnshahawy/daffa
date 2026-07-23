@@ -133,7 +133,7 @@ function ports(c: Container): string {
         <SearchInput
           v-model="filter"
           placeholder="Name, image, or project…"
-          class="w-72"
+          class="w-full sm:w-72"
         />
       </template>
     </PageHeader>
@@ -161,27 +161,24 @@ function ports(c: Container): string {
                  Each project is its own <table>, and with the browser's automatic layout each
                  one sized its columns to its own contents — so `api`'s CPU column landed
                  in a different place from `web_devcontainer`'s, and the eye could not run
-                 down a column that did not stay still. -->
-            <colgroup>
-              <col class="w-[9.5rem]" />
-              <col />
-              <col class="w-20" />
-              <col class="w-24" />
-              <col class="w-52" />
-              <col class="w-[13rem]" />
-            </colgroup>
+                 down a column that did not stay still.
+
+                 The widths live on the header cells, not a <colgroup>: <col> elements map to
+                 columns by position with no idea which cells a breakpoint has hidden, so on a
+                 phone the actions column inherited CPU's 5rem and its buttons landed on top
+                 of the container names. -->
 
             <!-- The columns say what they are. Before, CPU and memory were two unlabelled
                  numeric columns and the only way to tell them apart was to know which was
                  which. -->
             <thead>
               <tr class="border-b" :style="{ borderColor: 'var(--border)' }">
-                <th class="eyebrow px-4 py-2 text-left font-medium">Status</th>
+                <th class="eyebrow w-[9.5rem] px-4 py-2 text-left font-medium">Status</th>
                 <th class="eyebrow py-2 pr-4 text-left font-medium">Container</th>
-                <th class="eyebrow hidden py-2 pr-4 text-right font-medium md:table-cell">CPU</th>
-                <th class="eyebrow hidden py-2 pr-4 text-right font-medium md:table-cell">Memory</th>
-                <th class="eyebrow hidden py-2 pr-4 text-left font-medium lg:table-cell">Ports</th>
-                <th class="eyebrow py-2 pr-4 text-right font-medium">
+                <th class="eyebrow hidden w-20 py-2 pr-4 text-right font-medium md:table-cell">CPU</th>
+                <th class="eyebrow hidden w-24 py-2 pr-4 text-right font-medium md:table-cell">Memory</th>
+                <th class="eyebrow hidden w-52 py-2 pr-4 text-left font-medium lg:table-cell">Ports</th>
+                <th class="eyebrow w-12 py-2 pr-4 text-right font-medium md:w-[13rem]">
                   <span class="sr-only">Actions</span>
                 </th>
               </tr>

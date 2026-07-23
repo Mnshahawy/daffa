@@ -59,7 +59,7 @@ function rolledBack(s: Service): boolean {
           v-if="services?.length"
           v-model="filter"
           placeholder="Name, image, or stack…"
-          class="w-64"
+          class="w-full sm:w-64"
         />
       </template>
     </PageHeader>
@@ -75,14 +75,14 @@ function rolledBack(s: Service): boolean {
 
     <p v-else-if="!shown.length" class="muted text-sm">No services match “{{ filter }}”.</p>
 
-    <div v-else class="surface overflow-hidden rounded-[var(--radius-card)]">
+    <div v-else class="surface overflow-x-auto rounded-[var(--radius-card)]">
       <table class="w-full text-sm">
         <thead>
           <tr class="border-b" :style="{ borderColor: 'var(--border)' }">
             <th class="eyebrow px-4 py-2 text-left font-medium">Service</th>
             <th class="eyebrow py-2 pr-4 text-left font-medium">State</th>
             <th class="eyebrow py-2 pr-4 text-right font-medium">Replicas</th>
-            <th class="eyebrow py-2 pr-4 text-left font-medium">Ports</th>
+            <th class="eyebrow hidden py-2 pr-4 text-left font-medium md:table-cell">Ports</th>
           </tr>
         </thead>
 
@@ -101,7 +101,7 @@ function rolledBack(s: Service): boolean {
             >
               <td class="py-3 pl-4 pr-4">
                 <div class="font-medium">{{ s.name }}</div>
-                <div class="subtle mt-0.5 font-mono text-xs">
+                <div class="subtle mt-0.5 break-all font-mono text-xs">
                   {{ s.tag }}
                   <span v-if="s.stack"> · {{ s.stack }}</span>
                   <span v-if="s.mode === 'global'"> · global</span>
@@ -121,7 +121,7 @@ function rolledBack(s: Service): boolean {
                 <span class="subtle">{{ s.mode === 'global' ? ' nodes' : '' }}</span>
               </td>
 
-              <td class="muted py-3 pr-4 font-mono text-xs">
+              <td class="muted hidden py-3 pr-4 font-mono text-xs md:table-cell">
                 <span v-if="s.ports?.length">{{ s.ports.join(', ') }}</span>
                 <span v-else class="subtle">—</span>
               </td>

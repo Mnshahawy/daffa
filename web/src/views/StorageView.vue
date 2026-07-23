@@ -169,12 +169,12 @@ async function onRemove(t: StorageTarget) {
       </template>
     </EmptyState>
 
-    <div v-else class="surface overflow-hidden rounded-[var(--radius-card)]">
+    <div v-else class="surface overflow-x-auto rounded-[var(--radius-card)]">
       <table class="w-full text-sm">
         <thead>
           <tr class="border-b" :style="{ borderColor: 'var(--border)' }">
             <th class="eyebrow px-4 py-2 text-left font-medium">Target</th>
-            <th class="eyebrow py-2 pr-4 text-right font-medium">In use</th>
+            <th class="eyebrow hidden py-2 pr-4 text-right font-medium md:table-cell">In use</th>
             <th class="eyebrow py-2 pr-4 text-right font-medium">Actions</th>
           </tr>
         </thead>
@@ -186,14 +186,14 @@ async function onRemove(t: StorageTarget) {
             class="border-b transition last:border-0 hover:bg-[var(--surface-sunken)]"
             :style="{ borderColor: 'var(--border)' }"
           >
-            <td class="py-3 pl-4 pr-4">
+            <td class="max-w-0 py-3 pl-4 pr-4">
               <div class="font-medium">{{ t.name }}</div>
               <div class="subtle mt-0.5 truncate font-mono text-xs">
                 {{ t.endpoint }}/{{ t.bucket }}
               </div>
             </td>
 
-            <td class="subtle py-3 pr-4 text-right font-mono text-xs">
+            <td class="subtle hidden py-3 pr-4 text-right font-mono text-xs md:table-cell">
               {{ t.in_use }} job{{ t.in_use === 1 ? '' : 's' }}
             </td>
 

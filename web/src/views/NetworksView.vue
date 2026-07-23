@@ -72,7 +72,7 @@ async function onRemove(n: Network) {
           v-if="networks?.length"
           v-model="filter"
           placeholder="Name, driver, or container…"
-          class="w-64"
+          class="w-full sm:w-64"
         />
         <PruneButton target="networks" label="Prune unused" />
       </template>
@@ -89,13 +89,13 @@ async function onRemove(n: Network) {
 
     <p v-else-if="!shown.length" class="muted text-sm">No networks match “{{ filter }}”.</p>
 
-    <div v-else class="surface overflow-hidden rounded-[var(--radius-card)]">
+    <div v-else class="surface overflow-x-auto rounded-[var(--radius-card)]">
       <table class="w-full text-sm">
         <thead>
           <tr class="border-b" :style="{ borderColor: 'var(--border)' }">
             <th class="eyebrow px-4 py-2 text-left font-medium">Network</th>
             <th class="eyebrow py-2 pr-4 text-left font-medium">Kind</th>
-            <th class="eyebrow py-2 pr-4 text-right font-medium">Attached</th>
+            <th class="eyebrow hidden py-2 pr-4 text-right font-medium md:table-cell">Attached</th>
             <th class="eyebrow py-2 pr-4 text-right font-medium">
               <span class="sr-only">Actions</span>
             </th>
@@ -110,7 +110,7 @@ async function onRemove(n: Network) {
             :style="{ borderColor: 'var(--border)' }"
           >
             <td class="py-3 pl-4 pr-4">
-              <div class="font-medium">{{ n.name }}</div>
+              <div class="break-all font-medium">{{ n.name }}</div>
               <div class="subtle mt-0.5 font-mono text-xs">
                 {{ n.driver }}<span v-if="n.internal"> · internal</span>
               </div>
@@ -130,7 +130,7 @@ async function onRemove(n: Network) {
             </td>
 
             <!-- The count, not the sentence. It is the number you compare down the column. -->
-            <td class="muted py-3 pr-4 text-right font-mono text-xs">
+            <td class="muted hidden py-3 pr-4 text-right font-mono text-xs md:table-cell">
               {{ n.containers?.length ?? 0 }}
             </td>
 
