@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Mnshahawy/daffa/internal/auth"
+	"github.com/Mnshahawy/daffa/internal/caps"
 	"github.com/Mnshahawy/daffa/internal/certs"
 	"github.com/Mnshahawy/daffa/internal/httpx"
 	"github.com/Mnshahawy/daffa/internal/store"
@@ -38,8 +39,10 @@ type caView struct {
 	RotatesID string     `json:"rotates_id,omitempty"`
 	Overlap   *time.Time `json:"overlap_until,omitempty"`
 	WarnDays  int        `json:"warn_days"`
-	InUse     int        `json:"in_use"`    // certificates this CA signed
+	InUse     int        `json:"in_use"`    // certificates this CA signed + deliveries selecting it
 	Protected bool       `json:"protected"` // part of the deployment; delete refused
+	// OutboundTrust: whether Daffa's own registry/git reach-out trusts this CA.
+	OutboundTrust bool `json:"outbound_trust"`
 }
 
 func viewCA(ca *store.CertAuthority, inUse int) caView {
@@ -47,7 +50,7 @@ func viewCA(ca *store.CertAuthority, inUse int) caView {
 		ID: ca.ID, Name: ca.Name, Subject: ca.Subject, KeyAlgo: ca.KeyAlgo,
 		CanSign: ca.CanSign(), NotBefore: ca.NotBefore, NotAfter: ca.NotAfter,
 		Status: ca.Status, RotatesID: ca.RotatesID, WarnDays: ca.WarnDays, InUse: inUse,
-		Protected: ca.Protected,
+		Protected: ca.Protected, OutboundTrust: ca.OutboundTrust,
 	}
 	if !ca.OverlapUntil.IsZero() {
 		t := ca.OverlapUntil
@@ -83,6 +86,10 @@ type caRequest struct {
 	// anchor Daffa can bundle and deliver but never sign with.
 	CertPEM string `json:"cert_pem"`
 	KeyPEM  string `json:"key_pem"`
+
+	// Whether Daffa's own outbound TLS (registry, git) trusts this CA. Absent = true,
+	// the historical behaviour; false is for a CA that exists only to be bundled.
+	OutboundTrust *bool `json:"outbound_trust"`
 }
 
 func (s *Server) handleCreateCA(w http.ResponseWriter, r *http.Request) {
@@ -97,7 +104,10 @@ func (s *Server) handleCreateCA(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ca := &store.CertAuthority{Name: req.Name, Status: "active"}
+	ca := &store.CertAuthority{Name: req.Name, Status: "active", OutboundTrust: true}
+	if req.OutboundTrust != nil {
+		ca.OutboundTrust = *req.OutboundTrust
+	}
 
 	if strings.TrimSpace(req.CertPEM) != "" {
 		// Upload. This is how the existing internal-ca.{crt,key} comes in.
@@ -211,6 +221,43 @@ func (s *Server) handleDeleteCA(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
+// caUpdateRequest edits the one CA setting that is a setting: whether Daffa's own
+// outbound TLS trusts this root. Everything else about a CA is either immutable fact
+// (the certificate) or a rotation-state transition with its own route.
+type caUpdateRequest struct {
+	OutboundTrust *bool `json:"outbound_trust"`
+}
+
+func (s *Server) handleUpdateCA(w http.ResponseWriter, r *http.Request) {
+	ca, err := s.store.CertAuthorityByID(r.Context(), r.PathValue("id"))
+	if errors.Is(err, store.ErrNotFound) {
+		httpx.Fail(w, r, http.StatusNotFound, "no_such_ca", "No such certificate authority.")
+		return
+	}
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	var req caUpdateRequest
+	if err := httpx.Decode(w, r, &req); err != nil {
+		httpx.BadRequest(w, r, err.Error())
+		return
+	}
+	if req.OutboundTrust != nil {
+		ca.OutboundTrust = *req.OutboundTrust
+	}
+	if err := s.store.UpdateCertAuthority(r.Context(), ca); err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	n, _ := s.store.CertAuthorityInUse(r.Context(), ca.ID)
+	s.audit(r.Context(), store.AuditEntry{
+		Action: "ca.update", Target: ca.Name, Outcome: "ok",
+		Detail: store.AuditDetail(map[string]any{"outbound_trust": ca.OutboundTrust}),
+	})
+	httpx.JSON(w, http.StatusOK, viewCA(ca, n))
+}
+
 // caRotateRequest stages a successor. Everything is defaultable: the CN mirrors the
 // incumbent (rotation is not a rename), the name gets a -next suffix, and the overlap
 // window defaults to 30 days.
@@ -308,6 +355,9 @@ func (s *Server) handleRotateCA(w http.ResponseWriter, r *http.Request) {
 		Status: "next", RotatesID: ca.ID,
 		OverlapUntil: time.Now().AddDate(0, 0, req.OverlapDays),
 		WarnDays:     ca.WarnDays,
+		// Rotation is not a policy change: the successor is trusted for outbound
+		// exactly as far as the root it replaces.
+		OutboundTrust: ca.OutboundTrust,
 	}
 	if u, ok := auth.UserFrom(r.Context()); ok {
 		next.CreatedBy = u.ID
@@ -383,7 +433,10 @@ func (s *Server) handleActivateCA(w http.ResponseWriter, r *http.Request) {
 	}
 
 	next.Status = "active"
-	next.RotatesID = ""
+	// RotatesID is KEPT, now as a back-pointer: it is what lets a delivery whose
+	// selection was rewritten to the promoted root keep carrying the retired one
+	// through its overlap window (see trustBundle). Stale once the retired CA is
+	// deleted, which expansion treats as "nothing to add".
 	if err := s.store.UpdateCertAuthority(r.Context(), next); err != nil {
 		httpx.Error(w, r, err)
 		return
@@ -394,6 +447,13 @@ func (s *Server) handleActivateCA(w http.ResponseWriter, r *http.Request) {
 		// ends, then falls out on its own.
 		old.OverlapUntil = next.OverlapUntil
 		if err := s.store.UpdateCertAuthority(r.Context(), old); err != nil {
+			httpx.Error(w, r, err)
+			return
+		}
+		// Selections follow the lineage: every delivery that named the old root now
+		// names its successor, so an explicitly-selected bundle survives the rotation
+		// exactly like the full one.
+		if err := s.store.ReplaceCAInDeliveryBundles(r.Context(), old.ID, next.ID); err != nil {
 			httpx.Error(w, r, err)
 			return
 		}
@@ -424,7 +484,7 @@ func (s *Server) resignLeaves(ctx context.Context, from, to *store.CertAuthority
 		if err != nil {
 			return fmt.Errorf("could not decrypt the key for %s (was the master key replaced?)", c.Name)
 		}
-		renewed, err := certs.Renew(to.CertPEM, toKey, c.CertPEM, leafKey, c.ValidityDays)
+		renewed, err := certs.Renew(to.CertPEM, toKey, c.CertPEM, leafKey, c.ValidityDays, c.Usages)
 		if err != nil {
 			return fmt.Errorf("re-signing %s: %w", c.Name, err)
 		}
@@ -444,14 +504,47 @@ func (s *Server) resignLeaves(ctx context.Context, from, to *store.CertAuthority
 }
 
 // trustBundle is every root a client should currently trust: active and staged CAs always,
-// retired ones until their announced overlap window has passed.
-func (s *Server) trustBundle(ctx context.Context) (string, error) {
+// retired ones until their announced overlap window has passed. A non-empty selection
+// narrows it to those CA ids — expanded by LINEAGE, so a rotation behaves identically for
+// a selected bundle and the full one: a staged successor rides along via its rotates_id,
+// and after activation the promoted root (now carrying rotates_id as a back-pointer, and
+// substituted into selections by ReplaceCAInDeliveryBundles) drags the retired incumbent
+// through its overlap window.
+func (s *Server) trustBundle(ctx context.Context, selected []string) (string, error) {
 	cas, err := s.store.ListCertAuthorities(ctx)
 	if err != nil {
 		return "", err
 	}
+
+	wanted := func(*store.CertAuthority) bool { return true }
+	if len(selected) > 0 {
+		sel := map[string]bool{}
+		for _, id := range selected {
+			sel[id] = true
+		}
+		wanted = func(ca *store.CertAuthority) bool {
+			if sel[ca.ID] {
+				return true
+			}
+			// Lineage: a staged successor of a selected root, or — via the successor's
+			// back-pointer — the retired root a selected successor replaced.
+			if ca.RotatesID != "" && ca.Status == "next" && sel[ca.RotatesID] {
+				return true
+			}
+			for _, other := range cas {
+				if sel[other.ID] && other.RotatesID == ca.ID {
+					return true
+				}
+			}
+			return false
+		}
+	}
+
 	var pems []string
 	for _, ca := range cas {
+		if !wanted(ca) {
+			continue
+		}
 		switch ca.Status {
 		case "active", "next":
 			pems = append(pems, ca.CertPEM)
@@ -465,7 +558,7 @@ func (s *Server) trustBundle(ctx context.Context) (string, error) {
 }
 
 func (s *Server) handleTrustBundle(w http.ResponseWriter, r *http.Request) {
-	bundle, err := s.trustBundle(r.Context())
+	bundle, err := s.trustBundle(r.Context(), nil)
 	if err != nil {
 		httpx.Error(w, r, err)
 		return
@@ -481,9 +574,12 @@ func (s *Server) handleTrustBundle(w http.ResponseWriter, r *http.Request) {
 type certView struct {
 	ID              string    `json:"id"`
 	Name            string    `json:"name"`
+	EnvID           string    `json:"env_id,omitempty"` // empty = shared with every environment
+	EnvName         string    `json:"env_name,omitempty"`
 	CAID            string    `json:"ca_id,omitempty"`
 	CAName          string    `json:"ca_name,omitempty"`
 	SANs            []string  `json:"sans"`
+	Usages          []string  `json:"usages"` // server | client
 	KeyAlgo         string    `json:"key_algo,omitempty"`
 	NotBefore       time.Time `json:"not_before"`
 	NotAfter        time.Time `json:"not_after"`
@@ -495,19 +591,24 @@ type certView struct {
 	Protected       bool      `json:"protected"` // part of the deployment; delete refused
 }
 
-func viewCert(c *store.Certificate, caName string, inUse int) certView {
-	return certView{
-		ID: c.ID, Name: c.Name, CAID: c.CAID, CAName: caName,
-		SANs: strings.Fields(c.SANs), KeyAlgo: c.KeyAlgo,
+func (s *Server) viewCert(ctx context.Context, c *store.Certificate, caName string, inUse int) certView {
+	v := certView{
+		ID: c.ID, Name: c.Name, EnvID: c.EnvID, CAID: c.CAID, CAName: caName,
+		SANs: strings.Fields(c.SANs), Usages: strings.Fields(c.Usages), KeyAlgo: c.KeyAlgo,
 		NotBefore: c.NotBefore, NotAfter: c.NotAfter,
 		ValidityDays: c.ValidityDays, RenewBeforeDays: c.RenewBeforeDays,
 		Status: c.Status, LastError: c.LastError, InUse: inUse,
 		Protected: c.Protected,
 	}
+	if c.EnvID != "" {
+		v.EnvName = s.envName(ctx, c.EnvID)
+	}
+	return v
 }
 
 func (s *Server) handleListCertificates(w http.ResponseWriter, r *http.Request) {
-	list, err := s.store.ListCertificates(r.Context())
+	global, envs := visible(r, caps.CertsView)
+	list, err := s.store.ListCertificates(r.Context(), global, envs)
 	if err != nil {
 		httpx.Error(w, r, err)
 		return
@@ -521,17 +622,21 @@ func (s *Server) handleListCertificates(w http.ResponseWriter, r *http.Request) 
 	out := make([]certView, 0, len(list))
 	for _, c := range list {
 		n, _ := s.store.CertificateInUse(r.Context(), c.ID)
-		out = append(out, viewCert(c, caName[c.CAID], n))
+		out = append(out, s.viewCert(r.Context(), c, caName[c.CAID], n))
 	}
 	httpx.JSON(w, http.StatusOK, out)
 }
 
 type certRequest struct {
 	Name string `json:"name"`
+	// Empty = shared with every environment. Immutable after create, like the name:
+	// deliveries have already placed this cert under its visibility.
+	EnvID string `json:"env_id"`
 
 	// Issue mode.
 	CAID            string   `json:"ca_id"`
 	SANs            []string `json:"sans"`
+	Usages          []string `json:"usages"` // server | client; empty = server
 	KeyAlgo         string   `json:"key_algo"`
 	ValidityDays    int      `json:"validity_days"`
 	RenewBeforeDays int      `json:"renew_before_days"`
@@ -556,6 +661,16 @@ func (s *Server) handleCreateCertificate(w http.ResponseWriter, r *http.Request)
 
 	c := &store.Certificate{Name: req.Name, RenewBeforeDays: req.RenewBeforeDays}
 
+	// An env-scoped cert must name a real environment. No mayUseEnv: certs.edit is
+	// global-only, so the env here is placement, not an access decision.
+	if req.EnvID != "" {
+		if _, err := s.store.EnvironmentByID(r.Context(), req.EnvID); err != nil {
+			httpx.BadRequest(w, r, "No such environment.")
+			return
+		}
+		c.EnvID = req.EnvID
+	}
+
 	if strings.TrimSpace(req.CertPEM) != "" {
 		// Upload: tracked, delivered, alerted on — but only its owner can renew it.
 		if err := certs.ValidateLeafUpload(req.CertPEM, req.ChainPEM, req.KeyPEM); err != nil {
@@ -570,6 +685,9 @@ func (s *Server) handleCreateCertificate(w http.ResponseWriter, r *http.Request)
 		}
 		c.CertPEM, c.ChainPEM, c.KeyEnc = req.CertPEM, req.ChainPEM, sealed
 		c.SANs = strings.Join(certs.SANList(parsed), " ")
+		// Usages are a fact about the uploaded PEM, recorded for display; Daffa never
+		// re-signs an upload, so they are never fed back into a signing.
+		c.Usages = certs.UsagesOf(parsed)
 		c.KeyAlgo = certs.DescribeKey(parsed.PublicKey)
 		c.NotBefore, c.NotAfter = parsed.NotBefore, parsed.NotAfter
 		c.ValidityDays = int(parsed.NotAfter.Sub(parsed.NotBefore).Hours() / 24)
@@ -594,6 +712,11 @@ func (s *Server) handleCreateCertificate(w http.ResponseWriter, r *http.Request)
 			httpx.BadRequest(w, r, "At least one SAN is required — the hostnames (or IPs) this certificate will serve.")
 			return
 		}
+		usages, err := certs.NormalizeUsages(req.Usages)
+		if err != nil {
+			httpx.Fail(w, r, http.StatusBadRequest, "bad_usages", err.Error())
+			return
+		}
 		algo := certs.KeyAlgo(req.KeyAlgo)
 		if algo == "" {
 			algo = certs.ECDSAP256
@@ -606,7 +729,7 @@ func (s *Server) handleCreateCertificate(w http.ResponseWriter, r *http.Request)
 			httpx.Error(w, r, errors.New("could not decrypt the CA key (was the master key replaced?)"))
 			return
 		}
-		certPEM, keyPEM, err := certs.Issue(ca.CertPEM, caKey, sans, algo, req.ValidityDays)
+		certPEM, keyPEM, err := certs.Issue(ca.CertPEM, caKey, sans, algo, req.ValidityDays, usages)
 		if err != nil {
 			httpx.Fail(w, r, http.StatusBadRequest, "issue_failed", err.Error())
 			return
@@ -620,6 +743,7 @@ func (s *Server) handleCreateCertificate(w http.ResponseWriter, r *http.Request)
 		c.CAID = ca.ID
 		c.CertPEM, c.KeyEnc = certPEM, sealed
 		c.SANs = strings.Join(sans, " ")
+		c.Usages = usages
 		c.KeyAlgo = string(algo)
 		c.NotBefore, c.NotAfter = parsed.NotBefore, parsed.NotAfter
 		c.ValidityDays = req.ValidityDays
@@ -634,10 +758,11 @@ func (s *Server) handleCreateCertificate(w http.ResponseWriter, r *http.Request)
 	}
 
 	s.audit(r.Context(), store.AuditEntry{
+		EnvID:  c.EnvID,
 		Action: "cert.create", Target: c.Name, Outcome: "ok",
-		Detail: store.AuditDetail(map[string]any{"sans": c.SANs, "issued": c.Issued()}),
+		Detail: store.AuditDetail(map[string]any{"sans": c.SANs, "usages": c.Usages, "issued": c.Issued()}),
 	})
-	httpx.JSON(w, http.StatusOK, viewCert(c, "", 0))
+	httpx.JSON(w, http.StatusOK, s.viewCert(r.Context(), c, "", 0))
 }
 
 func (s *Server) certByPath(w http.ResponseWriter, r *http.Request) (*store.Certificate, bool) {
@@ -674,6 +799,13 @@ func (s *Server) handleUpdateCertificate(w http.ResponseWriter, r *http.Request)
 			"A certificate's name becomes filenames inside delivered volumes and cannot change. Create a new certificate instead.")
 		return
 	}
+	// So is the environment: deliveries were created under this cert's visibility, and a
+	// move would strand or newly-expose key material already written to hosts.
+	if req.EnvID != "" && req.EnvID != c.EnvID {
+		httpx.Fail(w, r, http.StatusBadRequest, "immutable_env",
+			"A certificate's environment is fixed at creation. Create a new certificate in the other environment instead.")
+		return
+	}
 	if req.RenewBeforeDays > 0 {
 		c.RenewBeforeDays = req.RenewBeforeDays
 	}
@@ -701,16 +833,34 @@ func (s *Server) handleUpdateCertificate(w http.ResponseWriter, r *http.Request)
 		}
 		c.CertPEM, c.ChainPEM, c.KeyEnc = req.CertPEM, req.ChainPEM, sealed
 		c.SANs = strings.Join(certs.SANList(parsed), " ")
+		c.Usages = certs.UsagesOf(parsed)
 		c.KeyAlgo = certs.DescribeKey(parsed.PublicKey)
 		c.NotBefore, c.NotAfter = parsed.NotBefore, parsed.NotAfter
 		c.Status, c.LastError = "ok", ""
 		detail["reuploaded"] = true
 	}
 
-	if sans := cleanSANs(req.SANs); len(sans) > 0 && strings.Join(sans, " ") != c.SANs {
+	// SANs and usages edit the same way: on an issued cert either re-issues immediately
+	// with the same key; on an uploaded one both are facts about the PEM, not settings.
+	sans := cleanSANs(req.SANs)
+	if len(sans) == 0 || strings.Join(sans, " ") == c.SANs {
+		sans = nil
+	}
+	usages := ""
+	if len(req.Usages) > 0 {
+		u, err := certs.NormalizeUsages(req.Usages)
+		if err != nil {
+			httpx.Fail(w, r, http.StatusBadRequest, "bad_usages", err.Error())
+			return
+		}
+		if u != c.Usages {
+			usages = u
+		}
+	}
+	if sans != nil || usages != "" {
 		if !c.Issued() {
 			httpx.Fail(w, r, http.StatusBadRequest, "uploaded_certificate",
-				"An uploaded certificate's SANs are facts about it, not settings. Upload a replacement instead.")
+				"An uploaded certificate's SANs and usages are facts about it, not settings. Upload a replacement instead.")
 			return
 		}
 		ca, caKey, err := s.signingCA(r.Context(), c.CAID)
@@ -723,7 +873,13 @@ func (s *Server) handleUpdateCertificate(w http.ResponseWriter, r *http.Request)
 			httpx.Error(w, r, errors.New("could not decrypt the certificate's key (was the master key replaced?)"))
 			return
 		}
-		reissued, err := certs.Reissue(ca.CertPEM, caKey, leafKey, sans, c.ValidityDays)
+		if sans == nil {
+			sans = strings.Fields(c.SANs)
+		}
+		if usages == "" {
+			usages = c.Usages
+		}
+		reissued, err := certs.Reissue(ca.CertPEM, caKey, leafKey, sans, c.ValidityDays, usages)
 		if err != nil {
 			httpx.Fail(w, r, http.StatusBadRequest, "reissue_failed", err.Error())
 			return
@@ -731,9 +887,11 @@ func (s *Server) handleUpdateCertificate(w http.ResponseWriter, r *http.Request)
 		parsed, _ := certs.ParseCert(reissued)
 		c.CertPEM = reissued
 		c.SANs = strings.Join(sans, " ")
+		c.Usages = usages
 		c.NotBefore, c.NotAfter = parsed.NotBefore, parsed.NotAfter
 		c.Status, c.LastError = "ok", ""
 		detail["sans"] = c.SANs
+		detail["usages"] = c.Usages
 	}
 
 	if err := s.store.UpdateCertificate(r.Context(), c); err != nil {
@@ -744,7 +902,7 @@ func (s *Server) handleUpdateCertificate(w http.ResponseWriter, r *http.Request)
 		Action: "cert.update", Target: c.Name, Outcome: "ok", Detail: store.AuditDetail(detail),
 	})
 	s.resyncDeliveries(r.Context())
-	httpx.JSON(w, http.StatusOK, viewCert(c, "", 0))
+	httpx.JSON(w, http.StatusOK, s.viewCert(r.Context(), c, "", 0))
 }
 
 // certRenewRequest asks for an early renewal; rotate_key also mints a fresh private key.
@@ -778,7 +936,7 @@ func (s *Server) handleRenewCertificate(w http.ResponseWriter, r *http.Request) 
 
 	if req.RotateKey {
 		certPEM, keyPEM, err := certs.Issue(ca.CertPEM, caKey, strings.Fields(c.SANs),
-			certs.KeyAlgo(c.KeyAlgo), c.ValidityDays)
+			certs.KeyAlgo(c.KeyAlgo), c.ValidityDays, c.Usages)
 		if err != nil {
 			httpx.Fail(w, r, http.StatusBadRequest, "issue_failed", err.Error())
 			return
@@ -797,7 +955,7 @@ func (s *Server) handleRenewCertificate(w http.ResponseWriter, r *http.Request) 
 			httpx.Error(w, r, errors.New("could not decrypt the certificate's key (was the master key replaced?)"))
 			return
 		}
-		renewed, err := certs.Renew(ca.CertPEM, caKey, c.CertPEM, leafKey, c.ValidityDays)
+		renewed, err := certs.Renew(ca.CertPEM, caKey, c.CertPEM, leafKey, c.ValidityDays, c.Usages)
 		if err != nil {
 			httpx.Fail(w, r, http.StatusBadRequest, "renew_failed", err.Error())
 			return
@@ -821,7 +979,7 @@ func (s *Server) handleRenewCertificate(w http.ResponseWriter, r *http.Request) 
 		Detail: store.AuditDetail(map[string]any{"rotate_key": req.RotateKey, "not_after": c.NotAfter}),
 	})
 	s.resyncDeliveries(r.Context())
-	httpx.JSON(w, http.StatusOK, viewCert(c, "", 0))
+	httpx.JSON(w, http.StatusOK, s.viewCert(r.Context(), c, "", 0))
 }
 
 func (s *Server) handleDeleteCertificate(w http.ResponseWriter, r *http.Request) {

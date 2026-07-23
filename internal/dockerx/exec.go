@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/docker/docker/api/types/container"
 )
@@ -79,19 +80,29 @@ func (e *Node) Exec(ctx context.Context, id string, cmd []string, rows, cols uin
 
 var ErrNoShell = errors.New("no shell in container")
 
-// detectShell finds a shell the container actually has. `docker exec` fails at start
-// if the binary is missing, so we ask the container to check rather than guessing and
-// handing the user an opaque OCI error.
+// detectShell finds a shell the container actually has. A candidate says "no" two ways,
+// depending on daemon version: older daemons fail exec START when the binary is missing,
+// newer ones (Docker 28+) start the exec fine and it exits 127. Every OTHER failure —
+// container not running, gone, daemon unreachable — is about the container, not the
+// shell, and must surface as itself: reporting it as "distroless image" sends the
+// operator debugging the wrong thing entirely.
 func (e *Node) detectShell(ctx context.Context, id string) (string, error) {
+	var lastErr error
 	for _, shell := range shellCandidates {
 		created, err := e.Client.ContainerExecCreate(ctx, id, container.ExecOptions{
 			Cmd:          []string{shell, "-c", "exit 0"},
 			AttachStdout: true,
 		})
 		if err != nil {
-			continue
+			// Create never sees the binary; it fails over the container's state.
+			// The next candidate cannot fare better — stop and say what happened.
+			return "", fmt.Errorf("dockerx: probing for a shell in %s: %w", id, err)
 		}
 		if err := e.Client.ContainerExecStart(ctx, created.ID, container.ExecStartOptions{}); err != nil {
+			if missingBinary(err) {
+				continue // this candidate's honest "no", pre-Docker-28 spelling
+			}
+			lastErr = err
 			continue
 		}
 
@@ -100,5 +111,16 @@ func (e *Node) detectShell(ctx context.Context, id string) (string, error) {
 			return shell, nil
 		}
 	}
+	if lastErr != nil {
+		return "", fmt.Errorf("dockerx: probing for a shell in %s: %w", id, lastErr)
+	}
 	return "", fmt.Errorf("%w: tried %v — a distroless or scratch image has no shell to attach to", ErrNoShell, shellCandidates)
+}
+
+// missingBinary recognizes the daemon's ways of saying the exec'd path does not exist.
+// String matching is what there is: the error crosses the HTTP API as text.
+func missingBinary(err error) bool {
+	msg := err.Error()
+	return strings.Contains(msg, "executable file not found") ||
+		strings.Contains(msg, "no such file or directory")
 }

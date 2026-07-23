@@ -7374,6 +7374,159 @@
         }
       }
     },
+    "/api/certs/cas/{id}": {
+      "put": {
+        "operationId": "updateCA",
+        "tags": [
+          "certificates \u0026 encryption keys"
+        ],
+        "summary": "Update a CA — outbound trust for Daffa's own TLS reach-out",
+        "description": "The one CA setting that is a setting: whether Daffa's own outbound TLS (registry reach-out, git clones) trusts this root. Off for a CA that exists only to be bundled into deliveries.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
+        "x-daffa-capability": "certs.edit",
+        "x-daffa-scope": "global",
+        "requestBody": {
+          "description": "Request bodies are capped at 1 MiB; unknown fields are refused.",
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CaUpdateRequest"
+              },
+              "example": {
+                "outbound_trust": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CertAuthority"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is wrong, and the message says how to fix it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No live session or valid token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but the capability is not held at the required scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Nothing lives at that id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something went wrong on the server; the audit log has the details.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteCA",
+        "tags": [
+          "certificates \u0026 encryption keys"
+        ],
+        "summary": "Delete a CA that signed nothing still tracked",
+        "description": "Refused while certificates it signed still exist — a leaf whose CA vanished can never renew again, and the day you find out is the day it expires.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
+        "x-daffa-capability": "certs.edit",
+        "x-daffa-scope": "global",
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No live session or valid token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but the capability is not held at the required scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Nothing lives at that id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something went wrong on the server; the audit log has the details.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/certs/cas/{id}/rotate": {
       "post": {
         "operationId": "rotateCA",
@@ -7503,73 +7656,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "No live session or valid token.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Signed in, but the capability is not held at the required scope.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Nothing lives at that id.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Something went wrong on the server; the audit log has the details.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/certs/cas/{id}": {
-      "delete": {
-        "operationId": "deleteCA",
-        "tags": [
-          "certificates \u0026 encryption keys"
-        ],
-        "summary": "Delete a CA that signed nothing still tracked",
-        "description": "Refused while certificates it signed still exist — a leaf whose CA vanished can never renew again, and the day you find out is the day it expires.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
-        "x-daffa-capability": "certs.edit",
-        "x-daffa-scope": "global",
-        "responses": {
-          "200": {
-            "description": "OK.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "type": "string"
-                  }
                 }
               }
             }
@@ -14889,6 +14975,9 @@
           },
           "protected": {
             "type": "boolean"
+          },
+          "outbound_trust": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -14901,7 +14990,8 @@
           "status",
           "warn_days",
           "in_use",
-          "protected"
+          "protected",
+          "outbound_trust"
         ]
       },
       "CaRequest": {
@@ -14927,6 +15017,32 @@
           },
           "key_pem": {
             "type": "string"
+          },
+          "outbound_trust": {
+            "oneOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "CaUpdateRequest": {
+        "type": "object",
+        "properties": {
+          "outbound_trust": {
+            "oneOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "additionalProperties": false
@@ -14970,6 +15086,12 @@
           "name": {
             "type": "string"
           },
+          "env_id": {
+            "type": "string"
+          },
+          "env_name": {
+            "type": "string"
+          },
           "ca_id": {
             "type": "string"
           },
@@ -14977,6 +15099,12 @@
             "type": "string"
           },
           "sans": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "usages": {
             "type": "array",
             "items": {
               "type": "string"
@@ -15020,6 +15148,7 @@
           "id",
           "name",
           "sans",
+          "usages",
           "not_before",
           "not_after",
           "validity_days",
@@ -15035,10 +15164,19 @@
           "name": {
             "type": "string"
           },
+          "env_id": {
+            "type": "string"
+          },
           "ca_id": {
             "type": "string"
           },
           "sans": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "usages": {
             "type": "array",
             "items": {
               "type": "string"
@@ -15107,6 +15245,12 @@
           "restart_targets": {
             "type": "string"
           },
+          "bundle_cas": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
           "mount_path": {
             "type": "string"
           },
@@ -15164,6 +15308,12 @@
           },
           "restart_targets": {
             "type": "string"
+          },
+          "bundle_cas": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         },
         "additionalProperties": false

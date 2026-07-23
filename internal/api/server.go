@@ -987,6 +987,13 @@ func (s *Server) apiRoutes() []route {
 		//oapi:example req {"name": "internal-ca", "common_name": "Acme Internal CA", "org": "Acme"}
 		{pattern: "POST /api/certs/cas", cap: caps.CertsEdit, scope: scopeGlobal, h: s.handleCreateCA,
 			req: caRequest{}, resp: caView{}, ts: "createCA"},
+		// The one CA setting that is a setting: whether Daffa's own outbound TLS
+		// (registry reach-out, git clones) trusts this root. Off for a CA that exists
+		// only to be bundled into deliveries.
+		//oapi:summary Update a CA — outbound trust for Daffa's own TLS reach-out
+		//oapi:example req {"outbound_trust": false}
+		{pattern: "PUT /api/certs/cas/{id}", cap: caps.CertsEdit, scope: scopeGlobal, h: s.handleUpdateCA,
+			req: caUpdateRequest{}, resp: caView{}, ts: "updateCA"},
 		// PHASE 1 of the two-phase rotation (docs/certs.md): stage a successor alongside
 		// the incumbent. Nothing is re-signed and nothing can break — the new root simply
 		// starts appearing in the trust bundle so distribution can begin.

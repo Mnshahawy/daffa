@@ -93,7 +93,7 @@ func (s *Server) BootstrapEdgeCert(ctx context.Context, opts EdgeCertOptions) (E
 		return res, fmt.Errorf("edge: delivering the certificate into volume %q: %w", opts.Volume, err)
 	}
 
-	bundle, err := s.trustBundle(ctx)
+	bundle, err := s.trustBundle(ctx, nil)
 	if err != nil {
 		return res, err
 	}
@@ -128,7 +128,7 @@ func (s *Server) ensureEdgeCA(ctx context.Context, caDays int) (*store.CertAutho
 		Name: edgeCAName, CertPEM: certPEM, KeyEnc: sealed,
 		Subject: parsed.Subject.String(), KeyAlgo: string(certs.ECDSAP256),
 		NotBefore: parsed.NotBefore, NotAfter: parsed.NotAfter,
-		Status: "active", Protected: true,
+		Status: "active", Protected: true, OutboundTrust: true,
 	}
 	if err := s.store.CreateCertAuthority(ctx, ca); err != nil {
 		return nil, fmt.Errorf("edge: storing CA: %w", err)
@@ -137,7 +137,7 @@ func (s *Server) ensureEdgeCA(ctx context.Context, caDays int) (*store.CertAutho
 }
 
 func (s *Server) ensureEdgeCert(ctx context.Context, ca *store.CertAuthority, domain string, opts EdgeCertOptions) (*store.Certificate, error) {
-	list, err := s.store.ListCertificates(ctx)
+	list, err := s.store.ListCertificates(ctx, true, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -156,7 +156,7 @@ func (s *Server) ensureEdgeCert(ctx context.Context, ca *store.CertAuthority, do
 	if err != nil {
 		return nil, errors.New("edge: could not decrypt the CA key (was the master key replaced?)")
 	}
-	certPEM, keyPEM, err := certs.Issue(ca.CertPEM, caKey, sans, certs.ECDSAP256, days)
+	certPEM, keyPEM, err := certs.Issue(ca.CertPEM, caKey, sans, certs.ECDSAP256, days, certs.UsageServer)
 	if err != nil {
 		return nil, fmt.Errorf("edge: issuing certificate: %w", err)
 	}

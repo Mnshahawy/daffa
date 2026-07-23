@@ -77,7 +77,7 @@ func (s *Server) certSweep(ctx context.Context) {
 }
 
 func (s *Server) sweepCertificates(ctx context.Context) {
-	list, err := s.store.ListCertificates(ctx)
+	list, err := s.store.ListCertificates(ctx, true, nil) // the worker sweeps everything
 	if err != nil {
 		return
 	}
@@ -134,7 +134,7 @@ func (s *Server) renewCertificate(ctx context.Context, c *store.Certificate) err
 	if err != nil {
 		return s.recordRenewError(ctx, c, fmt.Errorf("could not decrypt the certificate's key (was the master key replaced?)"))
 	}
-	renewed, err := certs.Renew(ca.CertPEM, caKey, c.CertPEM, leafKey, c.ValidityDays)
+	renewed, err := certs.Renew(ca.CertPEM, caKey, c.CertPEM, leafKey, c.ValidityDays, c.Usages)
 	if err != nil {
 		return s.recordRenewError(ctx, c, err)
 	}
@@ -250,7 +250,9 @@ func (s *Server) notifyCA(ctx context.Context, ca *store.CertAuthority, summary,
 	s.notify.Send(ctx, "", notify.Data{
 		Event: notify.CARotationDue, Subject: title, Title: title,
 		Summary: summary, Target: ca.Name, Detail: detail,
-		Link: "/certificates", Failed: false,
+		// CA management lives on the settings page; the cluster-scoped /certificates
+		// page only shows the leaves.
+		Link: "/settings/certificates", Failed: false,
 	})
 }
 

@@ -885,6 +885,7 @@ export interface CertAuthority {
   warn_days: number
   in_use: number
   protected: boolean
+  outbound_trust: boolean
 }
 
 export interface CaRequest {
@@ -895,6 +896,11 @@ export interface CaRequest {
   days?: number
   cert_pem?: string
   key_pem?: string
+  outbound_trust?: boolean | null
+}
+
+export interface CaUpdateRequest {
+  outbound_trust?: boolean | null
 }
 
 export interface CaRotateRequest {
@@ -912,9 +918,12 @@ export interface CaActivateRequest {
 export interface Certificate {
   id: string
   name: string
+  env_id?: string
+  env_name?: string
   ca_id?: string
   ca_name?: string
   sans: string[]
+  usages: string[]
   key_algo?: string
   not_before: string
   not_after: string
@@ -928,8 +937,10 @@ export interface Certificate {
 
 export interface CertRequest {
   name?: string
+  env_id?: string
   ca_id?: string
   sans?: string[]
+  usages?: string[]
   key_algo?: string
   validity_days?: number
   renew_before_days?: number
@@ -953,6 +964,7 @@ export interface CertDelivery {
   gid: number
   traefik: boolean
   restart_targets?: string
+  bundle_cas?: string[]
   mount_path: string
   status: 'pending' | 'ok' | 'error'
   last_error?: string
@@ -968,6 +980,7 @@ export interface CertDeliveryRequest {
   gid?: number
   traefik?: boolean
   restart_targets?: string
+  bundle_cas?: string[]
 }
 
 export interface EncryptionKey {
@@ -1435,6 +1448,8 @@ export const daffa = {
   deleteSSHKey: (id: string) => api.del<Record<string, string>>(`/api/ssh-keys/${id}`),
   cas: () => api.get<CertAuthority[]>('/api/certs/cas'),
   createCA: (body: CaRequest) => api.post<CertAuthority>('/api/certs/cas', body),
+  updateCA: (id: string, body: CaUpdateRequest) =>
+    api.put<CertAuthority>(`/api/certs/cas/${id}`, body),
   rotateCA: (id: string, body: CaRotateRequest) =>
     api.post<CertAuthority>(`/api/certs/cas/${id}/rotate`, body),
   deleteCA: (id: string) => api.del<Record<string, string>>(`/api/certs/cas/${id}`),

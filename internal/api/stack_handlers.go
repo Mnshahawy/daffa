@@ -966,15 +966,16 @@ func (s *Server) handleListRegistries(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, out)
 }
 
-// managedCAPEMs returns the public PEM of every CA Daffa manages. These are what Daffa's own TLS
-// reach-out trusts beyond the system roots — the CAs Daffa itself signed, nothing pasted in and
-// no skip-verify. It is the shared basis for both registry (registryTrust) and git
-// (managedCABundle) trust, so the two never drift.
+// managedCAPEMs returns the public PEM of every CA Daffa manages and trusts for its OWN
+// outbound TLS — nothing pasted in and no skip-verify. It is the shared basis for both
+// registry (registryTrust) and git (managedCABundle) trust, so the two never drift. A CA
+// with outbound_trust off is excluded: it exists to be bundled into deliveries (someone
+// else's trust anchor), not to widen what the console itself accepts.
 func (s *Server) managedCAPEMs(ctx context.Context) []string {
 	cas, _ := s.store.ListCertAuthorities(ctx)
 	pems := make([]string, 0, len(cas))
 	for _, ca := range cas {
-		if ca.CertPEM != "" {
+		if ca.CertPEM != "" && ca.OutboundTrust {
 			pems = append(pems, ca.CertPEM)
 		}
 	}

@@ -41,6 +41,92 @@ const (
 // machine whose clock runs slightly behind the box must not be "not yet valid".
 const backdate = 5 * time.Minute
 
+// Usages name the extended key usages a leaf is signed with, space-separated in
+// the order below ("server", "client" or "server client") — the same encoding
+// the store uses for SANs. The distinction is load-bearing for mTLS: Go's TLS
+// stack refuses a client certificate without the clientAuth EKU, so a cert that
+// silently lost it on renewal would be an outage. Callers therefore pass the
+// STORED usages into every signing path rather than deriving them per call.
+const (
+	UsageServer = "server"
+	UsageClient = "client"
+)
+
+// NormalizeUsages validates and canonicalizes a usages list: only server and
+// client exist, duplicates collapse, order is fixed so string comparison works.
+// Empty input means the historical default, server.
+func NormalizeUsages(in []string) (string, error) {
+	server, client := false, false
+	for _, u := range in {
+		switch strings.ToLower(strings.TrimSpace(u)) {
+		case "":
+		case UsageServer:
+			server = true
+		case UsageClient:
+			client = true
+		default:
+			return "", fmt.Errorf("certs: unknown usage %q — a certificate is used as %q, %q or both", u, UsageServer, UsageClient)
+		}
+	}
+	if !server && !client {
+		server = true
+	}
+	return joinUsages(server, client), nil
+}
+
+// UsagesOf derives the usages string from an existing certificate's EKUs — for
+// uploaded certs, where the column is a fact about the PEM, not a setting. A
+// cert with no EKU extension is unrestricted, which is both usages.
+func UsagesOf(cert *x509.Certificate) string {
+	if len(cert.ExtKeyUsage) == 0 && len(cert.UnknownExtKeyUsage) == 0 {
+		return joinUsages(true, true)
+	}
+	server, client := false, false
+	for _, eku := range cert.ExtKeyUsage {
+		switch eku {
+		case x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageAny:
+			server = true
+			if eku == x509.ExtKeyUsageAny {
+				client = true
+			}
+		case x509.ExtKeyUsageClientAuth:
+			client = true
+		}
+	}
+	return joinUsages(server, client)
+}
+
+func joinUsages(server, client bool) string {
+	var out []string
+	if server {
+		out = append(out, UsageServer)
+	}
+	if client {
+		out = append(out, UsageClient)
+	}
+	return strings.Join(out, " ")
+}
+
+// ekusFor maps a usages string onto the extension. Unknown words map to
+// nothing on purpose — validation happened at NormalizeUsages; an empty result
+// falls back to serverAuth so a bad value fails toward the historical default
+// rather than toward an unrestricted cert.
+func ekusFor(usages string) []x509.ExtKeyUsage {
+	var out []x509.ExtKeyUsage
+	for _, u := range strings.Fields(usages) {
+		switch u {
+		case UsageServer:
+			out = append(out, x509.ExtKeyUsageServerAuth)
+		case UsageClient:
+			out = append(out, x509.ExtKeyUsageClientAuth)
+		}
+	}
+	if len(out) == 0 {
+		out = []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}
+	}
+	return out
+}
+
 // GenerateKey makes a fresh private key of the given shape.
 func GenerateKey(algo KeyAlgo) (crypto.Signer, error) {
 	switch algo {
@@ -101,9 +187,9 @@ func CreateCA(commonName, org string, algo KeyAlgo, days int) (certPEM, keyPEM s
 }
 
 // Issue signs a fresh leaf for the given SANs. The first SAN is the CN. The
-// leaf gets serverAuth, exactly what the Traefik leaf carries today; mTLS
-// client certs are a later feature, not a default extension.
-func Issue(caCertPEM, caKeyPEM string, sans []string, algo KeyAlgo, days int) (certPEM, keyPEM string, err error) {
+// usages string decides the EKUs — "server" is what the Traefik leaf carries,
+// "server client" (or "client") is an mTLS identity.
+func Issue(caCertPEM, caKeyPEM string, sans []string, algo KeyAlgo, days int, usages string) (certPEM, keyPEM string, err error) {
 	key, err := GenerateKey(algo)
 	if err != nil {
 		return "", "", err
@@ -111,7 +197,7 @@ func Issue(caCertPEM, caKeyPEM string, sans []string, algo KeyAlgo, days int) (c
 	if len(sans) == 0 {
 		return "", "", fmt.Errorf("certs: a certificate needs at least one SAN")
 	}
-	certPEM, err = sign(caCertPEM, caKeyPEM, key.Public(), sans[0], sans, days)
+	certPEM, err = sign(caCertPEM, caKeyPEM, key.Public(), sans[0], sans, days, usages)
 	if err != nil {
 		return "", "", err
 	}
@@ -125,8 +211,10 @@ func Issue(caCertPEM, caKeyPEM string, sans []string, algo KeyAlgo, days int) (c
 // Renew re-signs an existing leaf: same key, same CN, same SANs, fresh
 // validity — the renew-internal-certs.sh behavior. Reusing the key is what
 // makes renewal invisible to consumers; rotating the key is a separate,
-// deliberate action (issue with the same SANs).
-func Renew(caCertPEM, caKeyPEM, oldCertPEM, keyPEM string, days int) (string, error) {
+// deliberate action (issue with the same SANs). Usages come from the caller
+// (the stored row), not from the old PEM — the row is the source of truth an
+// operator edits, and the next renewal is how an edit takes effect.
+func Renew(caCertPEM, caKeyPEM, oldCertPEM, keyPEM string, days int, usages string) (string, error) {
 	old, err := ParseCert(oldCertPEM)
 	if err != nil {
 		return "", err
@@ -135,13 +223,13 @@ func Renew(caCertPEM, caKeyPEM, oldCertPEM, keyPEM string, days int) (string, er
 	if err != nil {
 		return "", err
 	}
-	return sign(caCertPEM, caKeyPEM, key.Public(), old.Subject.CommonName, SANList(old), days)
+	return sign(caCertPEM, caKeyPEM, key.Public(), old.Subject.CommonName, SANList(old), days, usages)
 }
 
 // Reissue signs a leaf for NEW SANs with an EXISTING key — what editing a
 // certificate's SANs does. The key survives so the delivered key file never
 // changes; only the certificate beside it does.
-func Reissue(caCertPEM, caKeyPEM, keyPEM string, sans []string, days int) (string, error) {
+func Reissue(caCertPEM, caKeyPEM, keyPEM string, sans []string, days int, usages string) (string, error) {
 	key, err := ParseKey(keyPEM)
 	if err != nil {
 		return "", err
@@ -149,10 +237,10 @@ func Reissue(caCertPEM, caKeyPEM, keyPEM string, sans []string, days int) (strin
 	if len(sans) == 0 {
 		return "", fmt.Errorf("certs: a certificate needs at least one SAN")
 	}
-	return sign(caCertPEM, caKeyPEM, key.Public(), sans[0], sans, days)
+	return sign(caCertPEM, caKeyPEM, key.Public(), sans[0], sans, days, usages)
 }
 
-func sign(caCertPEM, caKeyPEM string, pub crypto.PublicKey, cn string, sans []string, days int) (string, error) {
+func sign(caCertPEM, caKeyPEM string, pub crypto.PublicKey, cn string, sans []string, days int, usages string) (string, error) {
 	if days <= 0 {
 		return "", fmt.Errorf("certs: validity must be at least a day")
 	}
@@ -182,7 +270,7 @@ func sign(caCertPEM, caKeyPEM string, pub crypto.PublicKey, cn string, sans []st
 		NotBefore:    now.Add(-backdate),
 		NotAfter:     now.AddDate(0, 0, days),
 		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		ExtKeyUsage:  ekusFor(usages),
 		DNSNames:     dns,
 		IPAddresses:  ips,
 	}

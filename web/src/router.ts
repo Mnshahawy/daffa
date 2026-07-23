@@ -133,6 +133,12 @@ export const router = createRouter({
           meta: { cap: Cap.BackupsView },
         },
         {
+          path: 'certificates',
+          name: 'certificates',
+          component: () => import('./views/CertificatesView.vue'),
+          meta: { cap: Cap.CertsView },
+        },
+        {
           path: 'audit',
           name: 'audit',
           component: () => import('./views/AuditView.vue'),
@@ -217,7 +223,7 @@ export const router = createRouter({
             {
               path: 'certificates',
               name: 'settings-certificates',
-              component: () => import('./views/CertificatesView.vue'),
+              component: () => import('./views/AuthoritiesView.vue'),
               meta: { cap: Cap.CertsView },
             },
             {
@@ -302,7 +308,7 @@ function landingFor(session: ReturnType<typeof useSession>): string {
     [Cap.GitCredsView, 'settings-git'],
     [Cap.RegistriesView, 'settings-registries'],
     [Cap.StorageView, 'settings-storage'],
-    [Cap.CertsView, 'settings-certificates'],
+    [Cap.CertsView, 'certificates'],
   ]
   for (const [cap, name] of candidates) {
     if (session.canAnywhere(cap)) return name

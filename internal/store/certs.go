@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -34,21 +35,26 @@ type CertAuthority struct {
 	// Protected marks a CA the deployment depends on (its own edge CA). Deletion is
 	// refused while set — see the delete handler. Set only by `daffa edge init`.
 	Protected bool
+	// OutboundTrust: whether Daffa's OWN outbound TLS (registry reach-out, git clones)
+	// trusts this CA beyond the system roots. Off for a CA that exists only to be
+	// bundled into deliveries — someone else's trust anchor should not widen what the
+	// console itself accepts.
+	OutboundTrust bool
 }
 
 // CanSign reports whether Daffa holds this CA's private key.
 func (ca *CertAuthority) CanSign() bool { return ca.KeyEnc != "" }
 
 const caCols = `id, name, subject, cert_pem, key_enc, key_algo, not_before, not_after,
-    status, rotates_id, overlap_until, warn_days, created_at, created_by, protected`
+    status, rotates_id, overlap_until, warn_days, created_at, created_by, protected, outbound_trust`
 
 func scanCA(sc interface{ Scan(...any) error }) (*CertAuthority, error) {
 	var ca CertAuthority
 	var notBefore, notAfter, createdAt string
 	var rotatesID, overlapUntil, createdBy sql.NullString
-	var protected int
+	var protected, outboundTrust int
 	err := sc.Scan(&ca.ID, &ca.Name, &ca.Subject, &ca.CertPEM, &ca.KeyEnc, &ca.KeyAlgo,
-		&notBefore, &notAfter, &ca.Status, &rotatesID, &overlapUntil, &ca.WarnDays, &createdAt, &createdBy, &protected)
+		&notBefore, &notAfter, &ca.Status, &rotatesID, &overlapUntil, &ca.WarnDays, &createdAt, &createdBy, &protected, &outboundTrust)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -64,6 +70,7 @@ func scanCA(sc interface{ Scan(...any) error }) (*CertAuthority, error) {
 	ca.CreatedAt = parseTS(createdAt)
 	ca.CreatedBy = createdBy.String
 	ca.Protected = protected != 0
+	ca.OutboundTrust = outboundTrust != 0
 	return &ca, nil
 }
 
@@ -79,10 +86,11 @@ func (s *Store) CreateCertAuthority(ctx context.Context, ca *CertAuthority) erro
 	}
 	ca.CreatedAt = now()
 	_, err := s.exec(ctx, `INSERT INTO cert_authorities (`+caCols+`)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		ca.ID, ca.Name, ca.Subject, ca.CertPEM, ca.KeyEnc, ca.KeyAlgo,
 		ts(ca.NotBefore), ts(ca.NotAfter), ca.Status, nullStr(ca.RotatesID),
-		nullTS(ca.OverlapUntil), ca.WarnDays, ts(ca.CreatedAt), nullStr(ca.CreatedBy), boolInt(ca.Protected))
+		nullTS(ca.OverlapUntil), ca.WarnDays, ts(ca.CreatedAt), nullStr(ca.CreatedBy),
+		boolInt(ca.Protected), boolInt(ca.OutboundTrust))
 	if err != nil {
 		return fmt.Errorf("store: creating certificate authority: %w", err)
 	}
@@ -116,18 +124,24 @@ func (s *Store) ListCertAuthorities(ctx context.Context) ([]*CertAuthority, erro
 func (s *Store) UpdateCertAuthority(ctx context.Context, ca *CertAuthority) error {
 	_, err := s.exec(ctx, `UPDATE cert_authorities SET subject = ?, cert_pem = ?, key_enc = ?,
         key_algo = ?, not_before = ?, not_after = ?, status = ?, rotates_id = ?,
-        overlap_until = ?, warn_days = ? WHERE id = ?`,
+        overlap_until = ?, warn_days = ?, outbound_trust = ? WHERE id = ?`,
 		ca.Subject, ca.CertPEM, ca.KeyEnc, ca.KeyAlgo, ts(ca.NotBefore), ts(ca.NotAfter),
-		ca.Status, nullStr(ca.RotatesID), nullTS(ca.OverlapUntil), ca.WarnDays, ca.ID)
+		ca.Status, nullStr(ca.RotatesID), nullTS(ca.OverlapUntil), ca.WarnDays,
+		boolInt(ca.OutboundTrust), ca.ID)
 	return err
 }
 
-// CertAuthorityInUse counts live certificates issued by this CA, so deletion can be
-// refused instead of orphaning them.
+// CertAuthorityInUse counts live certificates issued by this CA plus deliveries that
+// select it into their bundle, so deletion can be refused instead of orphaning either —
+// a CA deleted out of a selection would silently shrink what its consumers trust.
 func (s *Store) CertAuthorityInUse(ctx context.Context, id string) (int, error) {
-	var n int
-	err := s.queryRow(ctx, `SELECT COUNT(*) FROM certificates WHERE ca_id = ?`, id).Scan(&n)
-	return n, err
+	var leaves, selected int
+	if err := s.queryRow(ctx, `SELECT COUNT(*) FROM certificates WHERE ca_id = ?`, id).Scan(&leaves); err != nil {
+		return 0, err
+	}
+	err := s.queryRow(ctx, `SELECT COUNT(*) FROM cert_deliveries
+        WHERE (' ' || bundle_cas || ' ') LIKE ('% ' || ? || ' %')`, id).Scan(&selected)
+	return leaves + selected, err
 }
 
 func (s *Store) DeleteCertAuthority(ctx context.Context, id string) error {
@@ -140,14 +154,23 @@ func (s *Store) DeleteCertAuthority(ctx context.Context, id string) error {
 // Certificate is a leaf: issued by one of Daffa's CAs (CAID set — renewable) or uploaded
 // (CAID empty — tracked and delivered, but only its owner can renew it, by uploading again).
 type Certificate struct {
-	ID       string
-	Name     string
+	ID   string
+	Name string
+	// EnvID scopes the certificate to one environment; empty = SHARED, visible and
+	// deliverable everywhere. Immutable after create, like Name and for the same
+	// reason: deliveries have already written this cert's files into volumes chosen
+	// under its visibility.
+	EnvID    string
 	CAID     string
 	SANs     string // space-separated; first entry is the CN
 	KeyAlgo  string
 	CertPEM  string
 	ChainPEM string
 	KeyEnc   string
+	// Usages: 'server', 'client' or 'server client' — the EKUs every (re-)signing of
+	// this leaf carries. The ROW is the source of truth so a renewal cannot silently
+	// drop clientAuth; for uploaded certs it is derived from the PEM, display-only.
+	Usages string
 
 	NotBefore       time.Time
 	NotAfter        time.Time
@@ -165,24 +188,25 @@ type Certificate struct {
 // Issued reports whether Daffa can renew this certificate itself.
 func (c *Certificate) Issued() bool { return c.CAID != "" }
 
-const certCols = `id, name, ca_id, sans, key_algo, cert_pem, chain_pem, key_enc,
+const certCols = `id, name, env_id, ca_id, sans, key_algo, cert_pem, chain_pem, key_enc,
     not_before, not_after, validity_days, renew_before_days, status, last_error,
-    created_at, created_by, protected`
+    created_at, created_by, protected, usages`
 
 func scanCert(sc interface{ Scan(...any) error }) (*Certificate, error) {
 	var c Certificate
-	var caID, createdBy sql.NullString
+	var envID, caID, createdBy sql.NullString
 	var notBefore, notAfter, createdAt string
 	var protected int
-	err := sc.Scan(&c.ID, &c.Name, &caID, &c.SANs, &c.KeyAlgo, &c.CertPEM, &c.ChainPEM,
+	err := sc.Scan(&c.ID, &c.Name, &envID, &caID, &c.SANs, &c.KeyAlgo, &c.CertPEM, &c.ChainPEM,
 		&c.KeyEnc, &notBefore, &notAfter, &c.ValidityDays, &c.RenewBeforeDays,
-		&c.Status, &c.LastError, &createdAt, &createdBy, &protected)
+		&c.Status, &c.LastError, &createdAt, &createdBy, &protected, &c.Usages)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, err
 	}
+	c.EnvID = envID.String
 	c.CAID = caID.String
 	c.NotBefore = parseTS(notBefore)
 	c.NotAfter = parseTS(notAfter)
@@ -202,12 +226,15 @@ func (s *Store) CreateCertificate(ctx context.Context, c *Certificate) error {
 	if c.RenewBeforeDays <= 0 {
 		c.RenewBeforeDays = 30
 	}
+	if c.Usages == "" {
+		c.Usages = "server"
+	}
 	c.CreatedAt = now()
 	_, err := s.exec(ctx, `INSERT INTO certificates (`+certCols+`)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		c.ID, c.Name, nullStr(c.CAID), c.SANs, c.KeyAlgo, c.CertPEM, c.ChainPEM, c.KeyEnc,
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		c.ID, c.Name, nullStr(c.EnvID), nullStr(c.CAID), c.SANs, c.KeyAlgo, c.CertPEM, c.ChainPEM, c.KeyEnc,
 		ts(c.NotBefore), ts(c.NotAfter), c.ValidityDays, c.RenewBeforeDays,
-		c.Status, c.LastError, ts(c.CreatedAt), nullStr(c.CreatedBy), boolInt(c.Protected))
+		c.Status, c.LastError, ts(c.CreatedAt), nullStr(c.CreatedBy), boolInt(c.Protected), c.Usages)
 	if err != nil {
 		return fmt.Errorf("store: creating certificate: %w", err)
 	}
@@ -218,8 +245,21 @@ func (s *Store) CertificateByID(ctx context.Context, id string) (*Certificate, e
 	return scanCert(s.queryRow(ctx, `SELECT `+certCols+` FROM certificates WHERE id = ?`, id))
 }
 
-func (s *Store) ListCertificates(ctx context.Context) ([]*Certificate, error) {
-	rows, err := s.query(ctx, `SELECT `+certCols+` FROM certificates ORDER BY name`)
+// ListCertificates returns the certificates the caller may see: SHARED ones (no env)
+// always, env-scoped ones on the caller's envs. Filters, never gates, like every List.
+func (s *Store) ListCertificates(ctx context.Context, global bool, envs []string) ([]*Certificate, error) {
+	where, args := "", []any(nil)
+	if !global {
+		in, inArgs := envIn(false, envs)
+		if in == neverMatches {
+			where = " WHERE env_id IS NULL"
+		} else {
+			// envIn's WHERE, widened: a NULL env is shared and visible to everyone.
+			where = " WHERE (env_id IS NULL OR" + strings.TrimPrefix(in, " WHERE") + ")"
+			args = inArgs
+		}
+	}
+	rows, err := s.query(ctx, `SELECT `+certCols+` FROM certificates`+where+` ORDER BY name`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("store: listing certificates: %w", err)
 	}
@@ -253,13 +293,15 @@ func (s *Store) CertificatesByCA(ctx context.Context, caID string) ([]*Certifica
 	return out, rows.Err()
 }
 
+// UpdateCertificate rewrites the mutable parts. env_id is deliberately absent: a
+// certificate's environment, like its name, is fixed at create.
 func (s *Store) UpdateCertificate(ctx context.Context, c *Certificate) error {
 	_, err := s.exec(ctx, `UPDATE certificates SET name = ?, ca_id = ?, sans = ?, key_algo = ?,
         cert_pem = ?, chain_pem = ?, key_enc = ?, not_before = ?, not_after = ?,
-        validity_days = ?, renew_before_days = ?, status = ?, last_error = ? WHERE id = ?`,
+        validity_days = ?, renew_before_days = ?, status = ?, last_error = ?, usages = ? WHERE id = ?`,
 		c.Name, nullStr(c.CAID), c.SANs, c.KeyAlgo, c.CertPEM, c.ChainPEM, c.KeyEnc,
 		ts(c.NotBefore), ts(c.NotAfter), c.ValidityDays, c.RenewBeforeDays,
-		c.Status, c.LastError, c.ID)
+		c.Status, c.LastError, c.Usages, c.ID)
 	return err
 }
 
@@ -292,6 +334,11 @@ type CertDelivery struct {
 	// hot-reloads instead of restarting.
 	Traefik        bool
 	RestartTargets string // space-separated container names; empty = consumer hot-reloads
+	// BundleCAs selects which roots this delivery's ca-bundle.crt carries, as
+	// space-separated CA ids; empty = every managed CA. Lineage rides along: a staged
+	// successor joins via rotates_id, activation rewrites the selection to the promoted
+	// id, and a retired root stays through its overlap window.
+	BundleCAs string
 
 	SyncedHash string
 	SyncedAt   time.Time
@@ -305,7 +352,7 @@ type CertDelivery struct {
 }
 
 const deliveryCols = `id, env_id, cert_id, volume, uid, gid, traefik, restart_targets,
-    synced_hash, synced_at, status, last_error, created_at, created_by, protected`
+    synced_hash, synced_at, status, last_error, created_at, created_by, protected, bundle_cas`
 
 func scanDelivery(sc interface{ Scan(...any) error }) (*CertDelivery, error) {
 	var d CertDelivery
@@ -314,7 +361,7 @@ func scanDelivery(sc interface{ Scan(...any) error }) (*CertDelivery, error) {
 	var traefik, protected int
 	err := sc.Scan(&d.ID, &d.EnvID, &certID, &d.Volume, &d.UID, &d.GID, &traefik,
 		&d.RestartTargets, &d.SyncedHash, &syncedAt, &d.Status, &d.LastError,
-		&createdAt, &createdBy, &protected)
+		&createdAt, &createdBy, &protected, &d.BundleCAs)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -344,10 +391,10 @@ func (s *Store) CreateCertDelivery(ctx context.Context, d *CertDelivery) error {
 	}
 	d.CreatedAt = now()
 	_, err := s.exec(ctx, `INSERT INTO cert_deliveries (`+deliveryCols+`)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		d.ID, d.EnvID, nullStr(d.CertID), d.Volume, d.UID, d.GID, boolInt(d.Traefik),
 		d.RestartTargets, d.SyncedHash, nullTS(d.SyncedAt), d.Status, d.LastError,
-		ts(d.CreatedAt), nullStr(d.CreatedBy), boolInt(d.Protected))
+		ts(d.CreatedAt), nullStr(d.CreatedBy), boolInt(d.Protected), d.BundleCAs)
 	if err != nil {
 		return fmt.Errorf("store: creating certificate delivery: %w", err)
 	}
@@ -402,4 +449,33 @@ func (s *Store) MarkCertDeliverySynced(ctx context.Context, id, hash string, syn
 func (s *Store) DeleteCertDelivery(ctx context.Context, id string) error {
 	_, err := s.exec(ctx, `DELETE FROM cert_deliveries WHERE id = ?`, id)
 	return err
+}
+
+// ReplaceCAInDeliveryBundles swaps oldID for newID in every delivery's bundle selection —
+// the activation step that keeps an explicitly-selected bundle following its lineage when
+// a rotation promotes the successor. In Go, not SQL: splitting a delimited list is exactly
+// the transform the two dialects spell differently.
+func (s *Store) ReplaceCAInDeliveryBundles(ctx context.Context, oldID, newID string) error {
+	deliveries, err := s.AllCertDeliveries(ctx)
+	if err != nil {
+		return err
+	}
+	for _, d := range deliveries {
+		ids := strings.Fields(d.BundleCAs)
+		changed := false
+		for i, id := range ids {
+			if id == oldID {
+				ids[i] = newID
+				changed = true
+			}
+		}
+		if !changed {
+			continue
+		}
+		if _, err := s.exec(ctx, `UPDATE cert_deliveries SET bundle_cas = ? WHERE id = ?`,
+			strings.Join(ids, " "), d.ID); err != nil {
+			return err
+		}
+	}
+	return nil
 }

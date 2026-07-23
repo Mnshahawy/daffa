@@ -117,6 +117,17 @@ export const navGroups: NavGroup[] = [
         hint: 'Scheduled database backups and their snapshots',
         keywords: 'dump snapshot restore s3',
       },
+      // Cluster-scoped on purpose: a certificate is consumed HERE, by this cluster's
+      // volumes and proxies, so it sits beside Backups rather than in Settings. The
+      // roots that sign it are fleet trust and stay under Settings → Authorities.
+      {
+        name: 'certificates',
+        label: 'Certificates',
+        icon: 'shield',
+        cap: Cap.CertsView,
+        hint: "This cluster's TLS certificates, and the volumes they are delivered into",
+        keywords: 'tls mtls cert san renew delivery bundle',
+      },
     ],
   },
   {
@@ -251,10 +262,13 @@ export const settingsGroups: { title: string; items: SettingsTab[] }[] = [
         cap: Cap.StorageView,
         icon: 'database',
       },
+      // The certificates themselves live on the cluster-scoped rail page; what remains
+      // here is the GLOBAL material — CA roots (rotation touches every cluster) and
+      // backup encryption keys (no env dimension at all).
       {
         name: 'settings-certificates',
-        label: 'Certificates',
-        hint: 'Internal CAs, the certs they sign, backup encryption keys',
+        label: 'Authorities',
+        hint: 'Internal CA roots, rotation, and backup encryption keys',
         cap: Cap.CertsView,
         icon: 'shield',
       },

@@ -1023,6 +1023,130 @@ ALTER TABLE agents ADD COLUMN join_env_id         TEXT REFERENCES environments (
 ALTER TABLE agents ADD COLUMN join_role           TEXT NOT NULL DEFAULT 'worker';
 ALTER TABLE agents ADD COLUMN join_advertise_addr TEXT NOT NULL DEFAULT '';
 `},
+
+	// A certificate now belongs to an environment — or to none, which means SHARED: visible
+	// and deliverable everywhere, the meaning every pre-existing row keeps. Name uniqueness
+	// becomes per-env (staging and prod each get their own `cellauth`, same filename in the
+	// volume, different key), which is why the change cannot be a plain ADD COLUMN: the
+	// inline UNIQUE on name has to go, and SQLite cannot drop a constraint without
+	// rebuilding the table. See cert-trust-domains.md for the full reasoning.
+	//
+	// The rebuild is the delicate part. SQLite runs with foreign_keys(1), and DROP TABLE
+	// performs an implicit DELETE FROM first — so dropping `certificates` while
+	// cert_deliveries still references it would fire cert_id's ON DELETE CASCADE and
+	// silently destroy every delivery row. The fn therefore renames the old parent aside,
+	// rebuilds the CHILD first (dropping a child fires no cascades), and only then drops
+	// the orphaned old parent, which by that point nothing references. Postgres needs none
+	// of that: ADD COLUMN + DROP CONSTRAINT.
+	//
+	// Uniqueness is an expression index rather than UNIQUE(env_id, name), because both
+	// dialects treat NULLs as distinct — two SHARED certs could otherwise share a name.
+	{name: "0009_cert_env_scope", fn: migrateCertEnvScope},
+
+	// What a leaf may be used AS: 'server', 'client', or 'server client' — space-separated
+	// like sans. Every existing cert keeps 'server', the only thing issuance ever produced.
+	// The column, not the issue request, is the source of truth: renewals and rotation
+	// re-signs read it, so an mTLS cert cannot silently lose clientAuth at its first
+	// hourly renewal. For uploaded certs it is derived from the PEM and display-only.
+	{name: "0010_cert_usages", sql: `
+ALTER TABLE certificates ADD COLUMN usages TEXT NOT NULL DEFAULT 'server';
+`},
+
+	// Which roots a delivery's ca-bundle.crt carries: space-separated CA ids, empty = every
+	// managed CA (the prior behaviour, which every existing delivery keeps). Selection is by
+	// lineage anchor — a staged successor rides along via rotates_id, activation rewrites
+	// selections to the promoted id — so an explicitly-selected bundle survives a CA
+	// rotation exactly like the full one. See cert-trust-domains.md.
+	{name: "0011_delivery_bundle_cas", sql: `
+ALTER TABLE cert_deliveries ADD COLUMN bundle_cas TEXT NOT NULL DEFAULT '';
+`},
+
+	// Whether Daffa's OWN outbound TLS (registry reach-out, git clones) trusts this CA
+	// beyond the system roots. Default 1 is the prior behaviour — every managed CA was
+	// trusted. 0 is for a CA that exists only to be bundled into deliveries (someone
+	// else's trust anchor), which should not widen what the console itself accepts.
+	{name: "0012_ca_outbound_trust", sql: `
+ALTER TABLE cert_authorities ADD COLUMN outbound_trust INTEGER NOT NULL DEFAULT 1;
+`},
+}
+
+// migrateCertEnvScope is 0009: certificates gain a nullable env_id and lose global name
+// uniqueness in favour of per-env uniqueness. Dialects genuinely diverge here — see the
+// migration's comment for why SQLite must rebuild both cert tables child-first.
+func migrateCertEnvScope(ctx context.Context, tx *sql.Tx, s *Store) error {
+	if s.dialect == Postgres {
+		for _, stmt := range []string{
+			`ALTER TABLE certificates ADD COLUMN env_id TEXT REFERENCES environments (id) ON DELETE CASCADE`,
+			`ALTER TABLE certificates DROP CONSTRAINT certificates_name_key`,
+			`CREATE UNIQUE INDEX certificates_env_name ON certificates (COALESCE(env_id,''), name)`,
+		} {
+			if _, err := tx.ExecContext(ctx, stmt); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	for _, stmt := range []string{
+		// Rename the parent aside; SQLite rewrites cert_deliveries' FK clause to follow.
+		`ALTER TABLE certificates RENAME TO certificates_old`,
+		// The new parent: 0001's shape + env_id, minus the inline UNIQUE on name.
+		`CREATE TABLE certificates (
+    id                TEXT PRIMARY KEY,
+    name              TEXT NOT NULL,
+    env_id            TEXT REFERENCES environments (id) ON DELETE CASCADE, -- NULL = shared
+    ca_id             TEXT REFERENCES cert_authorities (id),
+    sans              TEXT NOT NULL DEFAULT '',
+    key_algo          TEXT NOT NULL DEFAULT '',
+    cert_pem          TEXT NOT NULL,
+    chain_pem         TEXT NOT NULL DEFAULT '',
+    key_enc           TEXT NOT NULL,
+    not_before        TEXT NOT NULL,
+    not_after         TEXT NOT NULL,
+    validity_days     INTEGER NOT NULL DEFAULT 398,
+    renew_before_days INTEGER NOT NULL DEFAULT 30,
+    status            TEXT NOT NULL DEFAULT 'ok',
+    last_error        TEXT NOT NULL DEFAULT '',
+    created_at        TEXT NOT NULL,
+    created_by        TEXT,
+    protected         INTEGER NOT NULL DEFAULT 0
+)`,
+		`INSERT INTO certificates (id, name, ca_id, sans, key_algo, cert_pem, chain_pem, key_enc,
+    not_before, not_after, validity_days, renew_before_days, status, last_error,
+    created_at, created_by, protected)
+    SELECT id, name, ca_id, sans, key_algo, cert_pem, chain_pem, key_enc,
+    not_before, not_after, validity_days, renew_before_days, status, last_error,
+    created_at, created_by, protected FROM certificates_old`,
+		// Rebuild the child so its FK points at the new parent, then drop child-first:
+		// dropping a child fires no cascades, and the old parent is unreferenced after.
+		`ALTER TABLE cert_deliveries RENAME TO cert_deliveries_old`,
+		`CREATE TABLE cert_deliveries (
+    id              TEXT PRIMARY KEY,
+    env_id          TEXT NOT NULL REFERENCES environments (id) ON DELETE CASCADE,
+    cert_id         TEXT REFERENCES certificates (id) ON DELETE CASCADE,
+    volume          TEXT NOT NULL DEFAULT 'daffa-certs',
+    uid             INTEGER NOT NULL DEFAULT 0,
+    gid             INTEGER NOT NULL DEFAULT 0,
+    traefik         INTEGER NOT NULL DEFAULT 0,
+    restart_targets TEXT NOT NULL DEFAULT '',
+    synced_hash     TEXT NOT NULL DEFAULT '',
+    synced_at       TEXT,
+    status          TEXT NOT NULL DEFAULT 'pending',
+    last_error      TEXT NOT NULL DEFAULT '',
+    created_at      TEXT NOT NULL,
+    created_by      TEXT,
+    protected       INTEGER NOT NULL DEFAULT 0
+)`,
+		`INSERT INTO cert_deliveries SELECT * FROM cert_deliveries_old`,
+		`DROP TABLE cert_deliveries_old`,
+		`DROP TABLE certificates_old`,
+		`CREATE UNIQUE INDEX certificates_env_name ON certificates (COALESCE(env_id,''), name)`,
+	} {
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // stopAfter lets a test bring the schema up to a PARTICULAR migration and no further, so

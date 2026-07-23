@@ -43,7 +43,8 @@ type deliveryView struct {
 	GID            int        `json:"gid"`
 	Traefik        bool       `json:"traefik"`
 	RestartTargets string     `json:"restart_targets,omitempty"`
-	MountPath      string     `json:"mount_path"` // the convention, for the UI to show
+	BundleCAs      []string   `json:"bundle_cas,omitempty"` // empty = every managed CA
+	MountPath      string     `json:"mount_path"`           // the convention, for the UI to show
 	Status         string     `json:"status"`
 	LastError      string     `json:"last_error,omitempty"`
 	SyncedAt       *time.Time `json:"synced_at,omitempty"`
@@ -55,7 +56,8 @@ func (s *Server) viewDelivery(ctx context.Context, d *store.CertDelivery) delive
 		ID: d.ID, EnvID: d.EnvID, EnvName: s.envName(ctx, d.EnvID),
 		CertID: d.CertID, Volume: d.Volume, UID: d.UID, GID: d.GID,
 		Traefik: d.Traefik, RestartTargets: d.RestartTargets, MountPath: certMountPath,
-		Status: d.Status, LastError: d.LastError, Protected: d.Protected,
+		BundleCAs: strings.Fields(d.BundleCAs),
+		Status:    d.Status, LastError: d.LastError, Protected: d.Protected,
 	}
 	if d.CertID != "" {
 		if c, err := s.store.CertificateByID(ctx, d.CertID); err == nil {
@@ -95,6 +97,9 @@ type certDeliveryRequest struct {
 	// Space-separated container names bounced after each changed sync, for consumers
 	// that cannot hot-reload.
 	RestartTargets string `json:"restart_targets"`
+	// Which roots this delivery's ca-bundle.crt carries, by CA id; empty = all of them.
+	// Select incumbents, not staged successors — lineage rides along (see trustBundle).
+	BundleCAs []string `json:"bundle_cas"`
 }
 
 func (s *Server) handleCreateCertDelivery(w http.ResponseWriter, r *http.Request) {
@@ -110,8 +115,15 @@ func (s *Server) handleCreateCertDelivery(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if req.CertID != "" {
-		if _, err := s.store.CertificateByID(r.Context(), req.CertID); err != nil {
+		c, err := s.store.CertificateByID(r.Context(), req.CertID)
+		if err != nil {
 			httpx.BadRequest(w, r, "No such certificate.")
+			return
+		}
+		// An env-scoped cert stays in its environment; only a SHARED cert goes anywhere.
+		if c.EnvID != "" && c.EnvID != req.EnvID {
+			httpx.Fail(w, r, http.StatusBadRequest, "wrong_environment",
+				fmt.Sprintf("The certificate “%s” belongs to another environment. Deliver it there, or create one scoped to this environment.", c.Name))
 			return
 		}
 	}
@@ -120,10 +132,26 @@ func (s *Server) handleCreateCertDelivery(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// A bundle selection names real, selectable roots. Staged successors are refused:
+	// selection is by lineage anchor, and the successor rides along on its own.
+	for _, id := range req.BundleCAs {
+		ca, err := s.store.CertAuthorityByID(r.Context(), id)
+		if err != nil {
+			httpx.BadRequest(w, r, "No such certificate authority in the bundle selection: "+id)
+			return
+		}
+		if ca.Status == "next" {
+			httpx.Fail(w, r, http.StatusBadRequest, "staged_ca",
+				fmt.Sprintf("“%s” is a staged successor. Select the CA it replaces — the successor is bundled automatically while the rotation is in flight.", ca.Name))
+			return
+		}
+	}
+
 	d := &store.CertDelivery{
 		EnvID: req.EnvID, CertID: req.CertID, Volume: req.Volume,
 		UID: req.UID, GID: req.GID, Traefik: req.Traefik,
 		RestartTargets: strings.TrimSpace(req.RestartTargets),
+		BundleCAs:      strings.Join(req.BundleCAs, " "),
 	}
 	if u, ok := auth.UserFrom(r.Context()); ok {
 		d.CreatedBy = u.ID
@@ -135,7 +163,7 @@ func (s *Server) handleCreateCertDelivery(w http.ResponseWriter, r *http.Request
 
 	s.audit(r.Context(), store.AuditEntry{
 		EnvID: d.EnvID, Action: "cert.deliver", Target: d.Volume, Outcome: "ok",
-		Detail: store.AuditDetail(map[string]any{"cert_id": d.CertID, "traefik": d.Traefik}),
+		Detail: store.AuditDetail(map[string]any{"cert_id": d.CertID, "traefik": d.Traefik, "bundle_cas": d.BundleCAs}),
 	})
 
 	// First sync now, in the background — creating a delivery should not hang the request
@@ -285,7 +313,7 @@ func (s *Server) syncCertDelivery(ctx context.Context, d *store.CertDelivery) (s
 func (s *Server) deliveryFiles(ctx context.Context, d *store.CertDelivery) (map[string][]byte, string, error) {
 	files := map[string][]byte{}
 
-	bundle, err := s.trustBundle(ctx)
+	bundle, err := s.trustBundle(ctx, strings.Fields(d.BundleCAs))
 	if err != nil {
 		return nil, "", err
 	}
@@ -300,6 +328,11 @@ func (s *Server) deliveryFiles(ctx context.Context, d *store.CertDelivery) (map[
 		}
 		if err != nil {
 			return nil, "", err
+		}
+		// Belt and braces for the create-time check — env and cert are both immutable,
+		// but a mismatch here means key material headed to the wrong environment.
+		if c.EnvID != "" && c.EnvID != d.EnvID {
+			return nil, "", fmt.Errorf("the certificate %q belongs to another environment", c.Name)
 		}
 		key, err := s.sealer.Open(c.KeyEnc)
 		if err != nil {

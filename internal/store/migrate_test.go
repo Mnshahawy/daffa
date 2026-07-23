@@ -195,6 +195,134 @@ func TestMigrate0008AgentJoinTarget(t *testing.T) {
 	}
 }
 
+// 0009 rebuilds the certificates table (per-env names) — and on SQLite, with foreign_keys(1),
+// a careless rebuild would cascade-DELETE every cert_deliveries row via the implicit DELETE that
+// DROP TABLE performs on the referenced parent. This test builds the 0008 world with CAs, certs
+// and BOTH kinds of delivery (cert-carrying and trust-bundle-only), migrates forward for real,
+// and asserts the deliveries survived intact — that assertion is the whole point. It then proves
+// the new uniqueness rule: same name in two envs OK, duplicate within an env (or shared) refused.
+func TestMigrate0009CertEnvScope(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	url := "sqlite://" + filepath.Join(dir, "test.db")
+
+	stopAfter = "0008_agent_join_target"
+	defer func() { stopAfter = "" }()
+
+	s, err := Open(ctx, url)
+	if err != nil {
+		t.Fatalf("open at 0008: %v", err)
+	}
+	defer s.Close()
+
+	env := &Environment{Name: "prod"}
+	if err := s.CreateEnvironment(ctx, env); err != nil {
+		t.Fatal(err)
+	}
+
+	// 0008-era rows, raw SQL with the column sets of that era (no outbound_trust, no
+	// env_id/usages, no bundle_cas).
+	for _, ins := range []struct {
+		q    string
+		args []any
+	}{
+		{`INSERT INTO cert_authorities (id, name, subject, cert_pem, key_enc, key_algo,
+            not_before, not_after, status, rotates_id, overlap_until, warn_days, created_at, created_by, protected)
+            VALUES ('ca_old', 'internal-ca', 'CN=Old', 'PEM', 'sealed', 'ecdsa-p256', ?, ?, 'active', NULL, NULL, 180, ?, NULL, 0)`,
+			[]any{ts(now()), ts(now()), ts(now())}},
+		{`INSERT INTO certificates (id, name, ca_id, sans, key_algo, cert_pem, chain_pem, key_enc,
+            not_before, not_after, validity_days, renew_before_days, status, last_error, created_at, created_by, protected)
+            VALUES ('crt_old', 'cellauth', 'ca_old', 'cellauth', 'ecdsa-p256', 'PEM', '', 'sealed', ?, ?, 398, 30, 'ok', '', ?, NULL, 0)`,
+			[]any{ts(now()), ts(now()), ts(now())}},
+		{`INSERT INTO cert_deliveries (id, env_id, cert_id, volume, uid, gid, traefik, restart_targets,
+            synced_hash, synced_at, status, last_error, created_at, created_by, protected)
+            VALUES ('dlv_cert', ?, 'crt_old', 'certs-cellauth', 100, 100, 0, 'cellauth', 'hash1', NULL, 'ok', '', ?, NULL, 0)`,
+			[]any{env.ID, ts(now())}},
+		{`INSERT INTO cert_deliveries (id, env_id, cert_id, volume, uid, gid, traefik, restart_targets,
+            synced_hash, synced_at, status, last_error, created_at, created_by, protected)
+            VALUES ('dlv_bundle', ?, NULL, 'trust-only', 0, 0, 0, '', 'hash2', NULL, 'ok', '', ?, NULL, 0)`,
+			[]any{env.ID, ts(now())}},
+	} {
+		if _, err := s.db.ExecContext(ctx, s.rebind(ins.q), ins.args...); err != nil {
+			t.Fatalf("insert 0008-era row: %v", err)
+		}
+	}
+
+	stopAfter = ""
+	if err := s.migrate(ctx); err != nil {
+		t.Fatalf("migrating to 0012: %v", err)
+	}
+
+	// THE assertion: both deliveries survived the parent rebuild, fields intact.
+	for _, want := range []struct{ id, certID, volume, hash string }{
+		{"dlv_cert", "crt_old", "certs-cellauth", "hash1"},
+		{"dlv_bundle", "", "trust-only", "hash2"},
+	} {
+		d, err := s.CertDeliveryByID(ctx, want.id)
+		if err != nil {
+			t.Fatalf("delivery %s did not survive the rebuild: %v", want.id, err)
+		}
+		if d.CertID != want.certID || d.Volume != want.volume || d.SyncedHash != want.hash {
+			t.Errorf("delivery %s mangled by the rebuild: %+v", want.id, d)
+		}
+	}
+
+	// The pre-existing cert reads back shared, with the defaulted usages.
+	old, err := s.CertificateByID(ctx, "crt_old")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if old.EnvID != "" || old.Usages != "server" || old.SANs != "cellauth" {
+		t.Errorf("migrated cert: %+v", old)
+	}
+	// And the pre-existing CA keeps outbound trust (the prior behaviour).
+	if ca, err := s.CertAuthorityByID(ctx, "ca_old"); err != nil || !ca.OutboundTrust {
+		t.Errorf("migrated CA should keep outbound trust: %+v, err %v", ca, err)
+	}
+
+	// Per-env uniqueness: the same name lands in staging and prod, but not twice in one
+	// env — and not twice shared.
+	staging := &Environment{Name: "staging"}
+	if err := s.CreateEnvironment(ctx, staging); err != nil {
+		t.Fatal(err)
+	}
+	a := &Certificate{Name: "cellauth", EnvID: env.ID, CertPEM: "PEM", KeyEnc: "sealed"}
+	if err := s.CreateCertificate(ctx, a); err != nil {
+		t.Fatalf("same name in a different env must be allowed: %v", err)
+	}
+	b := &Certificate{Name: "cellauth", EnvID: staging.ID, CertPEM: "PEM", KeyEnc: "sealed"}
+	if err := s.CreateCertificate(ctx, b); err != nil {
+		t.Fatalf("same name in a second env must be allowed: %v", err)
+	}
+	if err := s.CreateCertificate(ctx, &Certificate{Name: "cellauth", EnvID: env.ID, CertPEM: "PEM", KeyEnc: "s"}); !IsDuplicate(err) {
+		t.Errorf("duplicate name within one env: err %v, want a unique violation", err)
+	}
+	if err := s.CreateCertificate(ctx, &Certificate{Name: "cellauth", CertPEM: "PEM", KeyEnc: "s"}); !IsDuplicate(err) {
+		t.Errorf("duplicate SHARED name (crt_old is shared): err %v, want a unique violation", err)
+	}
+
+	// The visibility filter: an env-limited caller sees shared + their env, not the other.
+	visible, err := s.ListCertificates(ctx, false, []string{staging.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := map[string]bool{}
+	for _, c := range visible {
+		ids[c.ID] = true
+	}
+	if !ids["crt_old"] || !ids[b.ID] || ids[a.ID] {
+		t.Errorf("env-limited list saw %v; want shared + staging only", ids)
+	}
+
+	// Env deletion cascades its certs.
+	if err := s.DeleteEnvironment(ctx, staging.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CertificateByID(ctx, b.ID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("deleting an env should cascade its certs; got err %v", err)
+	}
+}
+
 // A capability mask must be able to hold a HIGH BIT on Postgres, and this test is Postgres-only
 // because that is the entire point.
 //

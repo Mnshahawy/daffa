@@ -2,6 +2,7 @@ package certs
 
 import (
 	"bytes"
+	"crypto/x509"
 	"io"
 	"strings"
 	"testing"
@@ -20,7 +21,7 @@ func TestCreateIssueVerify(t *testing.T) {
 	}
 
 	sans := []string{"app.example.com", "www.example.com", "10.0.0.5"}
-	certPEM, keyPEM, err := Issue(caCert, caKey, sans, ECDSAP256, 398)
+	certPEM, keyPEM, err := Issue(caCert, caKey, sans, ECDSAP256, 398, UsageServer)
 	if err != nil {
 		t.Fatalf("Issue: %v", err)
 	}
@@ -49,9 +50,9 @@ func TestCreateIssueVerify(t *testing.T) {
 
 func TestRenewReusesKeyAndSANs(t *testing.T) {
 	caCert, caKey, _ := CreateCA("Test CA", "", ECDSAP256, 3650)
-	certPEM, keyPEM, _ := Issue(caCert, caKey, []string{"a.example", "b.example"}, RSA2048, 30)
+	certPEM, keyPEM, _ := Issue(caCert, caKey, []string{"a.example", "b.example"}, RSA2048, 30, UsageServer)
 
-	renewed, err := Renew(caCert, caKey, certPEM, keyPEM, 398)
+	renewed, err := Renew(caCert, caKey, certPEM, keyPEM, 398, UsageServer)
 	if err != nil {
 		t.Fatalf("Renew: %v", err)
 	}
@@ -78,9 +79,75 @@ func TestRenewReusesKeyAndSANs(t *testing.T) {
 	}
 }
 
+func TestUsagesBecomeEKUs(t *testing.T) {
+	caCert, caKey, _ := CreateCA("EKU CA", "", ECDSAP256, 3650)
+
+	hasEKU := func(pemText string, want x509.ExtKeyUsage) bool {
+		c, err := ParseCert(pemText)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, eku := range c.ExtKeyUsage {
+			if eku == want {
+				return true
+			}
+		}
+		return false
+	}
+
+	server, _, _ := Issue(caCert, caKey, []string{"s.example"}, ECDSAP256, 30, UsageServer)
+	if !hasEKU(server, x509.ExtKeyUsageServerAuth) || hasEKU(server, x509.ExtKeyUsageClientAuth) {
+		t.Error("a server cert must carry serverAuth and not clientAuth")
+	}
+	client, _, _ := Issue(caCert, caKey, []string{"c.example"}, ECDSAP256, 30, UsageClient)
+	if hasEKU(client, x509.ExtKeyUsageServerAuth) || !hasEKU(client, x509.ExtKeyUsageClientAuth) {
+		t.Error("a client cert must carry clientAuth and not serverAuth")
+	}
+	both, keyPEM, _ := Issue(caCert, caKey, []string{"b.example"}, ECDSAP256, 30, "server client")
+	if !hasEKU(both, x509.ExtKeyUsageServerAuth) || !hasEKU(both, x509.ExtKeyUsageClientAuth) {
+		t.Error("a server+client cert must carry both EKUs")
+	}
+
+	// Renewal signs with the usages it is HANDED — the stored row, not the old
+	// PEM — so an edited usages set takes effect at the next renewal.
+	widened, err := Renew(caCert, caKey, both, keyPEM, 30, UsageClient)
+	if err != nil {
+		t.Fatalf("Renew: %v", err)
+	}
+	if hasEKU(widened, x509.ExtKeyUsageServerAuth) || !hasEKU(widened, x509.ExtKeyUsageClientAuth) {
+		t.Error("renewal must sign with the handed usages, not the old cert's")
+	}
+
+	if got := UsagesOf(mustParse(t, both)); got != "server client" {
+		t.Errorf("UsagesOf(both) = %q", got)
+	}
+	if got := UsagesOf(mustParse(t, server)); got != "server" {
+		t.Errorf("UsagesOf(server) = %q", got)
+	}
+
+	if _, err := NormalizeUsages([]string{"Server", "client", "server"}); err != nil {
+		t.Errorf("NormalizeUsages should accept case and duplicates: %v", err)
+	}
+	if got, _ := NormalizeUsages(nil); got != "server" {
+		t.Errorf("NormalizeUsages(nil) = %q, want the server default", got)
+	}
+	if _, err := NormalizeUsages([]string{"codeSigning"}); err == nil {
+		t.Error("NormalizeUsages must reject unknown usages")
+	}
+}
+
+func mustParse(t *testing.T, pemText string) *x509.Certificate {
+	t.Helper()
+	c, err := ParseCert(pemText)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
 func TestLeafNeverOutlivesCA(t *testing.T) {
 	caCert, caKey, _ := CreateCA("Short CA", "", ECDSAP256, 10)
-	certPEM, _, err := Issue(caCert, caKey, []string{"x.example"}, ECDSAP256, 398)
+	certPEM, _, err := Issue(caCert, caKey, []string{"x.example"}, ECDSAP256, 398, UsageServer)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +161,7 @@ func TestLeafNeverOutlivesCA(t *testing.T) {
 func TestVerifyRejectsWrongCA(t *testing.T) {
 	ca1, key1, _ := CreateCA("CA One", "", ECDSAP256, 3650)
 	ca2, _, _ := CreateCA("CA Two", "", ECDSAP256, 3650)
-	certPEM, _, _ := Issue(ca1, key1, []string{"x.example"}, ECDSAP256, 30)
+	certPEM, _, _ := Issue(ca1, key1, []string{"x.example"}, ECDSAP256, 30, UsageServer)
 	if err := Verify(certPEM, ca2); err == nil {
 		t.Fatal("a leaf must not verify against a CA that did not sign it")
 	}
@@ -110,8 +177,8 @@ func TestVerifyRejectsWrongCA(t *testing.T) {
 
 func TestCheckPairMismatch(t *testing.T) {
 	caCert, caKey, _ := CreateCA("Test CA", "", ECDSAP256, 3650)
-	certPEM, _, _ := Issue(caCert, caKey, []string{"x.example"}, ECDSAP256, 30)
-	_, otherKey, _ := Issue(caCert, caKey, []string{"y.example"}, ECDSAP256, 30)
+	certPEM, _, _ := Issue(caCert, caKey, []string{"x.example"}, ECDSAP256, 30, UsageServer)
+	_, otherKey, _ := Issue(caCert, caKey, []string{"y.example"}, ECDSAP256, 30, UsageServer)
 	if err := CheckPair(certPEM, otherKey); err == nil {
 		t.Fatal("mismatched key must be rejected")
 	}
@@ -119,7 +186,7 @@ func TestCheckPairMismatch(t *testing.T) {
 
 func TestUploadValidationTellsCertsApart(t *testing.T) {
 	caCert, caKey, _ := CreateCA("Test CA", "", RSA2048, 3650)
-	certPEM, keyPEM, _ := Issue(caCert, caKey, []string{"x.example"}, ECDSAP256, 30)
+	certPEM, keyPEM, _ := Issue(caCert, caKey, []string{"x.example"}, ECDSAP256, 30, UsageServer)
 
 	if err := ValidateCAUpload(certPEM, keyPEM); err == nil {
 		t.Error("a leaf must not validate as a CA")
@@ -139,7 +206,7 @@ func TestParseKeyFormats(t *testing.T) {
 	// PKCS#8 is what encodeKey writes; PKCS#1/SEC1 arrive via upload. Round-trip
 	// through Issue for PKCS#8, and hand-build the others from the same keys.
 	caCert, caKey, _ := CreateCA("Test CA", "", ECDSAP256, 3650)
-	_, keyPEM, _ := Issue(caCert, caKey, []string{"x.example"}, RSA2048, 30)
+	_, keyPEM, _ := Issue(caCert, caKey, []string{"x.example"}, RSA2048, 30, UsageServer)
 	if _, err := ParseKey(keyPEM); err != nil {
 		t.Fatalf("PKCS#8: %v", err)
 	}
