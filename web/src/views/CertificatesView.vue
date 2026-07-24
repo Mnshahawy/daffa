@@ -129,14 +129,61 @@ async function onRemoveCert(c: Certificate) {
 // ── deliveries ──────────────────────────────────────────────────────────────────
 
 const addingDelivery = ref(false)
+// Set while editing an existing delivery; null while creating one. The form is the same
+// shape either way — a delivery IS the set of files Daffa manages in one volume, so
+// "carries these certificates" and "lands at this path" are edits, not a new delivery.
+const editingDelivery = ref<CertDelivery | null>(null)
+const DEFAULT_MOUNT_PATH = '/etc/traefik/dynamic-certs'
 const deliveryBlank = () => ({
-  cert_id: '',
+  certs: [] as { cert_id: string; is_default: boolean }[],
   volume: 'daffa-certs',
+  mount_path: DEFAULT_MOUNT_PATH,
   traefik: true,
   restart_targets: '',
   bundle_cas: [] as string[],
 })
 const deliveryForm = ref(deliveryBlank())
+
+function carriesCert(id: string) {
+  return deliveryForm.value.certs.some((c) => c.cert_id === id)
+}
+
+function toggleDeliveryCert(id: string) {
+  const sel = deliveryForm.value.certs
+  const i = sel.findIndex((c) => c.cert_id === id)
+  if (i >= 0) sel.splice(i, 1)
+  // First certificate added becomes the default: with one certificate that is what the
+  // old single-cert fragment always said, and it is the answer an operator expects.
+  else sel.push({ cert_id: id, is_default: !sel.some((c) => c.is_default) })
+}
+
+// Exactly one default, or none: Traefik has a single stores.default.defaultCertificate,
+// and clicking the current default again clears it (Traefik then keeps its own self-signed
+// default for unmatched SNI, which the hint below says out loud).
+function setDefaultCert(id: string) {
+  const sel = deliveryForm.value.certs
+  const wasDefault = sel.find((c) => c.cert_id === id)?.is_default
+  sel.forEach((c) => (c.is_default = !wasDefault && c.cert_id === id))
+}
+
+function startEditDelivery(d: CertDelivery) {
+  editingDelivery.value = d
+  addingDelivery.value = true
+  deliveryForm.value = {
+    certs: (d.certs ?? []).map((c) => ({ cert_id: c.cert_id, is_default: c.is_default })),
+    volume: d.volume,
+    mount_path: d.mount_path || DEFAULT_MOUNT_PATH,
+    traefik: d.traefik,
+    restart_targets: d.restart_targets ?? '',
+    bundle_cas: [...(d.bundle_cas ?? [])],
+  }
+}
+
+function closeDeliveryForm() {
+  addingDelivery.value = false
+  editingDelivery.value = null
+  deliveryForm.value = deliveryBlank()
+}
 
 // Selectable bundle roots: anything not mid-rotation — a staged successor rides along on
 // its own and the server refuses selecting it directly.
@@ -150,20 +197,38 @@ function toggleBundleCA(id: string) {
 }
 
 const caNames = computed(() => new Map((cas.value ?? []).map((c) => [c.id, c.name])))
+const certNames = computed(() => new Map((certs.value ?? []).map((c) => [c.id, c.name])))
 function bundleLabel(d: CertDelivery): string {
   if (!d.bundle_cas?.length) return 'all roots'
   return d.bundle_cas.map((id) => caNames.value.get(id) ?? id).join(', ')
 }
 
-const createDelivery = useMutation({
-  mutationFn: () => daffa.createCertDelivery({ ...deliveryForm.value, env_id: session.envId }),
+const saveDelivery = useMutation({
+  mutationFn: () => {
+    const d = editingDelivery.value
+    return d
+      ? daffa.updateCertDelivery(d.id, { ...deliveryForm.value })
+      : daffa.createCertDelivery({ ...deliveryForm.value, env_id: session.envId })
+  },
   onSuccess: () => {
-    deliveryForm.value = deliveryBlank()
-    addingDelivery.value = false
-    toast.ok('Delivery created.')
+    const edited = !!editingDelivery.value
+    closeDeliveryForm()
+    toast.ok(edited ? 'Delivery updated.' : 'Delivery created.')
     refresh()
   },
-  onError: (e) => toast.err(e, 'Could not create the delivery.'),
+  onError: (e) => toast.err(e, 'Could not save the delivery.'),
+})
+
+// What the delivery will write into the volume — the list Traefik's file provider ignores
+// (it reads only .toml/.yaml/.yml), which is exactly why a git-sourced volume source can
+// share the same directory.
+const deliveryFileNames = computed(() => {
+  const names = deliveryForm.value.certs
+    .map((c) => certNames.value.get(c.cert_id))
+    .filter(Boolean)
+    .flatMap((n) => [`${n}.crt`, `${n}.key`])
+  if (deliveryForm.value.traefik && deliveryForm.value.certs.length) names.unshift('tls.yml')
+  return [...names, 'ca-bundle.crt']
 })
 
 function deliveryStatus(d: CertDelivery): Status {
@@ -359,32 +424,64 @@ async function onRemoveDelivery(d: CertDelivery) {
         <div class="min-w-0">
           <h2 class="text-base font-semibold">Deliveries</h2>
           <p class="muted mt-0.5 max-w-2xl text-sm leading-relaxed">
-            A delivery keeps a certificate (and the trust bundle) current inside a named volume on
-            {{ clusterName }}. Mount it read-only — for Traefik, at
-            <code class="font-mono text-xs">/etc/traefik/dynamic-certs</code> with the file
-            provider watching it, and renewals become hot reloads instead of restarts.
+            A delivery keeps certificates and the trust bundle current inside a named volume on
+            {{ clusterName }}. Mount it read-only; with Traefik's file provider watching that
+            directory, renewals become hot reloads instead of restarts. The PEMs are invisible
+            to Traefik — it reads only <code class="font-mono text-xs">.yml</code>,
+            <code class="font-mono text-xs">.yaml</code> and
+            <code class="font-mono text-xs">.toml</code> — so a git-sourced volume can share the
+            same directory for middlewares and routers.
           </p>
         </div>
         <div class="ml-auto">
-          <BaseButton v-if="canEditCerts" :intent="addingDelivery ? 'secondary' : 'primary'" size="sm" @click="addingDelivery = !addingDelivery">
+          <BaseButton v-if="canEditCerts" :intent="addingDelivery ? 'secondary' : 'primary'" size="sm" @click="addingDelivery ? closeDeliveryForm() : (addingDelivery = true)">
             <AppIcon v-if="!addingDelivery" name="plus" class="size-3.5" />
             {{ addingDelivery ? 'Cancel' : 'Add delivery' }}
           </BaseButton>
         </div>
       </div>
 
-      <form v-if="addingDelivery" class="surface mb-5 rounded-[var(--radius-card)] p-5" @submit.prevent="createDelivery.mutate()">
-        <div class="grid gap-4 sm:grid-cols-3">
-          <div>
-            <label for="dlv-cert" class="mb-1.5 block text-sm font-medium">Certificate</label>
-            <Select id="dlv-cert" v-model="deliveryForm.cert_id">
-              <option value="">Trust bundle only</option>
-              <option v-for="c in certs" :key="c.id" :value="c.id">{{ c.name }}</option>
-            </Select>
+      <form v-if="addingDelivery" class="surface mb-5 rounded-[var(--radius-card)] p-5" @submit.prevent="saveDelivery.mutate()">
+        <div>
+          <span class="mb-1.5 block text-sm font-medium">Certificates</span>
+          <div v-if="certs.length" class="flex flex-col gap-1.5">
+            <div v-for="c in certs" :key="c.id" class="flex items-center gap-3 text-sm">
+              <label class="flex items-center gap-2">
+                <input :checked="carriesCert(c.id)" type="checkbox" class="accent-[var(--color-accent-500)]" @change="toggleDeliveryCert(c.id)" />
+                {{ c.name }}
+              </label>
+              <button
+                v-if="carriesCert(c.id) && deliveryForm.traefik"
+                type="button"
+                class="rounded-md px-1.5 py-0.5 text-xs"
+                :style="{
+                  background: deliveryForm.certs.find((x) => x.cert_id === c.id)?.is_default ? 'var(--accent-soft)' : 'var(--surface-sunken)',
+                  color: deliveryForm.certs.find((x) => x.cert_id === c.id)?.is_default ? 'var(--accent-text)' : 'var(--text-muted)',
+                }"
+                title="Traefik's stores.default.defaultCertificate — served when no certificate matches the requested name"
+                @click="setDefaultCert(c.id)"
+              >
+                default
+              </button>
+            </div>
           </div>
+          <p v-else class="subtle text-xs">No certificates on {{ clusterName }} yet.</p>
+          <p class="subtle mt-1 text-xs">
+            None selected = trust bundle only: the volume carries
+            <code class="font-mono">ca-bundle.crt</code> and nothing else. With no default marked,
+            Traefik keeps its own self-signed certificate for unmatched names.
+          </p>
+        </div>
+        <div class="mt-4 grid gap-4 sm:grid-cols-3">
           <div>
             <label for="dlv-volume" class="mb-1.5 block text-sm font-medium">Volume</label>
-            <input id="dlv-volume" v-model="deliveryForm.volume" required class="field font-mono text-xs" data-cursor="text" />
+            <input id="dlv-volume" v-model="deliveryForm.volume" required :disabled="!!editingDelivery" class="field font-mono text-xs disabled:opacity-60" data-cursor="text" />
+            <p v-if="editingDelivery" class="subtle mt-1 text-xs">Moving to another volume means a new delivery.</p>
+          </div>
+          <div>
+            <label for="dlv-mount" class="mb-1.5 block text-sm font-medium">Mount path</label>
+            <input id="dlv-mount" v-model="deliveryForm.mount_path" required class="field font-mono text-xs" data-cursor="text" />
+            <p class="subtle mt-1 text-xs">Where the consumer mounts this volume — Traefik resolves the paths inside tls.yml itself.</p>
           </div>
           <div>
             <label for="dlv-restart" class="mb-1.5 block text-sm font-medium">Restart after sync</label>
@@ -410,8 +507,14 @@ async function onRemoveDelivery(d: CertDelivery) {
           <input v-model="deliveryForm.traefik" type="checkbox" class="accent-[var(--color-accent-500)]" />
           Render a Traefik file-provider fragment (tls.yml) into the volume
         </label>
-        <BaseButton type="submit" intent="primary" size="md" class="mt-4" :loading="createDelivery.isPending.value">
-          Create delivery
+        <p class="subtle mt-1 text-xs">
+          One delivery per volume may do this — two would rewrite each other's tls.yml forever.
+        </p>
+        <p class="subtle mt-3 text-xs">
+          Writes: <code class="font-mono">{{ deliveryFileNames.join(', ') }}</code>
+        </p>
+        <BaseButton type="submit" intent="primary" size="md" class="mt-4" :loading="saveDelivery.isPending.value">
+          {{ editingDelivery ? 'Save delivery' : 'Create delivery' }}
         </BaseButton>
       </form>
 
@@ -429,10 +532,18 @@ async function onRemoveDelivery(d: CertDelivery) {
             <tr v-for="d in deliveries" :key="d.id" class="border-b last:border-0" :style="{ borderColor: 'var(--border)' }">
               <td class="max-w-0 py-3 pl-4 pr-3">
                 <div class="font-medium">
-                  {{ d.cert_name || 'trust bundle' }}
+                  <template v-if="d.certs?.length">
+                    <span v-for="(c, i) in d.certs" :key="c.cert_id">
+                      {{ i ? ', ' : '' }}{{ c.cert_name || c.cert_id
+                      }}<span v-if="c.is_default && d.traefik" class="subtle text-xs"> (default)</span>
+                    </span>
+                  </template>
+                  <template v-else>trust bundle</template>
                   <span class="subtle">→ {{ d.volume }}</span>
                 </div>
-                <div class="subtle mt-0.5 truncate text-xs" :title="bundleLabel(d)">bundle: {{ bundleLabel(d) }}</div>
+                <div class="subtle mt-0.5 truncate text-xs" :title="bundleLabel(d)">
+                  bundle: {{ bundleLabel(d) }} · mounted at {{ d.mount_path }}
+                </div>
                 <div v-if="d.last_error" class="mt-0.5 truncate text-xs" :style="{ color: 'var(--danger)' }" :title="d.last_error">{{ d.last_error }}</div>
               </td>
               <td class="py-3 pr-3"><StatusPill :status="deliveryStatus(d)" /></td>
@@ -442,6 +553,7 @@ async function onRemoveDelivery(d: CertDelivery) {
               </td>
               <td class="py-3 pr-4 text-right">
                 <div v-if="canEditCerts" class="flex items-center justify-end gap-1">
+                  <BaseButton intent="secondary" size="xs" @click="startEditDelivery(d)">Edit</BaseButton>
                   <BaseButton intent="secondary" size="xs" :disabled="syncDelivery.isPending.value" @click="syncDelivery.mutate(d.id)">
                     <AppIcon name="restart" class="size-3" />
                     Sync now

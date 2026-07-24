@@ -188,7 +188,8 @@ func (s *Server) ensureEdgeDelivery(ctx context.Context, envID, volume, certID s
 		}
 	}
 	d := &store.CertDelivery{
-		EnvID: envID, CertID: certID, Volume: volume, Traefik: true, Protected: true,
+		EnvID: envID, Volume: volume, Traefik: true, Protected: true,
+		Certs: []store.DeliveryCert{{CertID: certID, IsDefault: true}},
 	}
 	if err := s.store.CreateCertDelivery(ctx, d); err != nil {
 		return nil, fmt.Errorf("edge: creating delivery: %w", err)

@@ -35,10 +35,24 @@ const { data: backupJobs } = useQuery({
   queryFn: daffa.backups,
   enabled: computed(() => session.can(Cap.BackupsView)),
 })
+const { data: deliveries } = useQuery({
+  queryKey: ['cert-deliveries'],
+  queryFn: daffa.certDeliveries,
+  enabled: computed(() => session.can(Cap.CertsView)),
+})
 
 const sourced = computed(() => {
   const set = new Set<string>()
   for (const s of sources.value ?? []) if (s.env_id === session.envId) set.add(s.volume)
+  return set
+})
+
+// A volume can carry BOTH: a git source for the config fragments and a delivery for the
+// certificates, in one directory. That is the point of the mixed Traefik dynamic volume —
+// Traefik reads exactly one directory — so both badges show, side by side.
+const certified = computed(() => {
+  const set = new Set<string>()
+  for (const d of deliveries.value ?? []) if (d.env_id === session.envId) set.add(d.volume)
   return set
 })
 
@@ -82,7 +96,8 @@ const remove = useMutation({
 // or system volume even when nothing mounts it (resource_handlers.go), so the list must not flag
 // those "unused" and invite exactly the deletion the server would block. The `sourced`/`backed up`
 // name badge is what says WHY it is kept.
-const kept = (name: string) => sourced.value.has(name) || backedUp.value.has(name)
+const kept = (name: string) =>
+  sourced.value.has(name) || backedUp.value.has(name) || certified.value.has(name)
 const isUnused = (v: Volume) => !v.used_by?.length && !kept(v.name) && !v.system
 
 const orphaned = computed(() => (volumes.value ?? []).filter(isUnused).length)
@@ -181,6 +196,14 @@ async function onRemove(v: Volume) {
                   title="An enabled backup job snapshots this volume to object storage"
                 >
                   backed up
+                </span>
+                <span
+                  v-if="certified.has(v.name)"
+                  class="rounded-md px-1.5 py-0.5 text-xs font-medium"
+                  :style="{ background: 'var(--surface-sunken)', color: 'var(--text-muted)' }"
+                  title="A certificate delivery keeps this volume's certificates and trust bundle current"
+                >
+                  certificates
                 </span>
               </div>
               <div class="subtle mt-0.5 font-mono text-xs">{{ v.driver }}</div>

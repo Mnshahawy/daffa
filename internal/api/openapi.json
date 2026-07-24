@@ -8187,7 +8187,7 @@
         "tags": [
           "certificates \u0026 encryption keys"
         ],
-        "summary": "Create a delivery of a certificate into a volume",
+        "summary": "Create a delivery of certificates into a volume",
         "description": "The first sync runs in the background right away — creating a delivery should not hang the request on a volume write, but it should go green within seconds.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "certs.edit",
         "x-daffa-scope": "global",
@@ -8201,8 +8201,14 @@
               },
               "example": {
                 "env_id": "env_prod",
-                "cert_id": "crt_1",
-                "volume": "daffa-certs",
+                "certs": [
+                  {
+                    "cert_id": "crt_1",
+                    "is_default": true
+                  }
+                ],
+                "volume": "traefik-dynamic",
+                "mount_path": "/etc/traefik/dynamic",
                 "traefik": true
               }
             }
@@ -8262,14 +8268,110 @@
         }
       }
     },
-    "/api/certs/deliveries/{id}/sync": {
-      "post": {
-        "operationId": "syncCertDelivery",
+    "/api/certs/deliveries/{id}": {
+      "put": {
+        "operationId": "updateCertDelivery",
         "tags": [
           "certificates \u0026 encryption keys"
         ],
-        "summary": "Sync a delivery now and answer with the outcome",
-        "description": "Synchronous, and forced: \"sync now\" is the button an operator presses while looking at a red status, and it answers with the outcome, not with \"started\".\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
+        "summary": "Replace what a delivery carries and where it lands",
+        "description": "Editable state only: the environment and the volume are what the Traefik uniqueness rule and the consumer's mount are keyed on, so moving either is a new delivery rather than an edit.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
+        "x-daffa-capability": "certs.edit",
+        "x-daffa-scope": "global",
+        "requestBody": {
+          "description": "Request bodies are capped at 1 MiB; unknown fields are refused.",
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CertDeliveryRequest"
+              },
+              "example": {
+                "certs": [
+                  {
+                    "cert_id": "crt_1",
+                    "is_default": true
+                  },
+                  {
+                    "cert_id": "crt_2"
+                  }
+                ],
+                "mount_path": "/etc/traefik/dynamic",
+                "traefik": true
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CertDelivery"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is wrong, and the message says how to fix it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No live session or valid token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but the capability is not held at the required scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Nothing lives at that id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something went wrong on the server; the audit log has the details.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteCertDelivery",
+        "tags": [
+          "certificates \u0026 encryption keys"
+        ],
+        "summary": "Delete a delivery, leaving the volume's files in place",
+        "description": "The volume and its contents are left in place: the consumer may still be serving with them, and deleting key material out from under a running proxy is a worse surprise than a stale file.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "certs.edit",
         "x-daffa-scope": "global",
         "responses": {
@@ -8278,7 +8380,10 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/CertDelivery"
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  }
                 }
               }
             }
@@ -8326,14 +8431,14 @@
         }
       }
     },
-    "/api/certs/deliveries/{id}": {
-      "delete": {
-        "operationId": "deleteCertDelivery",
+    "/api/certs/deliveries/{id}/sync": {
+      "post": {
+        "operationId": "syncCertDelivery",
         "tags": [
           "certificates \u0026 encryption keys"
         ],
-        "summary": "Delete a delivery, leaving the volume's files in place",
-        "description": "The volume and its contents are left in place: the consumer may still be serving with them, and deleting key material out from under a running proxy is a worse surprise than a stale file.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
+        "summary": "Sync a delivery now and answer with the outcome",
+        "description": "Synchronous, and forced: \"sync now\" is the button an operator presses while looking at a red status, and it answers with the outcome, not with \"started\".\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "certs.edit",
         "x-daffa-scope": "global",
         "responses": {
@@ -8342,10 +8447,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "type": "string"
-                  }
+                  "$ref": "#/components/schemas/CertDelivery"
                 }
               }
             }
@@ -15224,11 +15326,11 @@
           "env_name": {
             "type": "string"
           },
-          "cert_id": {
-            "type": "string"
-          },
-          "cert_name": {
-            "type": "string"
+          "certs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DeliveryCertView"
+            }
           },
           "volume": {
             "type": "string"
@@ -15276,6 +15378,7 @@
         "required": [
           "id",
           "env_id",
+          "certs",
           "volume",
           "uid",
           "gid",
@@ -15285,16 +15388,40 @@
           "protected"
         ]
       },
+      "DeliveryCertView": {
+        "type": "object",
+        "properties": {
+          "cert_id": {
+            "type": "string"
+          },
+          "cert_name": {
+            "type": "string"
+          },
+          "is_default": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "cert_id",
+          "is_default"
+        ]
+      },
       "CertDeliveryRequest": {
         "type": "object",
         "properties": {
           "env_id": {
             "type": "string"
           },
-          "cert_id": {
-            "type": "string"
+          "certs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DeliveryCertRequest"
+            }
           },
           "volume": {
+            "type": "string"
+          },
+          "mount_path": {
             "type": "string"
           },
           "uid": {
@@ -15314,6 +15441,18 @@
             "items": {
               "type": "string"
             }
+          }
+        },
+        "additionalProperties": false
+      },
+      "DeliveryCertRequest": {
+        "type": "object",
+        "properties": {
+          "cert_id": {
+            "type": "string"
+          },
+          "is_default": {
+            "type": "boolean"
           }
         },
         "additionalProperties": false

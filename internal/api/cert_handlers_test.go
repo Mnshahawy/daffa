@@ -329,7 +329,8 @@ func TestCertEnvScopingAndUsages(t *testing.T) {
 	if err := s.store.CreateEnvironment(ctx, other); err != nil {
 		t.Fatal(err)
 	}
-	wrong := &store.CertDelivery{EnvID: other.ID, CertID: leaf.ID, Volume: "v"}
+	wrong := &store.CertDelivery{EnvID: other.ID, Volume: "v",
+		Certs: []store.DeliveryCert{{CertID: leaf.ID}}}
 	if err := s.store.CreateCertDelivery(ctx, wrong); err != nil {
 		t.Fatal(err)
 	}
@@ -445,7 +446,8 @@ func TestProtectedEdgeResourcesRefuseDeletion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dlv := &store.CertDelivery{EnvID: env.ID, CertID: cert.ID, Volume: "daffa-edge-certs", Traefik: true, Protected: true}
+	dlv := &store.CertDelivery{EnvID: env.ID, Volume: "daffa-edge-certs", Traefik: true, Protected: true,
+		Certs: []store.DeliveryCert{{CertID: cert.ID, IsDefault: true}}}
 	if err := s.store.CreateCertDelivery(ctx, dlv); err != nil {
 		t.Fatal(err)
 	}

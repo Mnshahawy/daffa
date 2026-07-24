@@ -176,8 +176,23 @@ func (s *Server) applyVolumeSourceRequest(w http.ResponseWriter, r *http.Request
 			httpx.BadRequest(w, r, "An inline volume source needs at least one file — that is its content.")
 			return false
 		}
-		if _, err := volSourceFilesFromRequest(req.Files); err != nil {
+		files, err := volSourceFilesFromRequest(req.Files)
+		if err != nil {
 			httpx.BadRequest(w, r, err.Error())
+			return false
+		}
+		// Pre-flight the shared-directory rule while the file set is still in the request:
+		// a volume can also carry a certificate delivery (the mixed Traefik dynamic
+		// directory), and the two coexist only while their filenames stay disjoint. The
+		// sync refuses this too, but refusing at save is the difference between "your edit
+		// was rejected, here is why" and storing a file set that can never be delivered and
+		// only turning the source red later.
+		names := make([]string, 0, len(files))
+		for _, f := range files {
+			names = append(names, f.Path)
+		}
+		if err := s.refuseDeliveryOwnedNames(r.Context(), v.EnvID, v.Volume, names); err != nil {
+			httpx.Fail(w, r, http.StatusConflict, "delivery_owns_file", err.Error())
 			return false
 		}
 		// An inline source has no repository to push to, so git fields and the push-driven

@@ -63,6 +63,15 @@ func (s *Server) syncVolumeSource(ctx context.Context, v *store.VolumeSource) (h
 		return hash, commit, warnings, nil // the volume already holds this
 	}
 
+	// A volume may have a second writer: a Traefik certificate delivery, sharing the one
+	// dynamic directory Traefik is able to read. That works because each side mirrors only
+	// its own manifest — but only as long as their file NAMES stay disjoint. A repo that
+	// carries its own tls.yml would fight the delivery forever, each rewriting the other at
+	// its own cadence, and both reporting ok. Refuse, and name the file.
+	if err := s.refuseDeliveryFileClash(ctx, v, rt); err != nil {
+		return hash, commit, warnings, err
+	}
+
 	env, err := s.pool.Get(v.EnvID)
 	if err != nil {
 		return hash, commit, warnings, fmt.Errorf("the environment is not connected")
@@ -136,6 +145,26 @@ func (s *Server) syncVolumeSource(ctx context.Context, v *store.VolumeSource) (h
 	return hash, commit, warnings, nil
 }
 
+// refuseDeliveryFileClash stops a volume source from writing a filename that a certificate
+// delivery on the same volume owns. The source is the side that refuses because it is the
+// side whose contents an operator edits; the delivery's file set is Daffa's own and is
+// authoritative. See mixed-config-volumes.md.
+//
+// This is the sync-time backstop. Inline sources are also checked when they are saved (see
+// refuseDeliveryOwnedNames), which is the error an operator should normally see — but a git
+// subtree's contents are only known after a clone, so for those this is the first and only
+// chance to refuse.
+func (s *Server) refuseDeliveryFileClash(ctx context.Context, v *store.VolumeSource, rt *stacks.ResolvedTree) error {
+	names := make([]string, 0, len(rt.Files))
+	for _, f := range rt.Files {
+		names = append(names, f.Name)
+	}
+	if err := s.refuseDeliveryOwnedNames(ctx, v.EnvID, v.Volume, names); err != nil {
+		return fmt.Errorf("the subtree contains a file that clashes: %w", err)
+	}
+	return nil
+}
+
 // probeVolumeSourceGit proves a git source is deployable before a switch commits: it clones the
 // repo and resolves the subtree — the exact resolution syncVolumeSource performs — so a bad
 // URL/ref/path or a missing credential is rejected as the operator's 400 now, rather than surfacing
@@ -179,12 +208,33 @@ func (s *Server) syncStackVolumeSources(ctx context.Context, stack *store.Stack)
 	for _, v := range sources {
 		if err := s.reportVolumeSourceSync(ctx, v); err != nil {
 			errs = append(errs, fmt.Sprintf("%s: %v", v.Volume, err))
+			continue
+		}
+		// A volume a source just filled may also carry certificates — the mixed dynamic
+		// directory. Reconcile them here too, or a fresh node deploys a Traefik that finds
+		// its middlewares present and its tls.yml missing until the next sweep. The VOLUME
+		// is the join key: a delivery needs no link to the stack to be found this way.
+		for _, d := range s.deliveriesForVolume(ctx, v.EnvID, v.Volume) {
+			if err := s.reportDeliverySync(ctx, d); err != nil {
+				errs = append(errs, fmt.Sprintf("%s: %v", v.Volume, err))
+			}
 		}
 	}
 	if len(errs) > 0 {
 		return errors.New(strings.Join(errs, "; "))
 	}
 	return nil
+}
+
+// deliveriesForVolume is the lookup above, with its error swallowed on purpose: a store
+// read that fails here must not fail a deploy whose config sync already succeeded. The
+// deliveries are reconciled by the background sweep regardless.
+func (s *Server) deliveriesForVolume(ctx context.Context, envID, volume string) []*store.CertDelivery {
+	list, err := s.store.DeliveriesForVolume(ctx, envID, volume)
+	if err != nil {
+		return nil
+	}
+	return list
 }
 
 // volumeSourceHash is the desired state: names, modes, contents, ownership. Not the tar

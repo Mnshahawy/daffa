@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Mnshahawy/daffa/internal/caps"
@@ -250,10 +251,11 @@ func TestMigrate0009CertEnvScope(t *testing.T) {
 
 	stopAfter = ""
 	if err := s.migrate(ctx); err != nil {
-		t.Fatalf("migrating to 0012: %v", err)
+		t.Fatalf("migrating to head: %v", err)
 	}
 
-	// THE assertion: both deliveries survived the parent rebuild, fields intact.
+	// THE assertion: both deliveries survived the parent rebuild, fields intact — twice
+	// over now, since 0013 rebuilds cert_deliveries a second time to drop cert_id.
 	for _, want := range []struct{ id, certID, volume, hash string }{
 		{"dlv_cert", "crt_old", "certs-cellauth", "hash1"},
 		{"dlv_bundle", "", "trust-only", "hash2"},
@@ -262,8 +264,22 @@ func TestMigrate0009CertEnvScope(t *testing.T) {
 		if err != nil {
 			t.Fatalf("delivery %s did not survive the rebuild: %v", want.id, err)
 		}
-		if d.CertID != want.certID || d.Volume != want.volume || d.SyncedHash != want.hash {
+		if d.Volume != want.volume || d.SyncedHash != want.hash {
 			t.Errorf("delivery %s mangled by the rebuild: %+v", want.id, d)
+		}
+		// 0013 moved cert_id into the join table, defaulting the one certificate a
+		// single-cert delivery carried — which is what its rendered fragment already said.
+		if want.certID == "" {
+			if len(d.Certs) != 0 {
+				t.Errorf("trust-bundle-only delivery gained certificates: %+v", d.Certs)
+			}
+			continue
+		}
+		if len(d.Certs) != 1 || d.Certs[0].CertID != want.certID || !d.Certs[0].IsDefault {
+			t.Errorf("delivery %s: certs = %+v, want just %s as the default", want.id, d.Certs, want.certID)
+		}
+		if d.MountPath != DefaultCertMountPath {
+			t.Errorf("delivery %s: mount path = %q, want the pre-0013 default", want.id, d.MountPath)
 		}
 	}
 
@@ -375,5 +391,161 @@ func TestAMaskColumnHoldsAHighBitOnPostgres(t *testing.T) {
 	}
 	if got != high {
 		t.Errorf("bit %d did not survive the round trip: stored %d, read back %d", caps.MaxBit, high, got)
+	}
+}
+
+// 0013 has to survive data the new unique index forbids. Two Traefik deliveries on one
+// volume are possible in every pre-0013 database — both writing tls.yml, both reporting ok,
+// one silently overwriting the other — and creating the index over them would abort the
+// migration. A Daffa that will not start is a Daffa the operator cannot use to fix the
+// problem, so the migration demotes the losers and says so instead.
+func TestMigrate0013DemotesDuplicateTraefikDeliveries(t *testing.T) {
+	ctx := context.Background()
+	url := "sqlite://" + filepath.Join(t.TempDir(), "test.db")
+
+	stopAfter = "0012_ca_outbound_trust"
+	defer func() { stopAfter = "" }()
+
+	s, err := Open(ctx, url)
+	if err != nil {
+		t.Fatalf("open at 0012: %v", err)
+	}
+	defer s.Close()
+
+	env := &Environment{Name: "prod"}
+	if err := s.CreateEnvironment(ctx, env); err != nil {
+		t.Fatal(err)
+	}
+	// Two Traefik deliveries fighting over one volume, plus one innocent bystander on
+	// another volume that must come through untouched.
+	for _, ins := range []struct {
+		id, volume string
+		traefik    int
+		created    string
+	}{
+		{"dlv_old", "traefik-dynamic", 1, "2026-01-01T00:00:00Z"},
+		{"dlv_new", "traefik-dynamic", 1, "2026-02-01T00:00:00Z"},
+		{"dlv_other", "other-dynamic", 1, "2026-03-01T00:00:00Z"},
+	} {
+		if _, err := s.db.ExecContext(ctx, s.rebind(
+			`INSERT INTO cert_deliveries (id, env_id, cert_id, volume, uid, gid, traefik,
+                restart_targets, synced_hash, synced_at, status, last_error, created_at,
+                created_by, protected, bundle_cas)
+             VALUES (?, ?, NULL, ?, 0, 0, ?, '', 'h', NULL, 'ok', '', ?, NULL, 0, '')`),
+			ins.id, env.ID, ins.volume, ins.traefik, ins.created); err != nil {
+			t.Fatalf("insert 0012-era delivery: %v", err)
+		}
+	}
+
+	stopAfter = ""
+	if err := s.migrate(ctx); err != nil {
+		t.Fatalf("0013 aborted on data the index forbids — it must demote, not fail: %v", err)
+	}
+
+	newest, err := s.CertDeliveryByID(ctx, "dlv_new")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !newest.Traefik || newest.Status != "ok" {
+		t.Errorf("the newest delivery should keep the fragment: %+v", newest)
+	}
+	loser, err := s.CertDeliveryByID(ctx, "dlv_old")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loser.Traefik {
+		t.Error("the older duplicate kept rendering tls.yml; the two would still overwrite each other")
+	}
+	if loser.Status != "error" || !strings.Contains(loser.LastError, "dlv_new") {
+		t.Errorf("a demoted delivery must say so, naming the winner: status %q, error %q",
+			loser.Status, loser.LastError)
+	}
+	if other, err := s.CertDeliveryByID(ctx, "dlv_other"); err != nil || !other.Traefik {
+		t.Errorf("a delivery on its own volume was demoted: %+v, err %v", other, err)
+	}
+}
+
+// 0013 is one of the few migrations whose dialects genuinely diverge — SQLite rebuilds the
+// table to drop cert_id, Postgres just drops the column — and the box it runs on in
+// production is a Postgres box with real deliveries in it. A fresh-schema Postgres run
+// proves nothing about that: it never executes the backfill against rows that exist. So
+// this builds the 0012 world in Postgres, populates it, and migrates forward for real.
+func TestMigrate0013OnPopulatedPostgres(t *testing.T) {
+	url := os.Getenv("DAFFA_TEST_PG_URL")
+	if url == "" {
+		t.Skip("DAFFA_TEST_PG_URL not set — 0013's Postgres branch is NOT covered by this run")
+	}
+	ctx := context.Background()
+
+	stopAfter = "0012_ca_outbound_trust"
+	defer func() { stopAfter = "" }()
+
+	s, err := Open(ctx, url)
+	if err != nil {
+		t.Fatalf("open at 0012: %v", err)
+	}
+	defer s.Close()
+	t.Cleanup(func() {
+		_, _ = s.db.Exec("DROP SCHEMA IF EXISTS " + quoteIdent(s.pgSchema) + " CASCADE")
+	})
+
+	env := &Environment{Name: "prod"}
+	if err := s.CreateEnvironment(ctx, env); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.ExecContext(ctx, s.rebind(
+		`INSERT INTO certificates (id, name, ca_id, sans, key_algo, cert_pem, chain_pem, key_enc,
+            not_before, not_after, validity_days, renew_before_days, status, last_error,
+            created_at, created_by, protected, env_id, usages)
+         VALUES ('crt_edge', 'daffa-edge', NULL, 'daffa.example', 'ecdsa-p256', 'PEM', '', 'sealed',
+            ?, ?, 398, 30, 'ok', '', ?, NULL, 1, NULL, 'server')`),
+		ts(now()), ts(now()), ts(now())); err != nil {
+		t.Fatalf("insert 0012-era certificate: %v", err)
+	}
+	// The shape the real box carries: a protected, Traefik-rendering edge delivery.
+	if _, err := s.db.ExecContext(ctx, s.rebind(
+		`INSERT INTO cert_deliveries (id, env_id, cert_id, volume, uid, gid, traefik,
+            restart_targets, synced_hash, synced_at, status, last_error, created_at,
+            created_by, protected, bundle_cas)
+         VALUES ('dlv_edge', ?, 'crt_edge', 'daffa-edge-certs', 0, 0, 1, '', 'h', NULL, 'ok', '', ?, NULL, 1, '')`),
+		env.ID, ts(now())); err != nil {
+		t.Fatalf("insert 0012-era delivery: %v", err)
+	}
+
+	stopAfter = ""
+	if err := s.migrate(ctx); err != nil {
+		t.Fatalf("0013 failed on a populated Postgres database: %v", err)
+	}
+
+	d, err := s.CertDeliveryByID(ctx, "dlv_edge")
+	if err != nil {
+		t.Fatalf("the edge delivery did not survive 0013: %v", err)
+	}
+	if len(d.Certs) != 1 || d.Certs[0].CertID != "crt_edge" || !d.Certs[0].IsDefault {
+		t.Errorf("certs = %+v; want crt_edge backfilled as the default", d.Certs)
+	}
+	if d.MountPath != DefaultCertMountPath || !d.Traefik || !d.Protected || d.Volume != "daffa-edge-certs" {
+		t.Errorf("delivery mangled by 0013: %+v", d)
+	}
+	// cert_id is really gone, not merely unread — a leftover column would be a second
+	// source of truth the next writer could disagree with.
+	var n int
+	if err := s.db.QueryRowContext(ctx, s.rebind(
+		`SELECT COUNT(*) FROM information_schema.columns
+         WHERE table_schema = ? AND table_name = 'cert_deliveries' AND column_name = 'cert_id'`),
+		s.pgSchema).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Error("cert_deliveries.cert_id still exists on Postgres after 0013")
+	}
+	// And the unique index bites on the real dialect too.
+	if _, err := s.db.ExecContext(ctx, s.rebind(
+		`INSERT INTO cert_deliveries (id, env_id, volume, uid, gid, traefik, restart_targets,
+            synced_hash, synced_at, status, last_error, created_at, created_by, protected,
+            bundle_cas, mount_path)
+         VALUES ('dlv_second', ?, 'daffa-edge-certs', 0, 0, 1, '', '', NULL, 'pending', '', ?, NULL, 0, '', ?)`),
+		env.ID, ts(now()), DefaultCertMountPath); err == nil {
+		t.Error("Postgres accepted a second Traefik delivery on the same volume")
 	}
 }

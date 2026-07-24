@@ -13,6 +13,14 @@ import (
 // leading dot keeps it out of glob-watching consumers like Traefik's file provider.
 const ManifestName = ".daffa-manifest"
 
+// ManifestCerts is the same mechanism for the OTHER writer a volume can have: a certificate
+// delivery. Two writers can share one volume — which is what a Traefik dynamic directory
+// needs, since Traefik reads exactly one — precisely because each mirrors only its own
+// manifest. The git sync computes previous − current over the files IT delivered, so it can
+// never remove tls.yml; the delivery does the same, so it can never remove a middleware
+// fragment. See mixed-config-volumes.md.
+const ManifestCerts = ".daffa-certs-manifest"
+
 // Manifest builds the manifest content. Names are the delivered files, manifest excluded
 // (it is always rewritten, so listing it would only mean never deleting it — same result,
 // less honest a list).

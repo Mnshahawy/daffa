@@ -1068,6 +1068,15 @@ ALTER TABLE cert_deliveries ADD COLUMN bundle_cas TEXT NOT NULL DEFAULT '';
 	{name: "0012_ca_outbound_trust", sql: `
 ALTER TABLE cert_authorities ADD COLUMN outbound_trust INTEGER NOT NULL DEFAULT 1;
 `},
+
+	// A delivery stops being "this certificate, into this volume" and becomes "the
+	// Daffa-managed contents of this volume": many certificates through a join table, and a
+	// declared mount_path instead of a compiled-in constant. That reframe is what lets ONE
+	// Traefik dynamic directory hold Daffa's certificates and a git-sourced volume source at
+	// the same time — Traefik reads exactly one directory, and its file provider ignores
+	// anything that is not .toml/.yaml/.yml, so the PEMs and both manifests coexist beside
+	// the config fragments. See mixed-config-volumes.md.
+	{name: "0013_delivery_multi_cert", fn: migrateDeliveryMultiCert},
 }
 
 // migrateCertEnvScope is 0009: certificates gain a nullable env_id and lose global name
@@ -1143,6 +1152,151 @@ func migrateCertEnvScope(ctx context.Context, tx *sql.Tx, s *Store) error {
 		`CREATE UNIQUE INDEX certificates_env_name ON certificates (COALESCE(env_id,''), name)`,
 	} {
 		if _, err := tx.ExecContext(ctx, stmt); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// migrateDeliveryMultiCert is 0013: a delivery carries MANY certificates through a join
+// table and declares where its volume is mounted, so the rendered tls.yml can point at a
+// directory Daffa does not choose. cert_id goes away rather than staying as a "primary"
+// certificate beside the join table — two sources of truth for the same question is the
+// thing this project keeps refusing to build.
+//
+// The SQLite order is the reverse of 0009's trap and just as load-bearing. There, dropping
+// a parent fired a child's ON DELETE CASCADE; here the new join table would BE the child,
+// so it must not exist while cert_deliveries is rebuilt. Hence: capture the pairs into a
+// plain FK-free table, rebuild the parent, create the join table, refill it.
+func migrateDeliveryMultiCert(ctx context.Context, tx *sql.Tx, s *Store) error {
+	const joinTable = `CREATE TABLE cert_delivery_certs (
+    delivery_id TEXT NOT NULL REFERENCES cert_deliveries (id) ON DELETE CASCADE,
+    cert_id     TEXT NOT NULL REFERENCES certificates (id) ON DELETE CASCADE,
+    is_default  INTEGER NOT NULL DEFAULT 0, -- at most one per delivery: tls.yml's stores.default
+    PRIMARY KEY (delivery_id, cert_id)
+)`
+	// A pre-existing single-cert Traefik delivery meant "this IS the default certificate" —
+	// its rendered fragment said so — so the backfill keeps saying it.
+	const backfill = `INSERT INTO cert_delivery_certs (delivery_id, cert_id, is_default)
+        SELECT delivery_id, cert_id, 1 FROM cert_delivery_pairs_tmp`
+
+	var stmts []string
+	if s.dialect == Postgres {
+		stmts = []string{
+			`ALTER TABLE cert_deliveries ADD COLUMN mount_path TEXT NOT NULL DEFAULT '/etc/traefik/dynamic-certs'`,
+			`CREATE TABLE cert_delivery_pairs_tmp AS
+                SELECT id AS delivery_id, cert_id FROM cert_deliveries
+                WHERE cert_id IS NOT NULL AND cert_id <> ''`,
+			`ALTER TABLE cert_deliveries DROP COLUMN cert_id`,
+			joinTable,
+			backfill,
+			`DROP TABLE cert_delivery_pairs_tmp`,
+		}
+	} else {
+		stmts = []string{
+			`CREATE TABLE cert_delivery_pairs_tmp AS
+                SELECT id AS delivery_id, cert_id FROM cert_deliveries
+                WHERE cert_id IS NOT NULL AND cert_id <> ''`,
+			`ALTER TABLE cert_deliveries RENAME TO cert_deliveries_old`,
+			// The 0009 shape + bundle_cas + mount_path, minus cert_id. Nothing references
+			// cert_deliveries at this point, so dropping the old table fires no cascade.
+			`CREATE TABLE cert_deliveries (
+    id              TEXT PRIMARY KEY,
+    env_id          TEXT NOT NULL REFERENCES environments (id) ON DELETE CASCADE,
+    volume          TEXT NOT NULL DEFAULT 'daffa-certs',
+    uid             INTEGER NOT NULL DEFAULT 0,
+    gid             INTEGER NOT NULL DEFAULT 0,
+    traefik         INTEGER NOT NULL DEFAULT 0,
+    restart_targets TEXT NOT NULL DEFAULT '',
+    synced_hash     TEXT NOT NULL DEFAULT '',
+    synced_at       TEXT,
+    status          TEXT NOT NULL DEFAULT 'pending',
+    last_error      TEXT NOT NULL DEFAULT '',
+    created_at      TEXT NOT NULL,
+    created_by      TEXT,
+    protected       INTEGER NOT NULL DEFAULT 0,
+    bundle_cas      TEXT NOT NULL DEFAULT '',
+    mount_path      TEXT NOT NULL DEFAULT '/etc/traefik/dynamic-certs'
+)`,
+			`INSERT INTO cert_deliveries (id, env_id, volume, uid, gid, traefik, restart_targets,
+                synced_hash, synced_at, status, last_error, created_at, created_by, protected, bundle_cas)
+             SELECT id, env_id, volume, uid, gid, traefik, restart_targets,
+                synced_hash, synced_at, status, last_error, created_at, created_by, protected, bundle_cas
+             FROM cert_deliveries_old`,
+			`DROP TABLE cert_deliveries_old`,
+			`CREATE INDEX cert_deliveries_env_idx ON cert_deliveries (env_id)`,
+			joinTable,
+			backfill,
+			`DROP TABLE cert_delivery_pairs_tmp`,
+		}
+	}
+	for _, stmt := range stmts {
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
+			return err
+		}
+	}
+
+	if err := demoteDuplicateTraefikDeliveries(ctx, tx, s); err != nil {
+		return err
+	}
+	// Partial, because several NON-Traefik deliveries into one volume are legitimate: they
+	// write disjoint PEMs and no fragment. Keyed on the volume rather than on a stack
+	// because the thing being protected is one file in one directory.
+	_, err := tx.ExecContext(ctx,
+		`CREATE UNIQUE INDEX cert_deliveries_traefik_volume_uq
+             ON cert_deliveries (env_id, volume) WHERE traefik = 1`)
+	return err
+}
+
+// demoteDuplicateTraefikDeliveries clears the way for 0013's unique index without taking
+// the box down. Two Traefik deliveries on one volume are possible in existing data, and
+// both have been writing tls.yml over each other — each reporting ok forever, because a
+// delivery's synced_hash covers only its OWN desired state. Creating the index on that
+// data would abort the migration, and a Daffa that will not start is a Daffa the operator
+// cannot use to fix the problem.
+//
+// So the newest row per (env_id, volume) keeps the fragment and the rest are demoted to
+// traefik = 0 with a red status naming the winner. The box comes up, the silent overwrite
+// stops, and the operator is told what happened — which is more than they were getting.
+func demoteDuplicateTraefikDeliveries(ctx context.Context, tx *sql.Tx, s *Store) error {
+	// protected first: the delivery that keeps the console's own edge volume current is the
+	// one that must not lose its fragment, whatever an operator added later.
+	rows, err := tx.QueryContext(ctx, `SELECT id, env_id, volume FROM cert_deliveries
+        WHERE traefik = 1 ORDER BY env_id, volume, protected DESC, created_at DESC, id DESC`)
+	if err != nil {
+		return err
+	}
+	type row struct{ id, env, volume string }
+	var all []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.id, &r.env, &r.volume); err != nil {
+			rows.Close()
+			return err
+		}
+		all = append(all, r)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	// Grouping in Go rather than in SQL: the window function that would express "all but
+	// the first per group" is not in the common subset, and the set is tiny.
+	winner := map[string]string{}
+	for _, r := range all {
+		key := r.env + "\x00" + r.volume
+		if _, taken := winner[key]; !taken {
+			winner[key] = r.id // first in order = newest
+			continue
+		}
+		msg := fmt.Sprintf("Traefik rendering was turned off here: delivery %s already writes "+
+			"tls.yml into volume %q, and the two were overwriting each other. Move these "+
+			"certificates onto that delivery, or give this one its own volume.",
+			winner[key], r.volume)
+		if _, err := tx.ExecContext(ctx, s.rebind(
+			`UPDATE cert_deliveries SET traefik = 0, status = 'error', last_error = ? WHERE id = ?`),
+			msg, r.id); err != nil {
 			return err
 		}
 	}

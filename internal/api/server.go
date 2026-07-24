@@ -1057,10 +1057,17 @@ func (s *Server) apiRoutes() []route {
 			resp: []deliveryView(nil), ts: "certDeliveries"},
 		// The first sync runs in the background right away — creating a delivery should
 		// not hang the request on a volume write, but it should go green within seconds.
-		//oapi:summary Create a delivery of a certificate into a volume
-		//oapi:example req {"env_id": "env_prod", "cert_id": "crt_1", "volume": "daffa-certs", "traefik": true}
+		//oapi:summary Create a delivery of certificates into a volume
+		//oapi:example req {"env_id": "env_prod", "certs": [{"cert_id": "crt_1", "is_default": true}], "volume": "traefik-dynamic", "mount_path": "/etc/traefik/dynamic", "traefik": true}
 		{pattern: "POST /api/certs/deliveries", cap: caps.CertsEdit, scope: scopeGlobal, h: s.handleCreateCertDelivery,
 			req: certDeliveryRequest{}, resp: deliveryView{}, ts: "createCertDelivery"},
+		// Editable state only: the environment and the volume are what the Traefik
+		// uniqueness rule and the consumer's mount are keyed on, so moving either is a new
+		// delivery rather than an edit.
+		//oapi:summary Replace what a delivery carries and where it lands
+		//oapi:example req {"certs": [{"cert_id": "crt_1", "is_default": true}, {"cert_id": "crt_2"}], "mount_path": "/etc/traefik/dynamic", "traefik": true}
+		{pattern: "PUT /api/certs/deliveries/{id}", cap: caps.CertsEdit, scope: scopeGlobal, h: s.handleUpdateCertDelivery,
+			req: certDeliveryRequest{}, resp: deliveryView{}, ts: "updateCertDelivery"},
 		// Synchronous, and forced: "sync now" is the button an operator presses while
 		// looking at a red status, and it answers with the outcome, not with "started".
 		//oapi:summary Sync a delivery now and answer with the outcome

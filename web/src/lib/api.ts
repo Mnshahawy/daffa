@@ -957,8 +957,7 @@ export interface CertDelivery {
   id: string
   env_id: string
   env_name?: string
-  cert_id?: string
-  cert_name?: string
+  certs: DeliveryCertView[]
   volume: string
   uid: number
   gid: number
@@ -972,15 +971,27 @@ export interface CertDelivery {
   protected: boolean
 }
 
+export interface DeliveryCertView {
+  cert_id: string
+  cert_name?: string
+  is_default: boolean
+}
+
 export interface CertDeliveryRequest {
   env_id?: string
-  cert_id?: string
+  certs?: DeliveryCertRequest[]
   volume?: string
+  mount_path?: string
   uid?: number
   gid?: number
   traefik?: boolean
   restart_targets?: string
   bundle_cas?: string[]
+}
+
+export interface DeliveryCertRequest {
+  cert_id?: string
+  is_default?: boolean
 }
 
 export interface EncryptionKey {
@@ -1460,6 +1471,8 @@ export const daffa = {
   certDeliveries: () => api.get<CertDelivery[]>('/api/certs/deliveries'),
   createCertDelivery: (body: CertDeliveryRequest) =>
     api.post<CertDelivery>('/api/certs/deliveries', body),
+  updateCertDelivery: (id: string, body: CertDeliveryRequest) =>
+    api.put<CertDelivery>(`/api/certs/deliveries/${id}`, body),
   syncCertDelivery: (id: string) => api.post<CertDelivery>(`/api/certs/deliveries/${id}/sync`),
   deleteCertDelivery: (id: string) => api.del<Record<string, string>>(`/api/certs/deliveries/${id}`),
   encryptionKeys: () => api.get<EncryptionKey[]>('/api/keys'),

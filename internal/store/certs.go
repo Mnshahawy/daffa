@@ -309,7 +309,7 @@ func (s *Store) UpdateCertificate(ctx context.Context, c *Certificate) error {
 // something still consumes it.
 func (s *Store) CertificateInUse(ctx context.Context, id string) (int, error) {
 	var n int
-	err := s.queryRow(ctx, `SELECT COUNT(*) FROM cert_deliveries WHERE cert_id = ?`, id).Scan(&n)
+	err := s.queryRow(ctx, `SELECT COUNT(*) FROM cert_delivery_certs WHERE cert_id = ?`, id).Scan(&n)
 	return n, err
 }
 
@@ -320,16 +320,36 @@ func (s *Store) DeleteCertificate(ctx context.Context, id string) error {
 
 // ── deliveries ──────────────────────────────────────────────────────────────────
 
-// CertDelivery keeps one certificate (or just the trust bundle) current inside a named
-// volume on one host. The reconciler compares SyncedHash against the desired content and
-// rewrites the volume when they differ.
+// DeliveryCert is one certificate a delivery carries. IsDefault marks the one that becomes
+// tls.yml's stores.default.defaultCertificate — at most one per delivery, and none is a
+// legitimate state (Traefik then falls back to its own self-signed default, which is
+// visible and diagnosable; guessing a default would serve the wrong name to somebody).
+type DeliveryCert struct {
+	CertID    string
+	IsDefault bool
+}
+
+// CertDelivery is the Daffa-managed CONTENTS of a named volume on one environment: the
+// certificates it carries, the trust bundle, and — for Traefik — the file-provider
+// fragment. The reconciler compares SyncedHash against the desired content and rewrites
+// the volume when they differ.
+//
+// It is deliberately not "one certificate's delivery": a volume is the unit Traefik reads
+// and the unit a git-sourced volume source shares, so it has to be the unit Daffa manages.
+// See mixed-config-volumes.md.
 type CertDelivery struct {
-	ID     string
-	EnvID  string
-	CertID string // empty = trust-bundle-only
+	ID    string
+	EnvID string
+	// Certs is empty for a trust-bundle-only delivery: the volume carries ca-bundle.crt
+	// and nothing else.
+	Certs  []DeliveryCert
 	Volume string
-	UID    int
-	GID    int
+	// MountPath is where the CONSUMER mounts this volume. Declared, not inferred, because
+	// the paths written into tls.yml are resolved by Traefik in Traefik's filesystem, and
+	// Daffa cannot know where an arbitrary compose file chose to mount the volume.
+	MountPath string
+	UID       int
+	GID       int
 	// Traefik also renders a file-provider tls.yml into the volume, so Traefik
 	// hot-reloads instead of restarting.
 	Traefik        bool
@@ -351,24 +371,24 @@ type CertDelivery struct {
 	Protected bool
 }
 
-const deliveryCols = `id, env_id, cert_id, volume, uid, gid, traefik, restart_targets,
-    synced_hash, synced_at, status, last_error, created_at, created_by, protected, bundle_cas`
+const deliveryCols = `id, env_id, volume, uid, gid, traefik, restart_targets,
+    synced_hash, synced_at, status, last_error, created_at, created_by, protected, bundle_cas,
+    mount_path`
 
 func scanDelivery(sc interface{ Scan(...any) error }) (*CertDelivery, error) {
 	var d CertDelivery
-	var certID, syncedAt, createdBy sql.NullString
+	var syncedAt, createdBy sql.NullString
 	var createdAt string
 	var traefik, protected int
-	err := sc.Scan(&d.ID, &d.EnvID, &certID, &d.Volume, &d.UID, &d.GID, &traefik,
+	err := sc.Scan(&d.ID, &d.EnvID, &d.Volume, &d.UID, &d.GID, &traefik,
 		&d.RestartTargets, &d.SyncedHash, &syncedAt, &d.Status, &d.LastError,
-		&createdAt, &createdBy, &protected, &d.BundleCAs)
+		&createdAt, &createdBy, &protected, &d.BundleCAs, &d.MountPath)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, err
 	}
-	d.CertID = certID.String
 	d.Traefik = traefik != 0
 	if syncedAt.Valid {
 		d.SyncedAt = parseTS(syncedAt.String)
@@ -379,6 +399,11 @@ func scanDelivery(sc interface{ Scan(...any) error }) (*CertDelivery, error) {
 	return &d, nil
 }
 
+// DefaultCertMountPath is where a delivery's volume is assumed to be mounted unless the
+// operator says otherwise — the path every delivery used before mount_path existed, so an
+// upgraded row keeps rendering exactly the tls.yml it rendered yesterday.
+const DefaultCertMountPath = "/etc/traefik/dynamic-certs"
+
 func (s *Store) CreateCertDelivery(ctx context.Context, d *CertDelivery) error {
 	if d.ID == "" {
 		d.ID = "dlv_" + NewID()
@@ -386,23 +411,161 @@ func (s *Store) CreateCertDelivery(ctx context.Context, d *CertDelivery) error {
 	if d.Volume == "" {
 		d.Volume = "daffa-certs"
 	}
+	if d.MountPath == "" {
+		d.MountPath = DefaultCertMountPath
+	}
 	if d.Status == "" {
 		d.Status = "pending"
 	}
 	d.CreatedAt = now()
-	_, err := s.exec(ctx, `INSERT INTO cert_deliveries (`+deliveryCols+`)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		d.ID, d.EnvID, nullStr(d.CertID), d.Volume, d.UID, d.GID, boolInt(d.Traefik),
-		d.RestartTargets, d.SyncedHash, nullTS(d.SyncedAt), d.Status, d.LastError,
-		ts(d.CreatedAt), nullStr(d.CreatedBy), boolInt(d.Protected), d.BundleCAs)
+
+	// The row and its certificates go in together, or neither does: a committed delivery
+	// whose certs failed to attach is a delivery that would reconcile to trust-bundle-only
+	// and quietly remove the PEMs a proxy is serving.
+	defer s.lockWrites()()
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("store: creating certificate delivery: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.ExecContext(ctx, s.rebind(`INSERT INTO cert_deliveries (`+deliveryCols+`)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+		d.ID, d.EnvID, d.Volume, d.UID, d.GID, boolInt(d.Traefik),
+		d.RestartTargets, d.SyncedHash, nullTS(d.SyncedAt), d.Status, d.LastError,
+		ts(d.CreatedAt), nullStr(d.CreatedBy), boolInt(d.Protected), d.BundleCAs,
+		d.MountPath); err != nil {
+		return fmt.Errorf("store: creating certificate delivery: %w", err)
+	}
+	if err := setDeliveryCertsTx(ctx, s, tx, d.ID, d.Certs); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// UpdateCertDelivery replaces the editable state of a delivery — what it carries, where it
+// lands, and how it renders. env_id and the volume are not editable: both are what the
+// uniqueness rule and the consumer's mount are keyed on, and moving either is a new
+// delivery, not an edit.
+func (s *Store) UpdateCertDelivery(ctx context.Context, d *CertDelivery) error {
+	if d.MountPath == "" {
+		d.MountPath = DefaultCertMountPath
+	}
+	defer s.lockWrites()()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: updating certificate delivery: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.ExecContext(ctx, s.rebind(`UPDATE cert_deliveries SET uid = ?, gid = ?,
+        traefik = ?, restart_targets = ?, bundle_cas = ?, mount_path = ? WHERE id = ?`),
+		d.UID, d.GID, boolInt(d.Traefik), d.RestartTargets, d.BundleCAs, d.MountPath,
+		d.ID); err != nil {
+		return fmt.Errorf("store: updating certificate delivery: %w", err)
+	}
+	if err := setDeliveryCertsTx(ctx, s, tx, d.ID, d.Certs); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func setDeliveryCertsTx(ctx context.Context, s *Store, tx *sql.Tx, deliveryID string, certs []DeliveryCert) error {
+	if _, err := tx.ExecContext(ctx, s.rebind(
+		`DELETE FROM cert_delivery_certs WHERE delivery_id = ?`), deliveryID); err != nil {
+		return fmt.Errorf("store: clearing delivery certificates: %w", err)
+	}
+	for _, c := range certs {
+		if _, err := tx.ExecContext(ctx, s.rebind(
+			`INSERT INTO cert_delivery_certs (delivery_id, cert_id, is_default) VALUES (?, ?, ?)`),
+			deliveryID, c.CertID, boolInt(c.IsDefault)); err != nil {
+			return fmt.Errorf("store: adding certificate %s to the delivery: %w", c.CertID, err)
+		}
 	}
 	return nil
 }
 
+// attachDeliveryCerts loads the carried certificates for a batch of deliveries in one
+// query, not one per delivery. Ordered by certificate NAME, because that order becomes the
+// order of entries in the rendered tls.yml — and therefore part of the content hash, which
+// must not depend on how rows happen to come back.
+func (s *Store) attachDeliveryCerts(ctx context.Context, deliveries []*CertDelivery) error {
+	if len(deliveries) == 0 {
+		return nil
+	}
+	byID := make(map[string]*CertDelivery, len(deliveries))
+	for _, d := range deliveries {
+		byID[d.ID] = d
+	}
+	rows, err := s.query(ctx, `SELECT dc.delivery_id, dc.cert_id, dc.is_default
+        FROM cert_delivery_certs dc
+        JOIN certificates c ON c.id = dc.cert_id ORDER BY c.name`)
+	if err != nil {
+		return fmt.Errorf("store: loading delivery certificates: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var deliveryID, certID string
+		var isDefault int
+		if err := rows.Scan(&deliveryID, &certID, &isDefault); err != nil {
+			return err
+		}
+		if d, ok := byID[deliveryID]; ok {
+			d.Certs = append(d.Certs, DeliveryCert{CertID: certID, IsDefault: isDefault != 0})
+		}
+	}
+	return rows.Err()
+}
+
 func (s *Store) CertDeliveryByID(ctx context.Context, id string) (*CertDelivery, error) {
-	return scanDelivery(s.queryRow(ctx, `SELECT `+deliveryCols+` FROM cert_deliveries WHERE id = ?`, id))
+	d, err := scanDelivery(s.queryRow(ctx, `SELECT `+deliveryCols+` FROM cert_deliveries WHERE id = ?`, id))
+	if err != nil {
+		return nil, err
+	}
+	if err := s.attachDeliveryCerts(ctx, []*CertDelivery{d}); err != nil {
+		return nil, err
+	}
+	return d, nil
+}
+
+// TraefikDeliveryForVolume finds the delivery that owns tls.yml in a volume, if any. It is
+// how the two writers of a shared dynamic directory find each other: a volume source's sync
+// asks before it writes, so a repo that carries its own tls.yml is refused rather than left
+// to fight the delivery forever. ErrNotFound means the volume has no Traefik delivery.
+func (s *Store) TraefikDeliveryForVolume(ctx context.Context, envID, volume string) (*CertDelivery, error) {
+	d, err := scanDelivery(s.queryRow(ctx, `SELECT `+deliveryCols+` FROM cert_deliveries
+        WHERE env_id = ? AND volume = ? AND traefik = 1`, envID, volume))
+	if err != nil {
+		return nil, err
+	}
+	if err := s.attachDeliveryCerts(ctx, []*CertDelivery{d}); err != nil {
+		return nil, err
+	}
+	return d, nil
+}
+
+// DeliveriesForVolume returns every delivery writing into one volume in one environment —
+// what the deploy hook reconciles after syncing a stack's volume sources, so a stack never
+// comes up against git config that is present and certificates that are not.
+func (s *Store) DeliveriesForVolume(ctx context.Context, envID, volume string) ([]*CertDelivery, error) {
+	rows, err := s.query(ctx, `SELECT `+deliveryCols+` FROM cert_deliveries
+        WHERE env_id = ? AND volume = ? ORDER BY created_at`, envID, volume)
+	if err != nil {
+		return nil, fmt.Errorf("store: listing deliveries for a volume: %w", err)
+	}
+	defer rows.Close()
+	var out []*CertDelivery
+	for rows.Next() {
+		d, err := scanDelivery(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, s.attachDeliveryCerts(ctx, out)
 }
 
 // ListCertDeliveries returns the deliveries on hosts the caller may see.
@@ -424,7 +587,10 @@ func (s *Store) ListCertDeliveries(ctx context.Context, global bool, envs []stri
 		}
 		out = append(out, d)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, s.attachDeliveryCerts(ctx, out)
 }
 
 // AllCertDeliveries returns every delivery, ignoring permissions. It is for the
