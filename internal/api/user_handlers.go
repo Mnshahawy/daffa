@@ -3,6 +3,7 @@ package api
 import (
 	"errors"
 	"net/http"
+	"net/mail"
 	"strings"
 
 	"github.com/Mnshahawy/daffa/internal/auth"
@@ -111,6 +112,11 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		httpx.BadRequest(w, r, "Give the user at least one role, or they will be able to sign in and see nothing.")
 		return
 	}
+	email, err := normalizeEmail(req.Email)
+	if err != nil {
+		httpx.BadRequest(w, r, err.Error())
+		return
+	}
 
 	hash, err := auth.HashPassword(req.Password)
 	if err != nil {
@@ -118,7 +124,7 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	u := &store.User{Kind: "local", Username: req.Username, Email: req.Email, PasswordHash: hash}
+	u := &store.User{Kind: "local", Username: req.Username, Email: email, PasswordHash: hash}
 	if err := s.store.CreateUser(r.Context(), u); err != nil {
 		if store.IsDuplicate(err) {
 			httpx.Fail(w, r, http.StatusConflict, "duplicate_username", "That username is already taken.")
@@ -172,9 +178,26 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Email != nil {
-		if err := s.store.SetUserEmail(r.Context(), u.ID, *req.Email); err != nil {
-			httpx.Error(w, r, err)
+		// An OIDC account's email is the provider's to set — it is re-synced from the token
+		// on every sign-in (see handleCallback), so an edit here would silently revert the
+		// next time they logged in. Refuse rather than offer a control that half-works, the
+		// same reason provider-granted roles are locked in the UI.
+		if u.Kind == "oidc" {
+			httpx.Fail(w, r, http.StatusConflict, "provider_email",
+				"This account signs in through an identity provider, which sets its email on every sign-in. Change it there.")
 			return
+		}
+		email, err := normalizeEmail(*req.Email)
+		if err != nil {
+			httpx.BadRequest(w, r, err.Error())
+			return
+		}
+		if email != u.Email {
+			if err := s.store.SetUserEmail(r.Context(), u.ID, email); err != nil {
+				httpx.Error(w, r, err)
+				return
+			}
+			s.auditUser(r, "user.email", u, nil)
 		}
 	}
 	if req.Disabled != nil {
@@ -377,6 +400,22 @@ func (s *Server) userOr404(w http.ResponseWriter, r *http.Request) (*store.User,
 		return nil, err
 	}
 	return u, nil
+}
+
+// normalizeEmail trims and lightly validates an address. Empty is allowed — a local account
+// is identified by its username, so email is optional and clearing it is a legitimate edit.
+// A non-empty value must parse as a single address; anything else is a fat-finger the admin
+// should see now, not a login-time surprise for the user.
+func normalizeEmail(email string) (string, error) {
+	email = strings.TrimSpace(email)
+	if email == "" {
+		return "", nil
+	}
+	addr, err := mail.ParseAddress(email)
+	if err != nil || addr.Name != "" {
+		return "", errors.New("That does not look like an email address.")
+	}
+	return addr.Address, nil
 }
 
 func (s *Server) auditUser(r *http.Request, action string, target *store.User, roles []string) {

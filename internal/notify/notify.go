@@ -3,6 +3,7 @@ package notify
 import (
 	"context"
 	"log/slog"
+	"time"
 
 	"github.com/Mnshahawy/daffa/internal/mailer"
 	"github.com/Mnshahawy/daffa/internal/store"
@@ -43,6 +44,13 @@ func (n *Notifier) Send(ctx context.Context, envID string, d Data) {
 	// rendering a link to nowhere. BaseURL lives in the SMTP row but belongs to every channel —
 	// it is read even when email is off, because a Slack message wants the link too.
 	d.Link = withBaseURL(cfg.BaseURL, d.Link)
+
+	// Stamp the event time once, here, so every rendered message agrees on it and no caller
+	// has to pass a clock. A caller that already set one (a replayed or backfilled event)
+	// keeps it.
+	if d.When.IsZero() {
+		d.When = time.Now()
+	}
 
 	// Email and channels are resolved and enqueued independently: email is off on a fresh
 	// install and channels are the whole reason this exists, so gating channels on an SMTP

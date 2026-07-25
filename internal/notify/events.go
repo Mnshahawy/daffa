@@ -4,6 +4,8 @@
 // It does not send. Sending is the worker's job, outside any transaction — see outbox.go.
 package notify
 
+import "time"
+
 // Event is something worth telling somebody about. The set is deliberately small: an ops
 // tool that emails about everything is an ops tool whose emails get filtered to a folder,
 // and then the one that mattered goes unread with the rest.
@@ -93,5 +95,29 @@ type Data struct {
 	// the template omits the button rather than rendering a broken one.
 	Link string
 
-	Failed bool // colours the header; a red banner for a success would be a lie
+	Failed bool // a hard failure — always red, whatever the event
+
+	// When the event happened, stamped centrally in Send so no caller has to remember to.
+	// Zero means "unknown", and the templates omit the row rather than print a zero time.
+	When time.Time
+}
+
+// severity classifies an event for the header colour — the first thing read on a phone at
+// 2am, so it must not lie. Three states, not two: a failure is red, but a certificate Daffa
+// cannot renew or a CA that needs rotating is an ACTION, not a success, and rendering it the
+// same green as a completed backup told the reader "all clear" about a thing that was not.
+//
+// Derived here rather than set by each caller: the callers already say what happened through
+// the event constant, and Data is deliberately dumb (see its doc) — one classification in one
+// place cannot drift the way fifteen call sites would.
+func (d Data) severity() string {
+	if d.Failed {
+		return "danger"
+	}
+	switch d.Event {
+	case CertExpiring, CARotationDue:
+		return "warn"
+	default:
+		return "ok"
+	}
 }

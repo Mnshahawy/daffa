@@ -36,16 +36,39 @@ func TestChannelPayloadsAreWellFormed(t *testing.T) {
 		t.Errorf("slack payload missing fallback text or blocks: %s", slack)
 	}
 
-	// Discord: a red embed for a failure (0xe74c3c = 15158332).
+	// Discord: a red embed for a failure (0xdc2626 = 14427686, the email header's own red).
 	discord, _ := RenderChannel("discord", d)
-	if !strings.Contains(discord, "15158332") {
+	if !strings.Contains(discord, "14427686") {
 		t.Errorf("a failed discord message should carry the red colour: %s", discord)
 	}
 
-	// Webhook: the structured event, by its documented field names.
+	// Webhook: the structured event, by its documented field names — including the
+	// three-state severity beside the back-compat boolean.
 	hook, _ := RenderChannel("webhook", d)
 	if !strings.Contains(hook, `"event":"deploy.failed"`) || !strings.Contains(hook, `"failed":true`) {
 		t.Errorf("webhook payload is not the structured event: %s", hook)
+	}
+	if !strings.Contains(hook, `"severity":"danger"`) {
+		t.Errorf("webhook payload is missing the severity signal: %s", hook)
+	}
+
+	// A warning must NOT look like a success in chat — the green-lie the email fix removed,
+	// removed here too. Amber circle for Slack, amber embed (0xd97706 = 14251782) for Discord.
+	warn := Data{Event: CertExpiring, Title: "Certificate expiring: web", Summary: "Renew it.", Target: "web"}
+	slackWarn, _ := RenderChannel("slack", warn)
+	if !strings.Contains(slackWarn, "large_orange_circle") || strings.Contains(slackWarn, "large_green_circle") {
+		t.Errorf("a warning must show an amber circle in slack, not green: %s", slackWarn)
+	}
+	discWarn, _ := RenderChannel("discord", warn)
+	if !strings.Contains(discWarn, "14251782") {
+		t.Errorf("a warning discord embed should be amber: %s", discWarn)
+	}
+	// The host/target context reaches chat now that the sentence dropped it.
+	if !strings.Contains(slackWarn, "Target: *web*") {
+		t.Errorf("slack should carry the target as a context line: %s", slackWarn)
+	}
+	if !strings.Contains(discWarn, `"name":"Target"`) {
+		t.Errorf("discord should carry the target as a field: %s", discWarn)
 	}
 
 	if _, err := RenderChannel("carrier-pigeon", d); err == nil {

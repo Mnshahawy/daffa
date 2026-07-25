@@ -1,50 +1,122 @@
 {{define "base"}}<!doctype html>
-<html>
-  <head><meta charset="utf-8" /><meta name="color-scheme" content="light dark" /></head>
-  <body style="margin:0;padding:0;background:#f4f4f5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f4f5;padding:24px 12px;">
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="supported-color-schemes" content="light dark" />
+    <!-- Dark-mode overrides. Clients that honour <style> + prefers-color-scheme (Apple Mail,
+         iOS) darken the card; those that strip it (Gmail) keep the light inline styles below.
+         Progressive enhancement, never a requirement — the inline light styles always stand
+         on their own. -->
+    <style>
+      @media (prefers-color-scheme: dark) {
+        .bg-page   { background:#09090b !important; }
+        .bg-card   { background:#18181b !important; border-color:#27272a !important; }
+        .t-title   { color:#fafafa !important; }
+        .t-body    { color:#d4d4d8 !important; }
+        .t-eyebrow { color:#a1a1aa !important; }
+        .t-footer  { color:#71717a !important; }
+        .rule      { border-color:#27272a !important; }
+        .meta      { background:#0e0e11 !important; border-color:#27272a !important; }
+        .meta-k    { color:#a1a1aa !important; }
+        .meta-v    { color:#e4e4e7 !important; }
+        .btn       { background:#fafafa !important; color:#18181b !important; }
+        .detail-dark { background:#0e0e11 !important; border-color:#27272a !important; color:#d4d4d8 !important; }
+      }
+    </style>
+  </head>
+  <body class="bg-page" style="margin:0;padding:0;background:#f4f4f5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+
+    <!-- Preheader: the grey line the inbox shows next to the subject. Hidden in the body,
+         it is the summary rather than a scrape of the first visible words. The whitespace
+         run after it stops the client padding it with the text that follows. -->
+    <div style="display:none;max-height:0;overflow:hidden;mso-hide:all;font-size:1px;line-height:1px;color:#f4f4f5;opacity:0;">
+      {{.Summary}}&#8203;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;
+    </div>
+
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" class="bg-page" style="background:#f4f4f5;padding:24px 12px;">
       <tr>
         <td align="center">
-          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e4e4e7;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" class="bg-card" style="max-width:560px;background:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e4e4e7;">
 
-            <!-- A red bar for a failure, a green one for a success. The colour is the first
-                 thing read on a phone at 2am, so it must not lie. -->
+            <!-- The status bar: green for a success, amber for something that needs a hand,
+                 red for a failure. Resolved in Go (severity), because it is the first thing
+                 read on a phone at 2am and it must not lie. -->
             <tr>
-              <td style="height:4px;background:{{if .Failed}}#dc2626{{else}}#16a34a{{end}};font-size:0;line-height:0;">&nbsp;</td>
+              <td style="height:4px;background:{{.Accent}};font-size:0;line-height:0;">&nbsp;</td>
             </tr>
 
             <tr>
-              <td style="padding:24px 28px 8px 28px;">
-                <p style="margin:0 0 4px 0;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:#71717a;">Daffa</p>
-                <h1 style="margin:0;font-size:18px;font-weight:600;color:#18181b;">{{.Title}}</h1>
+              <td style="padding:26px 30px 0 30px;">
+                <p class="t-eyebrow" style="margin:0 0 6px 0;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#71717a;font-weight:600;">Daffa</p>
+                <h1 class="t-title" style="margin:0;font-size:19px;line-height:1.35;font-weight:600;color:#18181b;">{{.Title}}</h1>
               </td>
             </tr>
 
             <tr>
-              <td style="padding:4px 28px 0 28px;">
-                <p style="margin:0;font-size:14px;line-height:1.6;color:#3f3f46;">{{.Summary}}</p>
+              <td class="t-body" style="padding:8px 30px 0 30px;font-size:14px;line-height:1.6;color:#3f3f46;">
+                {{.Summary}}
               </td>
             </tr>
+
+            <!-- The facts, structured: host, target, when. Only the rows that have a value —
+                 a blank line reads as a bug. These fields ride on every event, so the strip
+                 is what a reader scans instead of parsing them back out of the sentence. -->
+            {{if .HasMeta}}
+            <tr>
+              <td style="padding:18px 30px 0 30px;">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" class="meta" style="background:#fafafa;border:1px solid #e4e4e7;border-radius:8px;">
+                  {{if .HostName}}
+                  <tr>
+                    <td class="meta-k" style="padding:9px 14px;font-size:12px;color:#71717a;width:84px;">Host</td>
+                    <td class="meta-v" style="padding:9px 14px 9px 0;font-size:13px;color:#27272a;font-weight:500;">{{.HostName}}</td>
+                  </tr>
+                  {{end}}
+                  {{if .Target}}
+                  <tr>
+                    <td class="meta-k" style="padding:9px 14px;font-size:12px;color:#71717a;">Target</td>
+                    <td class="meta-v" style="padding:9px 14px 9px 0;font-size:13px;color:#27272a;font-weight:500;">{{.Target}}</td>
+                  </tr>
+                  {{end}}
+                  {{if .WhenText}}
+                  <tr>
+                    <td class="meta-k" style="padding:9px 14px;font-size:12px;color:#71717a;">When</td>
+                    <td class="meta-v" style="padding:9px 14px 9px 0;font-size:13px;color:#27272a;font-weight:500;">{{.WhenText}}</td>
+                  </tr>
+                  {{end}}
+                </table>
+              </td>
+            </tr>
+            {{end}}
 
             {{if .Detail}}
             <tr>
-              <td style="padding:16px 28px 0 28px;">
-                <pre style="margin:0;padding:12px 14px;background:#fafafa;border:1px solid #e4e4e7;border-radius:8px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;line-height:1.5;color:#3f3f46;white-space:pre-wrap;word-break:break-word;">{{.Detail}}</pre>
+              <td style="padding:18px 30px 0 30px;">
+                <p class="meta-k" style="margin:0 0 6px 0;font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:#71717a;font-weight:600;">{{.DetailLabel}}</p>
+                <pre class="detail-dark" style="margin:0;padding:12px 14px;background:{{.DetailBG}};border:1px solid {{.DetailBrdr}};border-radius:8px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;line-height:1.5;color:#3f3f46;white-space:pre-wrap;word-break:break-word;">{{.Detail}}</pre>
               </td>
             </tr>
             {{end}}
 
             {{if .Link}}
             <tr>
-              <td style="padding:20px 28px 0 28px;">
-                <a href="{{.Link}}" style="display:inline-block;padding:9px 16px;background:#18181b;color:#ffffff;font-size:14px;font-weight:500;text-decoration:none;border-radius:8px;">Open in Daffa</a>
+              <td style="padding:22px 30px 0 30px;">
+                <table role="presentation" cellpadding="0" cellspacing="0">
+                  <tr>
+                    <td class="btn" style="background:#18181b;border-radius:8px;">
+                      <a href="{{.Link}}" class="btn" style="display:inline-block;padding:10px 18px;background:#18181b;color:#ffffff;font-size:14px;font-weight:500;text-decoration:none;border-radius:8px;">Open in Daffa</a>
+                    </td>
+                  </tr>
+                </table>
               </td>
             </tr>
             {{end}}
 
             <tr>
-              <td style="padding:24px 28px 24px 28px;">
-                <p style="margin:0;font-size:12px;color:#a1a1aa;">
+              <td style="padding:26px 30px 26px 30px;">
+                <div class="rule" style="border-top:1px solid #eeeeef;margin:0 0 14px 0;font-size:0;line-height:0;">&nbsp;</div>
+                <p class="t-footer" style="margin:0;font-size:12px;line-height:1.5;color:#a1a1aa;">
                   You are receiving this because of a notification rule in Daffa. An administrator can change it under Settings → Notifications.
                 </p>
               </td>

@@ -315,12 +315,14 @@ func (s *Server) notifyBackup(ctx context.Context, job *store.BackupJob, written
 		Failed:   failed,
 	}
 
+	// The host is carried structurally (Data.HostName) and shown as its own field, so the
+	// sentence no longer repeats "on <host>".
 	if failed {
-		d.Summary = fmt.Sprintf("The backup job %q on %s failed.", job.Name, host)
+		d.Summary = fmt.Sprintf("The backup job %q failed.", job.Name)
 		d.Detail = notify.Tail(runErr.Error(), 12, 2000)
 	} else {
-		d.Summary = fmt.Sprintf("The backup job %q on %s completed. %s written.",
-			job.Name, host, humanBytes(written))
+		d.Summary = fmt.Sprintf("The backup job %q completed. %s written.",
+			job.Name, humanBytes(written))
 	}
 
 	s.notify.Send(ctx, job.EnvID, d)

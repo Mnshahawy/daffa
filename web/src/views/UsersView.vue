@@ -40,6 +40,9 @@ const selectedGrants = ref<Grant[]>([])
 const settingPassword = ref<User | null>(null)
 const newPassword = ref('')
 
+const editingEmail = ref<User | null>(null)
+const newEmail = ref('')
+
 const form = ref({ username: '', email: '', password: '', grants: [] as Grant[] })
 
 async function afterChange() {
@@ -67,6 +70,7 @@ async function create() {
 function startRoles(u: User) {
   editingRoles.value = editingRoles.value?.id === u.id ? null : u
   settingPassword.value = null
+  editingEmail.value = null
   // Only the locally granted ones are ours to change. The provider's are re-synced from
   // its claims on every login.
   selectedGrants.value = u.roles
@@ -138,7 +142,31 @@ async function remove(u: User) {
 function startPassword(u: User) {
   settingPassword.value = settingPassword.value?.id === u.id ? null : u
   editingRoles.value = null
+  editingEmail.value = null
   newPassword.value = ''
+}
+
+function startEmail(u: User) {
+  editingEmail.value = editingEmail.value?.id === u.id ? null : u
+  editingRoles.value = null
+  settingPassword.value = null
+  newEmail.value = u.email
+}
+
+async function saveEmail() {
+  const u = editingEmail.value
+  if (!u) return
+  busy.value = true
+  try {
+    await daffa.updateUser(u.id, { email: newEmail.value })
+    await afterChange()
+    editingEmail.value = null
+    toast.ok(`Email updated for ${u.label}.`)
+  } catch (e) {
+    toast.err(e, 'Could not update the email.')
+  } finally {
+    busy.value = false
+  }
 }
 
 async function resetPassword() {
@@ -338,6 +366,16 @@ async function resetPassword() {
                 <td v-if="canEdit" class="py-3 pr-4">
                   <div class="flex flex-wrap items-center justify-end gap-1">
                     <BaseButton intent="ghost" size="xs" @click="startRoles(u)">Roles</BaseButton>
+                    <!-- Email and password are for local accounts only. An SSO account's
+                         email is the provider's and is re-synced on every sign-in. -->
+                    <BaseButton
+                      v-if="u.kind === 'local'"
+                      intent="ghost"
+                      size="xs"
+                      @click="startEmail(u)"
+                    >
+                      Email
+                    </BaseButton>
                     <BaseButton
                       v-if="u.kind === 'local'"
                       intent="ghost"
@@ -391,6 +429,41 @@ async function resetPassword() {
                       Cancel
                     </BaseButton>
                   </div>
+                </td>
+              </tr>
+
+              <!-- Email, for a local account -->
+              <tr
+                v-if="editingEmail?.id === u.id"
+                class="border-b last:border-0"
+                :style="{ borderColor: 'var(--border)', background: 'var(--surface-sunken)' }"
+              >
+                <td :colspan="canEdit ? 4 : 3" class="px-4 py-4">
+                  <form class="max-w-sm" @submit.prevent="saveEmail">
+                    <label :for="`email-${u.id}`" class="mb-1.5 block text-sm font-medium">
+                      Email for {{ u.label }}
+                    </label>
+                    <input
+                      :id="`email-${u.id}`"
+                      v-model="newEmail"
+                      type="email"
+                      autocomplete="off"
+                      class="field"
+                      data-cursor="text"
+                    />
+                    <p class="subtle mt-1 text-xs">
+                      Used for notifications and to identify the account. Leave blank to clear it.
+                    </p>
+
+                    <div class="mt-3 flex gap-2">
+                      <BaseButton type="submit" intent="primary" size="sm" :loading="busy">
+                        Save email
+                      </BaseButton>
+                      <BaseButton intent="secondary" size="sm" @click="editingEmail = null">
+                        Cancel
+                      </BaseButton>
+                    </div>
+                  </form>
                 </td>
               </tr>
 

@@ -43,7 +43,7 @@ func RenderChannel(kind string, d Data) (string, error) {
 // both the desktop app and the notification popover without looking like a robot pasted JSON.
 func slackPayload(d Data) map[string]any {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s *%s*", statusEmoji(d.Failed), d.Title)
+	fmt.Fprintf(&b, "%s *%s*", severityEmoji(d), d.Title)
 	if d.Summary != "" {
 		fmt.Fprintf(&b, "\n%s", d.Summary)
 	}
@@ -55,18 +55,28 @@ func slackPayload(d Data) map[string]any {
 	if d.Link != "" {
 		fmt.Fprintf(&b, "\n<%s|Open in Daffa>", d.Link)
 	}
+	blocks := []map[string]any{
+		{"type": "section", "text": map[string]any{"type": "mrkdwn", "text": b.String()}},
+	}
+	// The host and target as a muted context line — chat has no metadata strip, so this is
+	// where the structured facts land now that the sentence no longer repeats them.
+	if ctx := contextLine(d); ctx != "" {
+		blocks = append(blocks, map[string]any{
+			"type":     "context",
+			"elements": []map[string]any{{"type": "mrkdwn", "text": ctx}},
+		})
+	}
 	return map[string]any{
 		// A top-level text is the fallback shown in the notification and on old clients; the block
 		// is what a modern client renders. Providing both is Slack's documented recommendation.
-		"text": d.Subject,
-		"blocks": []map[string]any{
-			{"type": "section", "text": map[string]any{"type": "mrkdwn", "text": b.String()}},
-		},
+		"text":   d.Subject,
+		"blocks": blocks,
 	}
 }
 
-// Discord renders as an embed so the colour bar can carry the pass/fail signal at a glance, the
-// same red/green the email header uses.
+// Discord renders as an embed so the colour bar can carry the signal at a glance, the same
+// green/amber/red the email header uses — a warning is amber, not the green it used to share
+// with a success.
 func discordPayload(d Data) map[string]any {
 	desc := d.Summary
 	if d.Detail != "" {
@@ -75,17 +85,23 @@ func discordPayload(d Data) map[string]any {
 	if d.Link != "" {
 		desc += fmt.Sprintf("\n[Open in Daffa](%s)", d.Link)
 	}
-	color := 0x2ecc71 // green
-	if d.Failed {
-		color = 0xe74c3c // red
+	embed := map[string]any{
+		"title":       truncateRunes(d.Title, 250),
+		"description": truncateRunes(desc, 4000),
+		"color":       severityColor(d),
 	}
-	return map[string]any{
-		"embeds": []map[string]any{{
-			"title":       truncateRunes(d.Title, 250),
-			"description": truncateRunes(desc, 4000),
-			"color":       color,
-		}},
+	// Host and target as inline fields — the strip's equivalent in an embed.
+	var fields []map[string]any
+	if d.HostName != "" {
+		fields = append(fields, map[string]any{"name": "Host", "value": d.HostName, "inline": true})
 	}
+	if d.Target != "" {
+		fields = append(fields, map[string]any{"name": "Target", "value": d.Target, "inline": true})
+	}
+	if len(fields) > 0 {
+		embed["fields"] = fields
+	}
+	return map[string]any{"embeds": []map[string]any{embed}}
 }
 
 // A generic webhook gets the structured event, not a rendered string — the whole point of the
@@ -93,22 +109,51 @@ func discordPayload(d Data) map[string]any {
 // field names are explicit rather than a struct-tag reflection of Data's Go names.
 func webhookPayload(d Data) map[string]any {
 	return map[string]any{
-		"event":   string(d.Event),
-		"title":   d.Title,
-		"summary": d.Summary,
-		"detail":  d.Detail,
-		"host":    d.HostName,
-		"target":  d.Target,
-		"link":    d.Link,
-		"failed":  d.Failed,
+		"event":    string(d.Event),
+		"title":    d.Title,
+		"summary":  d.Summary,
+		"detail":   d.Detail,
+		"host":     d.HostName,
+		"target":   d.Target,
+		"link":     d.Link,
+		"failed":   d.Failed,     // kept for back-compat
+		"severity": d.severity(), // ok | warn | danger — the three-state signal
 	}
 }
 
-func statusEmoji(failed bool) string {
-	if failed {
-		return ":red_circle:"
+// contextLine is the host/target line chat shows in lieu of the email's metadata strip.
+// Whichever fields are set, joined with a middot; empty when neither is (a fleet event).
+func contextLine(d Data) string {
+	var parts []string
+	if d.HostName != "" {
+		parts = append(parts, "Host: *"+d.HostName+"*")
 	}
-	return ":large_green_circle:"
+	if d.Target != "" {
+		parts = append(parts, "Target: *"+d.Target+"*")
+	}
+	return strings.Join(parts, "  ·  ")
+}
+
+func severityEmoji(d Data) string {
+	switch d.severity() {
+	case "danger":
+		return ":red_circle:"
+	case "warn":
+		return ":large_orange_circle:"
+	default:
+		return ":large_green_circle:"
+	}
+}
+
+func severityColor(d Data) int {
+	switch d.severity() {
+	case "danger":
+		return 0xdc2626
+	case "warn":
+		return 0xd97706
+	default:
+		return 0x16a34a
+	}
 }
 
 func truncateRunes(s string, max int) string {

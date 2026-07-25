@@ -151,6 +151,10 @@ func buildMIME(m Message) []byte {
 
 	var b strings.Builder
 	b.WriteString("MIME-Version: 1.0\r\n")
+	// RFC 5322 requires a Date, and a message without one is a spam-filter signal — some
+	// receivers stamp their own, but relying on that is how mail lands in Junk. RFC1123Z is
+	// the on-the-wire format ("Mon, 02 Jan 2006 15:04:05 -0700").
+	fmt.Fprintf(&b, "Date: %s\r\n", time.Now().Format(time.RFC1123Z))
 	fmt.Fprintf(&b, "From: %s\r\n", addressHeader(m.FromName, m.From))
 	fmt.Fprintf(&b, "To: %s\r\n", m.To)
 	fmt.Fprintf(&b, "Subject: %s\r\n", m.Subject)

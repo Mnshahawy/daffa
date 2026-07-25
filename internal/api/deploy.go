@@ -665,7 +665,10 @@ func (s *Server) notifyDeploy(ctx context.Context, stack *store.Stack, dep *stor
 		Failed: failed,
 	}
 
-	what := fmt.Sprintf("The %s of stack %q on %s", dep.Action, stack.Name, host)
+	// No "on <host>" here — the host rides on Data.HostName and shows as its own field in
+	// every surface (the email strip, the chat context line). Repeating it in the sentence
+	// was the redundancy the redesign set out to remove.
+	what := fmt.Sprintf("The %s of stack %q", dep.Action, stack.Name)
 	if dep.CommitSHA != "" {
 		what += fmt.Sprintf(" (%s %s)", shortSHA(dep.CommitSHA), dep.CommitSubject)
 	}

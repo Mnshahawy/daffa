@@ -363,9 +363,12 @@ func TestAMaskColumnHoldsAHighBitOnPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	// Drop-then-close in ONE cleanup: a separate `defer s.Close()` runs before t.Cleanup,
+	// so the drop would execute against a closed pool and silently leave the schema at head
+	// — poisoning the next pg test that expects a clean or partial `daffa` schema.
 	t.Cleanup(func() {
 		_, _ = s.db.Exec("DROP SCHEMA IF EXISTS " + quoteIdent(s.pgSchema) + " CASCADE")
+		s.Close()
 	})
 
 	// Bit 30 — caps.MaxBit, the highest an area may ever use and still round-trip through a
@@ -484,9 +487,20 @@ func TestMigrate0013OnPopulatedPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open at 0012: %v", err)
 	}
-	defer s.Close()
+	// This shared Postgres database is one schema (`daffa`) reused across every pg test, so
+	// a predecessor that left it at head would make `stopAfter` a no-op here — migrate()
+	// skips already-applied migrations before it ever checks the stop point, and the test
+	// would open onto a post-0013 schema with no cert_id to seed. Drop it first to own a
+	// clean slate, and drop-then-close in ONE cleanup: a separate `defer s.Close()` would
+	// run before t.Cleanup and leave the drop executing against a closed pool — the very
+	// leak that poisons the next test (eachDialect gets this right, this is why).
+	_, _ = s.db.Exec("DROP SCHEMA IF EXISTS " + quoteIdent(s.pgSchema) + " CASCADE")
+	if err := s.migrate(ctx); err != nil {
+		t.Fatalf("re-opening the clean schema at 0012: %v", err)
+	}
 	t.Cleanup(func() {
 		_, _ = s.db.Exec("DROP SCHEMA IF EXISTS " + quoteIdent(s.pgSchema) + " CASCADE")
+		s.Close()
 	})
 
 	env := &Environment{Name: "prod"}
