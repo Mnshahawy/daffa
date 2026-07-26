@@ -19,6 +19,16 @@ WORKDIR /src/web
 # moved to pnpm 10, whose ignored-builds gate exits non-zero on esbuild/vue-demi —
 # unpinned, the image build breaks while CI stays green on 9.
 RUN corepack enable && corepack prepare pnpm@9 --activate
+
+# The SPA takes the console-ui component kit from the tree, not the registry
+# (`"@mnshahawy/daffa-console-ui": "file:../console-ui"`), so /src/console-ui has to exist
+# BEFORE pnpm install: pnpm materialises a directory dependency at install time — it packs
+# the source into its store and hardlinks a real directory into node_modules, it does not
+# symlink — so copying console-ui afterwards would leave the SPA building against nothing.
+# The whole directory goes in rather than just the package's `files` entries, so adding one
+# there can't silently break the image build. This does mean editing a console-ui component
+# invalidates the install layer; that is the price of resolving it by path.
+COPY console-ui/ /src/console-ui/
 COPY web/package.json web/pnpm-lock.yaml* ./
 RUN pnpm install --frozen-lockfile || pnpm install
 
