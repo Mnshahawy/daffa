@@ -264,8 +264,15 @@ func (s *Server) handleCreateBackupJob(w http.ResponseWriter, r *http.Request) {
 		job.CreatedBy = u.ID
 	}
 
+	// Only a collision is reported as one. Answering every failure with "that name is taken"
+	// sends the operator off renaming a job that was never the problem.
 	if err := s.store.CreateBackupJob(r.Context(), job); err != nil {
-		httpx.Fail(w, r, http.StatusConflict, "name_taken", "A backup job with that name already exists.")
+		if store.IsDuplicate(err) {
+			httpx.Fail(w, r, http.StatusConflict, "name_taken",
+				"This host already has a backup job with that name. Pick another, or edit the existing job.")
+			return
+		}
+		httpx.Error(w, r, err)
 		return
 	}
 	s.rebuildSchedule(r.Context())

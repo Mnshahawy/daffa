@@ -87,7 +87,11 @@ func (s *Server) handleCreateStorage(w http.ResponseWriter, r *http.Request) {
 		t.CreatedBy = u.ID
 	}
 	if err := s.store.CreateStorageTarget(r.Context(), t); err != nil {
-		httpx.Fail(w, r, http.StatusConflict, "name_taken", "A storage target with that name already exists.")
+		if store.IsDuplicate(err) {
+			httpx.Fail(w, r, http.StatusConflict, "name_taken", "A storage target with that name already exists.")
+			return
+		}
+		httpx.Error(w, r, err)
 		return
 	}
 

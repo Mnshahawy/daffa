@@ -169,7 +169,11 @@ func (s *Server) handleCreateCA(w http.ResponseWriter, r *http.Request) {
 		ca.CreatedBy = u.ID
 	}
 	if err := s.store.CreateCertAuthority(r.Context(), ca); err != nil {
-		httpx.Fail(w, r, http.StatusConflict, "name_taken", "A certificate authority with that name already exists.")
+		if store.IsDuplicate(err) {
+			httpx.Fail(w, r, http.StatusConflict, "name_taken", "A certificate authority with that name already exists.")
+			return
+		}
+		httpx.Error(w, r, err)
 		return
 	}
 
@@ -363,7 +367,11 @@ func (s *Server) handleRotateCA(w http.ResponseWriter, r *http.Request) {
 		next.CreatedBy = u.ID
 	}
 	if err := s.store.CreateCertAuthority(r.Context(), next); err != nil {
-		httpx.Fail(w, r, http.StatusConflict, "name_taken", "A certificate authority with that name already exists.")
+		if store.IsDuplicate(err) {
+			httpx.Fail(w, r, http.StatusConflict, "name_taken", "A certificate authority with that name already exists.")
+			return
+		}
+		httpx.Error(w, r, err)
 		return
 	}
 
@@ -753,7 +761,11 @@ func (s *Server) handleCreateCertificate(w http.ResponseWriter, r *http.Request)
 		c.CreatedBy = u.ID
 	}
 	if err := s.store.CreateCertificate(r.Context(), c); err != nil {
-		httpx.Fail(w, r, http.StatusConflict, "name_taken", "A certificate with that name already exists.")
+		if store.IsDuplicate(err) {
+			httpx.Fail(w, r, http.StatusConflict, "name_taken", "A certificate with that name already exists.")
+			return
+		}
+		httpx.Error(w, r, err)
 		return
 	}
 
@@ -1125,7 +1137,11 @@ func (s *Server) handleCreateKey(w http.ResponseWriter, r *http.Request) {
 		k.CreatedBy = u.ID
 	}
 	if err := s.store.CreateEncryptionKey(r.Context(), k); err != nil {
-		httpx.Fail(w, r, http.StatusConflict, "name_taken", "An encryption key with that name already exists.")
+		if store.IsDuplicate(err) {
+			httpx.Fail(w, r, http.StatusConflict, "name_taken", "An encryption key with that name already exists.")
+			return
+		}
+		httpx.Error(w, r, err)
 		return
 	}
 

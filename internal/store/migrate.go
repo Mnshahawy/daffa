@@ -1077,6 +1077,24 @@ ALTER TABLE cert_authorities ADD COLUMN outbound_trust INTEGER NOT NULL DEFAULT 
 	// anything that is not .toml/.yaml/.yml, so the PEMs and both manifests coexist beside
 	// the config fragments. See mixed-config-volumes.md.
 	{name: "0013_delivery_multi_cert", fn: migrateDeliveryMultiCert},
+
+	// A backup job's name becomes unique PER HOST rather than globally. Every other
+	// host-scoped table already reads this way — stacks_env_name_uq, volume_sources_env_volume_uq,
+	// and certificates_env_name after 0009 — and backup_jobs was the one that did not, so two
+	// clusters could not each run the obvious `postgres-nightly`. The second one got a 409 that
+	// blamed a name the operator could not see, because the colliding job lives on a host their
+	// Backups page does not show.
+	//
+	// This LOOSENS a constraint, so unlike a tightening it cannot fail on existing data: every
+	// row that satisfied global uniqueness satisfies per-env uniqueness. That is what makes the
+	// rebuild safe to run unconditionally.
+	//
+	// Same SQLite trap as 0009, doubled: backup_jobs has TWO children (backup_runs,
+	// backup_job_keys) and DROP TABLE performs an implicit DELETE FROM, so dropping the old
+	// parent while either still referenced it would fire job_id's ON DELETE CASCADE and destroy
+	// every run record and key grant. Rename the parent aside, rebuild both children onto the new
+	// one, and only then drop the orphan.
+	{name: "0014_backup_job_env_name", fn: migrateBackupJobEnvName},
 }
 
 // migrateCertEnvScope is 0009: certificates gain a nullable env_id and lose global name
@@ -1246,6 +1264,95 @@ func migrateDeliveryMultiCert(ctx context.Context, tx *sql.Tx, s *Store) error {
 		`CREATE UNIQUE INDEX cert_deliveries_traefik_volume_uq
              ON cert_deliveries (env_id, volume) WHERE traefik = 1`)
 	return err
+}
+
+// migrateBackupJobEnvName is 0014: backup job names go from globally unique to unique per
+// host. See the migration's comment for the SQLite ordering and why loosening cannot fail.
+//
+// No COALESCE in the index, unlike certificates_env_name: backup_jobs.env_id is NOT NULL, so
+// there is no shared-across-hosts row whose NULLs the two dialects would treat as distinct.
+func migrateBackupJobEnvName(ctx context.Context, tx *sql.Tx, s *Store) error {
+	var stmts []string
+	if s.dialect == Postgres {
+		stmts = []string{
+			`ALTER TABLE backup_jobs DROP CONSTRAINT backup_jobs_name_key`,
+		}
+	} else {
+		stmts = []string{
+			// Rename the parent aside; SQLite rewrites both children's FK clauses to follow.
+			`ALTER TABLE backup_jobs RENAME TO backup_jobs_old`,
+			// 0001's shape + 0004's exclude_paths, minus the inline UNIQUE on name.
+			`CREATE TABLE backup_jobs (
+    id              TEXT PRIMARY KEY,
+    env_id          TEXT NOT NULL REFERENCES environments (id) ON DELETE CASCADE,
+    name            TEXT NOT NULL,
+    container       TEXT NOT NULL,
+    engine          TEXT NOT NULL,
+    databases       TEXT NOT NULL DEFAULT '',
+    db_user         TEXT NOT NULL DEFAULT '',
+    db_password_enc TEXT NOT NULL DEFAULT '',
+    schedule        TEXT NOT NULL DEFAULT '',
+    storage_id      TEXT NOT NULL REFERENCES storage_targets (id),
+    prefix          TEXT NOT NULL DEFAULT '',
+    encryption      TEXT NOT NULL DEFAULT 'age',
+    volume          TEXT NOT NULL DEFAULT '',
+    stop_containers TEXT NOT NULL DEFAULT '',
+    enabled         INTEGER NOT NULL DEFAULT 1,
+    created_at      TEXT NOT NULL,
+    created_by      TEXT,
+    exclude_paths   TEXT NOT NULL DEFAULT ''
+)`,
+			`INSERT INTO backup_jobs (id, env_id, name, container, engine, databases, db_user,
+    db_password_enc, schedule, storage_id, prefix, encryption, volume, stop_containers,
+    enabled, created_at, created_by, exclude_paths)
+    SELECT id, env_id, name, container, engine, databases, db_user,
+    db_password_enc, schedule, storage_id, prefix, encryption, volume, stop_containers,
+    enabled, created_at, created_by, exclude_paths FROM backup_jobs_old`,
+
+			// Rebuild both children so their FKs point at the new parent. Each is dropped only
+			// after its replacement is filled, and dropping a child fires no cascades. The index
+			// is recreated after the drop because it followed backup_runs_old through the rename
+			// and would otherwise collide on the name.
+			`ALTER TABLE backup_runs RENAME TO backup_runs_old`,
+			`CREATE TABLE backup_runs (
+    id          TEXT PRIMARY KEY,
+    job_id      TEXT NOT NULL REFERENCES backup_jobs (id) ON DELETE CASCADE,
+    status      TEXT NOT NULL,
+    trigger     TEXT NOT NULL DEFAULT 'manual',
+    bytes       INTEGER NOT NULL DEFAULT 0,
+    object_key  TEXT NOT NULL DEFAULT '',
+    error       TEXT NOT NULL DEFAULT '',
+    started_at  TEXT NOT NULL,
+    ended_at    TEXT,
+    started_by  TEXT
+)`,
+			`INSERT INTO backup_runs SELECT * FROM backup_runs_old`,
+			`DROP TABLE backup_runs_old`,
+			`CREATE INDEX backup_runs_job_idx ON backup_runs (job_id, started_at)`,
+
+			`ALTER TABLE backup_job_keys RENAME TO backup_job_keys_old`,
+			`CREATE TABLE backup_job_keys (
+    job_id TEXT NOT NULL REFERENCES backup_jobs (id) ON DELETE CASCADE,
+    key_id TEXT NOT NULL REFERENCES encryption_keys (id),
+    PRIMARY KEY (job_id, key_id)
+)`,
+			`INSERT INTO backup_job_keys SELECT * FROM backup_job_keys_old`,
+			`DROP TABLE backup_job_keys_old`,
+
+			// Nothing references it now, so the implicit DELETE FROM cascades to nothing.
+			`DROP TABLE backup_jobs_old`,
+		}
+	}
+
+	stmts = append(stmts,
+		`CREATE UNIQUE INDEX backup_jobs_env_name_uq ON backup_jobs (env_id, name)`)
+
+	for _, stmt := range stmts {
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // demoteDuplicateTraefikDeliveries clears the way for 0013's unique index without taking

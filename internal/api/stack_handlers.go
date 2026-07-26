@@ -276,8 +276,12 @@ func (s *Server) handleCreateStack(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.store.CreateStack(r.Context(), stack); err != nil {
-		httpx.Fail(w, r, http.StatusConflict, "name_taken",
-			"A stack with that name already exists on this environment.")
+		if store.IsDuplicate(err) {
+			httpx.Fail(w, r, http.StatusConflict, "name_taken",
+				"A stack with that name already exists on this environment.")
+			return
+		}
+		httpx.Error(w, r, err)
 		return
 	}
 
@@ -1096,7 +1100,11 @@ func (s *Server) handleCreateRegistry(w http.ResponseWriter, r *http.Request) {
 
 	reg := &store.Registry{Name: req.Name, URL: host, Username: req.Username, PasswordEnc: sealed}
 	if err := s.store.CreateRegistry(r.Context(), reg); err != nil {
-		httpx.Fail(w, r, http.StatusConflict, "name_taken", "A registry with that name already exists.")
+		if store.IsDuplicate(err) {
+			httpx.Fail(w, r, http.StatusConflict, "name_taken", "A registry with that name already exists.")
+			return
+		}
+		httpx.Error(w, r, err)
 		return
 	}
 

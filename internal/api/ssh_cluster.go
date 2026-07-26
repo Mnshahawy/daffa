@@ -381,7 +381,11 @@ func (s *Server) handleCreateSSHCluster(w http.ResponseWriter, r *http.Request) 
 	}
 	env, node, err := s.store.CreateSSHNode(r.Context(), req.Name, node)
 	if err != nil {
-		httpx.Fail(w, r, http.StatusConflict, "name_taken", "A cluster with that name already exists.")
+		if store.IsDuplicate(err) {
+			httpx.Fail(w, r, http.StatusConflict, "name_taken", "A cluster with that name already exists.")
+			return
+		}
+		httpx.Error(w, r, err)
 		return
 	}
 

@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { useQuery } from '@tanstack/vue-query'
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { daffa, type DeploymentStatus as Status } from '@/lib/api'
 import { ago, absolute, actionLabel, duration, shortSha } from '@/lib/format'
 import { deploymentStatus } from '@/lib/status'
+import { useSession } from '@/stores/session'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import PageHeader from '@/components/ui/PageHeader.vue'
@@ -16,8 +17,19 @@ import StatusPill from '@/components/ui/StatusPill.vue'
 // When somebody says "the site is down", you do not — and until now there was nowhere to look
 // that would tell you.
 
+const session = useSession()
+
 const status = ref<Status | ''>('')
-const host = ref('')
+
+// Opens on the cluster you are looking at, rather than on every cluster at once: the feed is
+// LIMIT 50, so an unscoped default can push this host's deploys off the bottom with another
+// host's noise. "Every cluster" is still one click away, and the filter is server-side
+// (?host= → the stacks join), so widening it re-queries rather than showing a truncated page.
+const host = ref(session.envId)
+watch(
+  () => session.envId,
+  (id) => (host.value = id),
+)
 
 const { data: hosts } = useQuery({ queryKey: ['environments'], queryFn: daffa.environments })
 

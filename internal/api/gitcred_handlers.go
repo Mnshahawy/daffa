@@ -200,7 +200,11 @@ func (s *Server) handleCreateGitCredential(w http.ResponseWriter, r *http.Reques
 		cred.CreatedBy = u.ID
 	}
 	if err := s.store.CreateGitCredential(r.Context(), cred); err != nil {
-		httpx.Fail(w, r, http.StatusConflict, "name_taken", "A git credential with that name already exists.")
+		if store.IsDuplicate(err) {
+			httpx.Fail(w, r, http.StatusConflict, "name_taken", "A git credential with that name already exists.")
+			return
+		}
+		httpx.Error(w, r, err)
 		return
 	}
 

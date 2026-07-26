@@ -444,8 +444,12 @@ func (s *Server) handleCreateAgent(w http.ResponseWriter, r *http.Request) {
 		agent.CreatedBy = u.ID
 	}
 	if err := s.store.CreateAgent(r.Context(), agent); err != nil {
-		httpx.Fail(w, r, http.StatusConflict, "name_taken",
-			"An agent with that name already exists.")
+		if store.IsDuplicate(err) {
+			httpx.Fail(w, r, http.StatusConflict, "name_taken",
+				"An agent with that name already exists.")
+			return
+		}
+		httpx.Error(w, r, err)
 		return
 	}
 

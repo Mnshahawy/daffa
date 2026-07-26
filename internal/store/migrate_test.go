@@ -563,3 +563,169 @@ func TestMigrate0013OnPopulatedPostgres(t *testing.T) {
 		t.Error("Postgres accepted a second Traefik delivery on the same volume")
 	}
 }
+
+// 0014 rebuilds backup_jobs to make its name unique per host, and on SQLite that means
+// dropping the old parent out from under TWO children. With foreign_keys(1), a careless
+// order fires job_id's ON DELETE CASCADE and takes every backup_runs row and every
+// backup_job_keys grant with it — losing the record of what was backed up and, worse, which
+// keys a snapshot was encrypted to. So this populates the 0013 world with a job that HAS
+// runs and key grants, migrates forward for real, and asserts they survived. Then it proves
+// the new rule in both directions: same name on another host OK, duplicate on the same host
+// still refused.
+func TestMigrate0014BackupJobEnvName(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	url := "sqlite://" + filepath.Join(dir, "test.db")
+
+	stopAfter = "0013_delivery_multi_cert"
+	defer func() { stopAfter = "" }()
+
+	s, err := Open(ctx, url)
+	if err != nil {
+		t.Fatalf("open at 0013: %v", err)
+	}
+	defer s.Close()
+
+	// backup_jobs has not changed since 0004, so today's Create* code matches the 0013 schema.
+	prod, staging := twoHosts(t, s)
+	target := &StorageTarget{Name: "r2", Endpoint: "https://r2.example.com", Bucket: "backups",
+		KeyID: "k", SecretEnc: "sealed"}
+	if err := s.CreateStorageTarget(ctx, target); err != nil {
+		t.Fatal(err)
+	}
+	key := &EncryptionKey{Name: "ops", Recipient: "age1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqsx6hkr"}
+	if err := s.CreateEncryptionKey(ctx, key); err != nil {
+		t.Fatal(err)
+	}
+
+	job := &BackupJob{EnvID: prod.ID, Name: "postgres-nightly", Container: "db", Engine: "postgres",
+		StorageID: target.ID, Encryption: "age", KeyIDs: []string{key.ID}, Enabled: true,
+		Schedule: "0 3 * * *", ExcludePaths: "cache"}
+	if err := s.CreateBackupJob(ctx, job); err != nil {
+		t.Fatal(err)
+	}
+	// Two runs, so the assertion below distinguishes "cascade wiped them" from "one survived".
+	for range 2 {
+		run := &BackupRun{JobID: job.ID, Trigger: "schedule"}
+		if err := s.StartBackupRun(ctx, run); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.FinishBackupRun(ctx, run.ID, 4096, "prod/postgres-nightly/x.age", nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	stopAfter = ""
+	if err := s.migrate(ctx); err != nil {
+		t.Fatalf("migrating to 0014: %v", err)
+	}
+
+	// The job itself, with every field the rebuild had to copy by hand.
+	got, err := s.BackupJobByID(ctx, job.ID)
+	if err != nil {
+		t.Fatalf("the job did not survive 0014: %v", err)
+	}
+	if got.Name != "postgres-nightly" || got.EnvID != prod.ID || got.Container != "db" ||
+		got.Engine != "postgres" || got.StorageID != target.ID || got.Schedule != "0 3 * * *" ||
+		got.ExcludePaths != "cache" || !got.Enabled {
+		t.Errorf("job mangled by 0014: %+v", got)
+	}
+
+	// The children — this is the assertion the migration exists to not break.
+	runs, err := s.ListBackupRuns(ctx, job.ID, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 2 {
+		t.Errorf("backup_runs after 0014 = %d; want 2 (cascade ate the history)", len(runs))
+	}
+	if len(got.KeyIDs) != 1 || got.KeyIDs[0] != key.ID {
+		t.Errorf("key grants after 0014 = %v; want [%s] — a snapshot nobody can decrypt is the "+
+			"worst outcome here", got.KeyIDs, key.ID)
+	}
+
+	// The point of the whole migration: the same name on another host is now legal.
+	twin := &BackupJob{EnvID: staging.ID, Name: "postgres-nightly", Container: "db",
+		Engine: "postgres", StorageID: target.ID, Encryption: "none", Enabled: true}
+	if err := s.CreateBackupJob(ctx, twin); err != nil {
+		t.Fatalf("0014 did not lift global name uniqueness: %v", err)
+	}
+
+	// But it is still one name per host — the constraint moved, it did not disappear.
+	dup := &BackupJob{EnvID: prod.ID, Name: "postgres-nightly", Container: "db2",
+		Engine: "postgres", StorageID: target.ID, Encryption: "none", Enabled: true}
+	if err := s.CreateBackupJob(ctx, dup); err == nil {
+		t.Error("a duplicate job name within one host was accepted")
+	} else if !IsDuplicate(err) {
+		// The handler branches on IsDuplicate to answer 409 name_taken. An index violation it
+		// does not recognise becomes a 500, which tells the operator nothing about the name.
+		t.Errorf("IsDuplicate did not recognise the collision: %v", err)
+	}
+}
+
+// 0014's dialects diverge — SQLite rebuilds the table, Postgres just drops the constraint —
+// and the Postgres branch names `backup_jobs_name_key` by naming CONVENTION rather than by
+// looking it up. If that guess is wrong the migration fails at startup, on a box whose only
+// symptom is a Daffa that will not come up. A fresh-schema run would not catch it either,
+// since the constraint exists in both cases; what this proves is that the drop actually
+// executes and that the replacement index bites on real rows.
+func TestMigrate0014OnPopulatedPostgres(t *testing.T) {
+	url := os.Getenv("DAFFA_TEST_PG_URL")
+	if url == "" {
+		t.Skip("DAFFA_TEST_PG_URL not set — 0014's Postgres branch is NOT covered by this run")
+	}
+	ctx := context.Background()
+
+	stopAfter = "0013_delivery_multi_cert"
+	defer func() { stopAfter = "" }()
+
+	s, err := Open(ctx, url)
+	if err != nil {
+		t.Fatalf("open at 0013: %v", err)
+	}
+	// Same shared-schema hazard as 0013's Postgres test: drop first to own a clean slate, and
+	// drop-then-close in ONE cleanup so the drop does not run against a closed pool.
+	_, _ = s.db.Exec("DROP SCHEMA IF EXISTS " + quoteIdent(s.pgSchema) + " CASCADE")
+	if err := s.migrate(ctx); err != nil {
+		t.Fatalf("re-opening the clean schema at 0013: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = s.db.Exec("DROP SCHEMA IF EXISTS " + quoteIdent(s.pgSchema) + " CASCADE")
+		s.Close()
+	})
+
+	prod, staging := twoHosts(t, s)
+	target := &StorageTarget{Name: "r2", Endpoint: "https://r2.example.com", Bucket: "backups",
+		KeyID: "k", SecretEnc: "sealed"}
+	if err := s.CreateStorageTarget(ctx, target); err != nil {
+		t.Fatal(err)
+	}
+	job := &BackupJob{EnvID: prod.ID, Name: "postgres-nightly", Container: "db",
+		Engine: "postgres", StorageID: target.ID, Encryption: "none", Enabled: true}
+	if err := s.CreateBackupJob(ctx, job); err != nil {
+		t.Fatal(err)
+	}
+
+	stopAfter = ""
+	if err := s.migrate(ctx); err != nil {
+		t.Fatalf("0014 failed on a populated Postgres database: %v", err)
+	}
+
+	if got, err := s.BackupJobByID(ctx, job.ID); err != nil || got.Name != "postgres-nightly" {
+		t.Fatalf("the job did not survive 0014: %+v, err %v", got, err)
+	}
+	twin := &BackupJob{EnvID: staging.ID, Name: "postgres-nightly", Container: "db",
+		Engine: "postgres", StorageID: target.ID, Encryption: "none", Enabled: true}
+	if err := s.CreateBackupJob(ctx, twin); err != nil {
+		t.Fatalf("Postgres still enforces global name uniqueness after 0014: %v", err)
+	}
+	dup := &BackupJob{EnvID: prod.ID, Name: "postgres-nightly", Container: "db2",
+		Engine: "postgres", StorageID: target.ID, Encryption: "none", Enabled: true}
+	if err := s.CreateBackupJob(ctx, dup); err == nil {
+		t.Error("Postgres accepted a duplicate job name within one host")
+	} else if !IsDuplicate(err) {
+		// Postgres words a unique-INDEX violation the same as a unique-CONSTRAINT one, but the
+		// handler's 409 depends on that, and 0014 replaced a constraint with an index.
+		t.Errorf("IsDuplicate did not recognise the Postgres collision: %v", err)
+	}
+}

@@ -24,6 +24,12 @@ const { data: jobs, isLoading } = useQuery({
   refetchInterval: 10_000, // a running backup has no event to hang off
 })
 
+// The endpoint answers "which jobs may you see" (the RBAC filter); the switcher answers
+// "which host are you looking at". Narrowing here rather than server-side keeps the
+// ['backups'] cache env-free — VolumesView reads the same entry and would otherwise get
+// this page's host imposed on it.
+const mine = computed(() => (jobs.value ?? []).filter((j) => j.env_id === session.envId))
+
 const adding = ref(false)
 const expanded = ref<string | null>(null)
 
@@ -182,7 +188,7 @@ function runStatus(j: BackupJob): Status {
   <div>
     <PageHeader
       title="Backups"
-      :count="jobs?.length"
+      :count="jobs ? mine.length : undefined"
       description="Dumps a database out of a running container — or tars a named volume — and streams it straight to object storage. Nothing is written to the host's disk."
     >
       <template #actions>
@@ -482,9 +488,9 @@ function runStatus(j: BackupJob): Status {
     <p v-if="isLoading" class="muted text-sm">Loading…</p>
 
     <EmptyState
-      v-else-if="!jobs?.length && !adding"
+      v-else-if="!mine.length && !adding"
       icon="archive"
-      title="No backup jobs yet"
+      title="No backup jobs on this cluster yet"
       body="A backup job dumps a database out of its running container on a schedule and streams it straight to S3-compatible storage — encrypted to your public key, and never written to the host's disk. Without one, the only copy of that database is the container it lives in."
     >
       <template #action>
@@ -500,8 +506,8 @@ function runStatus(j: BackupJob): Status {
       </template>
     </EmptyState>
 
-    <div v-else-if="jobs?.length" class="space-y-3">
-      <div v-for="j in jobs" :key="j.id" class="surface overflow-hidden rounded-[var(--radius-card)]">
+    <div v-else-if="mine.length" class="space-y-3">
+      <div v-for="j in mine" :key="j.id" class="surface overflow-hidden rounded-[var(--radius-card)]">
         <div class="flex flex-wrap items-start gap-3 p-4">
           <!-- The last run is the only thing that matters at a glance: a red dot here is
                the whole reason this page exists. -->

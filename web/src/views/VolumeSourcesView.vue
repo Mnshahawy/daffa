@@ -26,6 +26,10 @@ const { data: sources, isLoading } = useQuery({
   refetchInterval: 10_000,
 })
 
+// Scoped to the switcher's host, like StacksView — see BackupsView for why this narrows
+// here rather than server-side (['volume-sources'] is shared with BackupsView and VolumesView).
+const mine = computed(() => (sources.value ?? []).filter((s) => s.env_id === session.envId))
+
 const { data: environments } = useQuery({
   queryKey: ['environments'],
   queryFn: () => daffa.environments(),
@@ -269,7 +273,7 @@ function webhookUrl(id: string): string {
   <div>
     <PageHeader
       title="Volume sources"
-      :count="sources?.length"
+      :count="sources ? mine.length : undefined"
       description="A source declares that a named volume's contents come from a git subtree — Daffa creates the volume, fills it, and keeps it current. For config that belongs in a repo; a volume holding precious data wants a backup job instead."
     >
       <template #actions>
@@ -585,9 +589,9 @@ function webhookUrl(id: string): string {
     <p v-if="isLoading" class="muted text-sm">Loading…</p>
 
     <EmptyState
-      v-else-if="!sources?.length && !open"
+      v-else-if="!mine.length && !open"
       icon="file"
-      title="No volume sources yet"
+      title="No volume sources on this cluster yet"
       body="A volume source fills a named volume from a git subtree and keeps it current — Traefik dynamic config, init scripts, provisioning — so the repo stays the only source of truth. Secrets don't belong here: those ride sealed stack env vars or cert deliveries."
     >
       <template #action>
@@ -598,9 +602,9 @@ function webhookUrl(id: string): string {
       </template>
     </EmptyState>
 
-    <div v-else-if="sources?.length" class="space-y-3">
+    <div v-else-if="mine.length" class="space-y-3">
       <div
-        v-for="s in sources"
+        v-for="s in mine"
         :key="s.id"
         class="surface rounded-[var(--radius-card)] p-4"
       >
