@@ -1,0 +1,370 @@
+/* ─────────────────────────────────────────────────────────────────────────────
+   console-ui base layer — the shared grammar of a dense operations console,
+   read at 2am on a second monitor. Information first, quiet chrome, and colour
+   that always means something.
+
+   This file carries Tailwind v4 directives (@utility, @layer components), so it
+   must be imported from the consumer's Tailwind-processed stylesheet, AFTER
+   `@import 'tailwindcss'` and the tokens:
+
+     @import 'tailwindcss';
+     :root { --ui-hue: 285; ... }
+     @import 'daffa-console-ui/styles/tokens.css';
+     @import 'daffa-console-ui/styles/fonts.css';
+     @import 'daffa-console-ui/styles/base.css';
+     @theme {
+       --font-sans: 'IBM Plex Sans Variable', ui-sans-serif, system-ui, sans-serif;
+       --font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', monospace;
+     }
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/* ── Base ────────────────────────────────────────────────────────────────────── */
+
+@layer base {
+  body {
+    background: var(--surface);
+    color: var(--text);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Tailwind v4's preflight sets `button { cursor: default }` — technically what the HTML
+     spec says, and practically what makes an app feel dead. Say it once, here, for
+     everything that is genuinely clickable, rather than dusting `cursor-pointer` across
+     every call site and missing a third of them. */
+  button:not(:disabled),
+  [role='button']:not([aria-disabled='true']),
+  [role='option'],
+  [role='radio'],
+  [role='tab'],
+  a[href],
+  summary,
+  /* Both ways of associating a label with its control. `label[for]` alone misses the very
+     common form where the label WRAPS the input — which is most checkboxes, and which is
+     how two of them once ended up hand-patching `cursor-pointer` back on. */
+  label[for],
+  label:has(input:not(:disabled)),
+  select:not(:disabled),
+  input[type='checkbox']:not(:disabled),
+  input[type='radio']:not(:disabled),
+  input[type='range']:not(:disabled),
+  input[type='file']:not(:disabled)::file-selector-button {
+    cursor: pointer;
+  }
+
+  /* A control that cannot be used should say so under the cursor, rather than look clickable
+     and then do nothing. */
+  button:disabled,
+  select:disabled,
+  input:disabled,
+  textarea:disabled,
+  [aria-disabled='true'] {
+    cursor: not-allowed;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 2px;
+    border-radius: 3px;
+  }
+
+  /* The ring is the affordance. The browser's default inner outline on top of it is noise. */
+  :focus:not(:focus-visible) {
+    outline: none;
+  }
+
+  ::selection {
+    background: var(--accent-soft);
+  }
+
+  /* Numbers in a console are compared down a column, not read as prose. */
+  th,
+  td,
+  time,
+  [data-numeric] {
+    font-variant-numeric: tabular-nums;
+  }
+
+  input,
+  textarea,
+  select {
+    font-family: inherit;
+  }
+
+  /* Chrome should be quiet. */
+  * {
+    scrollbar-color: var(--border-strong) transparent;
+    scrollbar-width: thin;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ── Utilities ───────────────────────────────────────────────────────────────── */
+
+@utility surface {
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+}
+
+/* A surface with the card radius — the standard container for a table or a panel. */
+@utility card {
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+}
+
+@utility muted {
+  color: var(--text-muted);
+}
+
+@utility subtle {
+  color: var(--text-subtle);
+}
+
+/* The structural label: mono, small, wide, quiet. Every column header, section eyebrow and
+   metadata key in the app is one of these. That consistency is what makes the sans/mono split
+   read as a system rather than as two fonts that happen to be on the same page. */
+@utility eyebrow {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-subtle);
+}
+
+/* A field, written once, so that thirty forms cannot drift into thirty different inputs —
+   which is exactly how Portainer ended up with a hardcoded #337ab7 checkbox that ignores all
+   three of its themes. */
+@utility field {
+  width: 100%;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+  color: var(--text);
+  transition:
+    border-color 0.12s,
+    box-shadow 0.12s;
+
+  &::placeholder {
+    color: var(--text-subtle);
+  }
+
+  &:hover:not(:disabled):not(:focus) {
+    border-color: var(--border-strong);
+  }
+
+  &:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+  }
+
+  &:disabled {
+    opacity: 0.55;
+  }
+}
+
+/* The in-flight signal.
+
+   Portainer pulses a dot when an Edge agent has a live heartbeat, and it is the one animation
+   in that product that MEANS something. Dokploy has none at all — so a build in progress is a
+   static yellow dot, indistinguishable from a build that has been wedged for an hour.
+
+   Here: if it breathes, something is actually happening right now. */
+@utility pulse-ring {
+  position: relative;
+
+  &::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 9999px;
+    background: currentColor;
+    animation: ui-pulse 1.8s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+}
+
+@keyframes ui-pulse {
+  0% {
+    opacity: 0.6;
+    transform: scale(1);
+  }
+  70%,
+  100% {
+    opacity: 0;
+    transform: scale(2.4);
+  }
+}
+
+@keyframes ui-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Streaming log lines and freshly-arrived rows, so a feed that is moving looks like it is
+   moving rather than silently replacing itself under you. */
+@utility appear {
+  animation: ui-fade-in 0.18s ease-out;
+}
+
+/* ── The action grammar ───────────────────────────────────────────────────────
+   A button's colour states what KIND of thing it does. This is the whole system,
+   and there are exactly six answers:
+
+     primary    solid accent   The thing this screen is for. One per screen.
+     secondary  outlined       A safe alternative. Cancel, Edit, Manage.
+     ghost      bare           An affordance inside a row or a toolbar.
+     caution    amber          Disruptive but recoverable. Stop, Restart, Pause, Drain.
+                               The service goes away and comes back.
+     danger     tinted red     Destroys something. Remove, Delete, Prune.
+     danger-solid  solid red   The same, at the moment of confirming it.
+
+   Two tiers of destructive, because `docker stop` and `docker rm` are not the same
+   act and a console that paints them the same colour is lying. Portainer paints
+   Start and Kill in identical grey, side by side. Dokploy paints Deploy solid black
+   and Kill Process in 10%-opacity red — so the irreversible action carries LESS
+   visual weight than the safe one. Both are the same mistake from opposite ends.
+
+   The loudest thing on screen is `danger-solid`, and it exists in exactly one place:
+   the confirm dialog, at the moment you are about to lose data. */
+
+@layer components {
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.375rem;
+    border: 1px solid transparent;
+    border-radius: var(--radius-control);
+    font-weight: 500;
+    white-space: nowrap;
+    transition:
+      background-color 0.12s,
+      border-color 0.12s,
+      color 0.12s,
+      opacity 0.12s;
+  }
+
+  /* Presses in. Cheap, and it makes a click feel answered. */
+  .btn:active:not(:disabled) {
+    transform: translateY(0.5px);
+  }
+
+  .btn:disabled {
+    opacity: 0.45;
+  }
+
+  .btn-primary {
+    background: var(--accent);
+    color: var(--accent-contrast);
+  }
+  .btn-primary:hover:not(:disabled) {
+    background: var(--accent-hover);
+  }
+
+  .btn-secondary {
+    background: var(--surface-raised);
+    border-color: var(--border);
+    color: var(--text);
+  }
+  .btn-secondary:hover:not(:disabled) {
+    background: var(--surface-sunken);
+    border-color: var(--border-strong);
+  }
+
+  .btn-ghost {
+    background: transparent;
+    color: var(--text-muted);
+  }
+  .btn-ghost:hover:not(:disabled) {
+    background: var(--surface-sunken);
+    color: var(--text);
+  }
+
+  .btn-caution {
+    background: var(--warn-soft);
+    color: var(--warn);
+  }
+  .btn-caution:hover:not(:disabled) {
+    background: color-mix(in oklch, var(--warn) 26%, transparent);
+  }
+
+  .btn-danger {
+    background: var(--danger-soft);
+    color: var(--danger);
+  }
+  .btn-danger:hover:not(:disabled) {
+    background: color-mix(in oklch, var(--danger) 26%, transparent);
+  }
+
+  .btn-danger-solid {
+    background: var(--danger);
+    color: var(--danger-contrast);
+  }
+  .btn-danger-solid:hover:not(:disabled) {
+    background: var(--danger-hover);
+  }
+
+  .btn-link {
+    background: transparent;
+    color: var(--accent-text);
+    padding: 0;
+    height: auto;
+    text-underline-offset: 3px;
+  }
+  .btn-link:hover:not(:disabled) {
+    text-decoration: underline;
+  }
+
+  /* Sizes. `xs` is for actions that live inside a table row, where the row height is the
+     budget and there is none to spare. */
+  .btn-xs {
+    height: 1.625rem;
+    padding-inline: 0.5rem;
+    font-size: 0.75rem;
+  }
+  .btn-sm {
+    height: 2rem;
+    padding-inline: 0.75rem;
+    font-size: 0.8125rem;
+  }
+  .btn-md {
+    height: 2.375rem;
+    padding-inline: 1rem;
+    font-size: 0.875rem;
+  }
+
+  /* Square, for an icon on its own. */
+  .btn-icon.btn-xs {
+    width: 1.625rem;
+    padding-inline: 0;
+  }
+  .btn-icon.btn-sm {
+    width: 2rem;
+    padding-inline: 0;
+  }
+  .btn-icon.btn-md {
+    width: 2.375rem;
+    padding-inline: 0;
+  }
+}

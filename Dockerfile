@@ -12,7 +12,7 @@
 # cleanly, so there is nothing to gain from building either arch emulated.
 
 # ── 1. build the SPA (once, on the native builder — its output is arch-independent) ──
-FROM --platform=$BUILDPLATFORM node:22-alpine AS web
+FROM --platform=$BUILDPLATFORM node:24-alpine AS web
 WORKDIR /src/web
 
 # Pin pnpm to 9 to match CI (.github/workflows/ci.yml). corepack's floating default
