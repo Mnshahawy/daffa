@@ -1,22 +1,10 @@
 import { allNavItems, allSettingsTabs } from './nav'
 
-export const APP_NAME = 'Daffa'
-
-/**
- * The tab title.
- *
- * Every page said "Daffa", which is useless the moment there is more than one tab open — and an
- * operator running a fleet has one per host, plus the deploy they are watching, plus the logs of
- * the thing that broke. The tab strip is a navigation surface and it was showing nothing.
- *
- * Parts run MOST SPECIFIC FIRST, and the product name comes last, because a browser truncates a
- * tab from the right. "api-gateway · Stacks · Daffa" degrades to "api-gate…", which is the part
- * you needed; "Daffa · Stacks · api-gateway" degrades to "Daffa…", which is every tab.
- */
-export function setTitle(...parts: (string | undefined | null | false)[]): void {
-  const trail = parts.filter(Boolean) as string[]
-  document.title = trail.length ? `${trail.join(' · ')} · ${APP_NAME}` : APP_NAME
-}
+// The title formatter lives in the shared kit (setAppName('Daffa') is called at startup
+// in main.ts); re-exported so existing `@/lib/title` imports keep working. The
+// route-name → title maps below stay app-local — they know Daffa's nav registry.
+export { setTitle } from '@mnshahawy/daffa-console-ui'
+import { setTitle } from '@mnshahawy/daffa-console-ui'
 
 /**
  * What each route is called, taken from the nav registry rather than written out a second time —

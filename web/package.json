@@ -8,8 +8,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@fontsource-variable/ibm-plex-sans": "^5.2.8",
-    "@fontsource/ibm-plex-mono": "^5.2.7",
+    "@mnshahawy/daffa-console-ui": "file:../console-ui",
     "@tanstack/vue-query": "^5.62.7",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",

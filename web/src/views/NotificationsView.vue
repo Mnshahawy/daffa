@@ -4,10 +4,10 @@ import { useQuery, useQueryClient } from '@tanstack/vue-query'
 import { ApiError, daffa, type NotifyEvent } from '@/lib/api'
 import { Cap } from '@/lib/caps'
 import { useSession } from '@/stores/session'
-import { toast } from '@/lib/toast'
-import AppIcon from '@/components/ui/AppIcon.vue'
-import BaseButton from '@/components/ui/BaseButton.vue'
-import Select from '@/components/ui/Select.vue'
+import { toast } from '@mnshahawy/daffa-console-ui'
+import { AppIcon } from '@mnshahawy/daffa-console-ui'
+import { BaseButton } from '@mnshahawy/daffa-console-ui'
+import { Select } from '@mnshahawy/daffa-console-ui'
 
 const session = useSession()
 const qc = useQueryClient()

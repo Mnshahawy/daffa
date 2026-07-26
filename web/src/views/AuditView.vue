@@ -3,10 +3,10 @@ import { computed, ref } from 'vue'
 import { useQuery } from '@tanstack/vue-query'
 import { daffa, type AuditEntry } from '@/lib/api'
 import { type Status } from '@/lib/status'
-import EmptyState from '@/components/ui/EmptyState.vue'
-import PageHeader from '@/components/ui/PageHeader.vue'
-import SearchInput from '@/components/SearchInput.vue'
-import StatusPill from '@/components/ui/StatusPill.vue'
+import { EmptyState } from '@mnshahawy/daffa-console-ui'
+import { PageHeader } from '@mnshahawy/daffa-console-ui'
+import { SearchInput } from '@mnshahawy/daffa-console-ui'
+import { StatusPill } from '@mnshahawy/daffa-console-ui'
 
 // Every mutating action lands here. A tool holding a root-equivalent socket that
 // cannot tell you who restarted what, and when, is not one you should trust.

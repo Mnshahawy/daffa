@@ -9,22 +9,18 @@
  *
  * So: six tones, defined once, and a set of functions that map each kind of thing Daffa
  * knows about onto them. If you need a colour for a state, it comes from here.
+ *
+ * The vocabulary itself (Tone, Status, toneVar, toneSoftVar) now lives in the shared kit;
+ * re-exported so every existing `@/lib/status` import keeps working. The domain mappers
+ * below stay app-local — they name Daffa's nouns.
  */
-export type Tone = 'success' | 'warn' | 'danger' | 'info' | 'neutral' | 'accent'
-
-export interface Status {
-  tone: Tone
-  /** What a person calls it. Not the wire value. */
-  label: string
-  /**
-   * Something is happening RIGHT NOW and the next poll may say something different.
-   * Drives the pulse. It must never be set on a state that is merely bad and stable —
-   * a dot that breathes says "wait", and a wedged container is not worth waiting for.
-   */
-  live?: boolean
-  /** The bit you would otherwise have to open the logs to find out. */
-  detail?: string
-}
+export {
+  toneVar,
+  toneSoftVar,
+  type Tone,
+  type Status,
+} from '@mnshahawy/daffa-console-ui'
+import type { Status } from '@mnshahawy/daffa-console-ui'
 
 /**
  * A Docker container's lifecycle state.
@@ -268,23 +264,4 @@ export function hostStatus(status: string): Status {
   return status === 'online'
     ? { tone: 'success', label: 'Online' }
     : { tone: 'danger', label: 'Offline' }
-}
-
-/** The CSS custom property each tone resolves to. The single bridge from tone to colour. */
-export const toneVar: Record<Tone, string> = {
-  success: 'var(--success)',
-  warn: 'var(--warn)',
-  danger: 'var(--danger)',
-  info: 'var(--info)',
-  neutral: 'var(--text-subtle)',
-  accent: 'var(--accent)',
-}
-
-export const toneSoftVar: Record<Tone, string> = {
-  success: 'var(--success-soft)',
-  warn: 'var(--warn-soft)',
-  danger: 'var(--danger-soft)',
-  info: 'var(--info-soft)',
-  neutral: 'var(--surface-sunken)',
-  accent: 'var(--accent-soft)',
 }

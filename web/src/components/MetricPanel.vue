@@ -10,7 +10,7 @@ import { computed, ref } from 'vue'
 import { useQuery } from '@tanstack/vue-query'
 import { daffa, type MetricRange } from '@/lib/api'
 import { useSession } from '@/stores/session'
-import BaseButton from './ui/BaseButton.vue'
+import { BaseButton } from '@mnshahawy/daffa-console-ui'
 import MetricChart from './MetricChart.vue'
 
 const props = defineProps<{

@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/vue-query'
 import { daffa, type LogConfigRequest } from '@/lib/api'
 import { Cap } from '@/lib/caps'
 import { useSession } from '@/stores/session'
-import { toast } from '@/lib/toast'
+import { toast } from '@mnshahawy/daffa-console-ui'
 import LogConfigForm from '@/components/LogConfigForm.vue'
 
 const session = useSession()

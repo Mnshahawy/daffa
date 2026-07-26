@@ -4,9 +4,9 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import { openExec } from '@/lib/stream'
-import { resolved } from '@/lib/theme'
+import { resolved } from '@mnshahawy/daffa-console-ui'
 import type { Status } from '@/lib/status'
-import StatusPill from './ui/StatusPill.vue'
+import { StatusPill } from '@mnshahawy/daffa-console-ui'
 
 // node: which machine the container is on.
 //

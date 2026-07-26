@@ -5,10 +5,10 @@ import { bytes, daffa, type BackupJob, type Snapshot } from '@/lib/api'
 import { Cap } from '@/lib/caps'
 import { useSession } from '@/stores/session'
 import { type Status } from '@/lib/status'
-import AppIcon from '@/components/ui/AppIcon.vue'
-import BaseButton from '@/components/ui/BaseButton.vue'
-import CopyButton from '@/components/ui/CopyButton.vue'
-import StatusPill from '@/components/ui/StatusPill.vue'
+import { AppIcon } from '@mnshahawy/daffa-console-ui'
+import { BaseButton } from '@mnshahawy/daffa-console-ui'
+import { CopyButton } from '@mnshahawy/daffa-console-ui'
+import { StatusPill } from '@mnshahawy/daffa-console-ui'
 
 const props = defineProps<{ job: BackupJob }>()
 

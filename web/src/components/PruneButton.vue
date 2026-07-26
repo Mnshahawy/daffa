@@ -2,12 +2,12 @@
 import { ref } from 'vue'
 import { useQueryClient } from '@tanstack/vue-query'
 import { bytes, daffa, type PruneTarget } from '@/lib/api'
-import { toast } from '@/lib/toast'
+import { toast } from '@mnshahawy/daffa-console-ui'
 import { Cap } from '@/lib/caps'
-import { confirm } from '@/lib/confirm'
+import { confirm } from '@mnshahawy/daffa-console-ui'
 import { useSession } from '@/stores/session'
-import AppIcon from './ui/AppIcon.vue'
-import BaseButton from './ui/BaseButton.vue'
+import { AppIcon } from '@mnshahawy/daffa-console-ui'
+import { BaseButton } from '@mnshahawy/daffa-console-ui'
 
 const props = defineProps<{ target: PruneTarget; label: string }>()
 

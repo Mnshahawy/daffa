@@ -2,11 +2,11 @@
 import { ref } from 'vue'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import { daffa, type RegistryItem } from '@/lib/api'
-import { confirm } from '@/lib/confirm'
-import { toast } from '@/lib/toast'
-import AppIcon from '@/components/ui/AppIcon.vue'
-import BaseButton from '@/components/ui/BaseButton.vue'
-import EmptyState from '@/components/ui/EmptyState.vue'
+import { confirm } from '@mnshahawy/daffa-console-ui'
+import { toast } from '@mnshahawy/daffa-console-ui'
+import { AppIcon } from '@mnshahawy/daffa-console-ui'
+import { BaseButton } from '@mnshahawy/daffa-console-ui'
+import { EmptyState } from '@mnshahawy/daffa-console-ui'
 
 const qc = useQueryClient()
 

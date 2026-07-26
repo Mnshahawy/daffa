@@ -7,8 +7,8 @@
 // slot into the row and the footer respectively.
 import { ref, computed, onMounted } from 'vue'
 import { ApiError, daffa, type PreviewImage } from '@/lib/api'
-import AppIcon from '@/components/ui/AppIcon.vue'
-import BaseButton from '@/components/ui/BaseButton.vue'
+import { AppIcon } from '@mnshahawy/daffa-console-ui'
+import { BaseButton } from '@mnshahawy/daffa-console-ui'
 
 const props = defineProps<{ envId: string; yaml: string; canEdit: boolean }>()
 // Apply hands the rewritten YAML back to the editor that owns it; this component never persists.

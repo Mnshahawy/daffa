@@ -2,13 +2,13 @@
 import { computed, ref } from 'vue'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import { daffa, type StorageTarget } from '@/lib/api'
-import { confirm } from '@/lib/confirm'
-import { toast } from '@/lib/toast'
+import { confirm } from '@mnshahawy/daffa-console-ui'
+import { toast } from '@mnshahawy/daffa-console-ui'
 import { useSession } from '@/stores/session'
 import { Cap } from '@/lib/caps'
-import AppIcon from '@/components/ui/AppIcon.vue'
-import BaseButton from '@/components/ui/BaseButton.vue'
-import EmptyState from '@/components/ui/EmptyState.vue'
+import { AppIcon } from '@mnshahawy/daffa-console-ui'
+import { BaseButton } from '@mnshahawy/daffa-console-ui'
+import { EmptyState } from '@mnshahawy/daffa-console-ui'
 
 const qc = useQueryClient()
 const session = useSession()

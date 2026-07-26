@@ -9,14 +9,14 @@ import {
 } from '@/lib/api'
 import { Cap } from '@/lib/caps'
 import { useSession } from '@/stores/session'
-import { confirm } from '@/lib/confirm'
-import { toast } from '@/lib/toast'
+import { confirm } from '@mnshahawy/daffa-console-ui'
+import { toast } from '@mnshahawy/daffa-console-ui'
 import type { Status } from '@/lib/status'
-import AppIcon from '@/components/ui/AppIcon.vue'
-import BaseButton from '@/components/ui/BaseButton.vue'
-import EmptyState from '@/components/ui/EmptyState.vue'
-import Select from '@/components/ui/Select.vue'
-import StatusPill from '@/components/ui/StatusPill.vue'
+import { AppIcon } from '@mnshahawy/daffa-console-ui'
+import { BaseButton } from '@mnshahawy/daffa-console-ui'
+import { EmptyState } from '@mnshahawy/daffa-console-ui'
+import { Select } from '@mnshahawy/daffa-console-ui'
+import { StatusPill } from '@mnshahawy/daffa-console-ui'
 
 const session = useSession()
 const qc = useQueryClient()

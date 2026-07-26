@@ -7,8 +7,8 @@ import { setTitle } from '@/lib/title'
 import { useSession } from '@/stores/session'
 import { containerStatus } from '@/lib/status'
 import { absolute } from '@/lib/format'
-import PageHeader from '@/components/ui/PageHeader.vue'
-import StatusPill from '@/components/ui/StatusPill.vue'
+import { PageHeader } from '@mnshahawy/daffa-console-ui'
+import { StatusPill } from '@mnshahawy/daffa-console-ui'
 import ContainerPanel from '@/components/ContainerPanel.vue'
 
 // The page is a header around ContainerPanel, which owns the stats/logs/shell surface —

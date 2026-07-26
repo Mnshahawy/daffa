@@ -2,8 +2,8 @@
 import { ref, watch } from 'vue'
 import { useQuery } from '@tanstack/vue-query'
 import { daffa, type StackSecretItem } from '@/lib/api'
-import AppIcon from './ui/AppIcon.vue'
-import BaseButton from './ui/BaseButton.vue'
+import { AppIcon } from '@mnshahawy/daffa-console-ui'
+import { BaseButton } from '@mnshahawy/daffa-console-ui'
 import SecretField from './SecretField.vue'
 
 // canReveal gates the unmask control on a secret's content (the server enforces it too).

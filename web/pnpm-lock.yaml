@@ -8,12 +8,9 @@ importers:
 
   .:
     dependencies:
-      '@fontsource-variable/ibm-plex-sans':
-        specifier: ^5.2.8
-        version: 5.2.8
-      '@fontsource/ibm-plex-mono':
-        specifier: ^5.2.7
-        version: 5.2.7
+      '@mnshahawy/daffa-console-ui':
+        specifier: file:../console-ui
+        version: file:../console-ui(vue-router@4.6.4(vue@3.5.39(typescript@5.9.3)))(vue@3.5.39(typescript@5.9.3))
       '@tanstack/vue-query':
         specifier: ^5.62.7
         version: 5.101.2(vue@3.5.39(typescript@5.9.3))
@@ -230,12 +227,6 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@fontsource-variable/ibm-plex-sans@5.2.8':
-    resolution: {integrity: sha512-n5PF2iFa0CZT0QYTPzxvZ39opC9LnU0zdoRccoADbs+Dtsd+lbXOZF7RNuIPHcQX1dKjF63sxnRImQIB5eD0Ag==}
-
-  '@fontsource/ibm-plex-mono@5.2.7':
-    resolution: {integrity: sha512-MKAb8qV+CaiMQn2B0dIi1OV3565NYzp3WN5b4oT6LTkk+F0jR6j0ZN+5BKJiIhffDC3rtBULsYZE65+0018z9w==}
-
   '@jridgewell/gen-mapping@0.3.13':
     resolution: {integrity: sha512-2kkt/7niJ6MgEPxF0bYdQ6etZaA+fQvDcLKckhy1yIQOzaoKjBBjSj63/aLVjYE3qhRt5dvM+uUyfCg6UKCBbA==}
 
@@ -251,6 +242,12 @@ packages:
 
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
+
+  '@mnshahawy/daffa-console-ui@file:../console-ui':
+    resolution: {directory: ../console-ui, type: directory}
+    peerDependencies:
+      vue: ^3.5.0
+      vue-router: ^4.5.0
 
   '@rollup/rollup-android-arm-eabi@4.62.2':
     resolution: {integrity: sha512-6o7ZLZK+BeenkZCFNDXqpbjw9bD6nuWonvS/lwQJp7NoVVxm6p3qE7qQ5jGuBjiFsgvqjD8mZAU5oWxTmbOeOg==}
@@ -940,10 +937,6 @@ snapshots:
   '@esbuild/win32-x64@0.25.12':
     optional: true
 
-  '@fontsource-variable/ibm-plex-sans@5.2.8': {}
-
-  '@fontsource/ibm-plex-mono@5.2.7': {}
-
   '@jridgewell/gen-mapping@0.3.13':
     dependencies:
       '@jridgewell/sourcemap-codec': 1.5.5
@@ -962,6 +955,11 @@ snapshots:
     dependencies:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
+
+  '@mnshahawy/daffa-console-ui@file:../console-ui(vue-router@4.6.4(vue@3.5.39(typescript@5.9.3)))(vue@3.5.39(typescript@5.9.3))':
+    dependencies:
+      vue: 3.5.39(typescript@5.9.3)
+      vue-router: 4.6.4(vue@3.5.39(typescript@5.9.3))
 
   '@rollup/rollup-android-arm-eabi@4.62.2':
     optional: true

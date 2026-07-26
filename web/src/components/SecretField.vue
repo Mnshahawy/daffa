@@ -14,9 +14,9 @@
  * the stored value byte-for-byte.
  */
 import { ref, watch } from 'vue'
-import AppIcon from './ui/AppIcon.vue'
-import BaseButton from './ui/BaseButton.vue'
-import CopyButton from './ui/CopyButton.vue'
+import { AppIcon } from '@mnshahawy/daffa-console-ui'
+import { BaseButton } from '@mnshahawy/daffa-console-ui'
+import { CopyButton } from '@mnshahawy/daffa-console-ui'
 
 const props = defineProps<{
   modelValue: string

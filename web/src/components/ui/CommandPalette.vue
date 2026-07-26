@@ -6,8 +6,8 @@ import { daffa } from '@/lib/api'
 import { allNavItems, allSettingsTabs } from '@/lib/nav'
 import { useSession } from '@/stores/session'
 import { containerStatus } from '@/lib/status'
-import AppIcon from './AppIcon.vue'
-import StatusPill from './StatusPill.vue'
+import { AppIcon } from '@mnshahawy/daffa-console-ui'
+import { StatusPill } from '@mnshahawy/daffa-console-ui'
 import type { IconName } from '@/lib/icons'
 
 /**

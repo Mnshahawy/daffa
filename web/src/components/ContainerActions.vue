@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import type { ContainerAction } from '@/lib/api'
-import { confirm } from '@/lib/confirm'
-import DropdownMenu from './DropdownMenu.vue'
-import AppIcon from './ui/AppIcon.vue'
-import BaseButton from './ui/BaseButton.vue'
+import { confirm } from '@mnshahawy/daffa-console-ui'
+import { DropdownMenu } from '@mnshahawy/daffa-console-ui'
+import { AppIcon } from '@mnshahawy/daffa-console-ui'
+import { BaseButton } from '@mnshahawy/daffa-console-ui'
 import type { IconName } from '@/lib/icons'
 
 /**

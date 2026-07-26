@@ -2,10 +2,10 @@
 import { ref, watch } from 'vue'
 import { useQueryClient } from '@tanstack/vue-query'
 import { daffa, type Stack } from '@/lib/api'
-import { toast } from '@/lib/toast'
-import { confirm } from '@/lib/confirm'
-import BaseButton from './ui/BaseButton.vue'
-import CopyButton from './ui/CopyButton.vue'
+import { toast } from '@mnshahawy/daffa-console-ui'
+import { confirm } from '@mnshahawy/daffa-console-ui'
+import { BaseButton } from '@mnshahawy/daffa-console-ui'
+import { CopyButton } from '@mnshahawy/daffa-console-ui'
 
 const props = defineProps<{ stack: Stack; canWrite: boolean }>()
 

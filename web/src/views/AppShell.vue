@@ -7,12 +7,12 @@ import { navGroups, allSettingsTabs } from '@/lib/nav'
 import { useSession } from '@/stores/session'
 import DaffaLogo from '@/components/brand/DaffaLogo.vue'
 import DaffaMark from '@/components/brand/DaffaMark.vue'
-import AppIcon from '@/components/ui/AppIcon.vue'
+import { AppIcon } from '@mnshahawy/daffa-console-ui'
 import CommandPalette from '@/components/ui/CommandPalette.vue'
-import DropdownMenu from '@/components/DropdownMenu.vue'
+import { DropdownMenu } from '@mnshahawy/daffa-console-ui'
 import ClusterSwitcher from '@/components/ClusterSwitcher.vue'
-import ThemeToggle from '@/components/ThemeToggle.vue'
-import BaseButton from '@/components/ui/BaseButton.vue'
+import { ThemeToggle } from '@mnshahawy/daffa-console-ui'
+import { BaseButton } from '@mnshahawy/daffa-console-ui'
 
 const session = useSession()
 const route = useRoute()

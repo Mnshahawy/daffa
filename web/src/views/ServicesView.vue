@@ -4,10 +4,10 @@ import { useQuery } from '@tanstack/vue-query'
 import { daffa, type Service } from '@/lib/api'
 import { useSession } from '@/stores/session'
 import { serviceStatus } from '@/lib/status'
-import PageHeader from '@/components/ui/PageHeader.vue'
-import SearchInput from '@/components/SearchInput.vue'
-import EmptyState from '@/components/ui/EmptyState.vue'
-import StatusPill from '@/components/ui/StatusPill.vue'
+import { PageHeader } from '@mnshahawy/daffa-console-ui'
+import { SearchInput } from '@mnshahawy/daffa-console-ui'
+import { EmptyState } from '@mnshahawy/daffa-console-ui'
+import { StatusPill } from '@mnshahawy/daffa-console-ui'
 
 const session = useSession()
 const filter = ref('')

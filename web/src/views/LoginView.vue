@@ -4,7 +4,7 @@ import { useRouter } from 'vue-router'
 import { useSession } from '@/stores/session'
 import { ApiError } from '@/lib/api'
 import DaffaMark from '@/components/brand/DaffaMark.vue'
-import BaseButton from '@/components/ui/BaseButton.vue'
+import { BaseButton } from '@mnshahawy/daffa-console-ui'
 
 const session = useSession()
 const router = useRouter()

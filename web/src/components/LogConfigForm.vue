@@ -10,9 +10,9 @@
  */
 import { computed, ref, watch } from 'vue'
 import type { LogConfig, LogConfigRequest } from '@/lib/api'
-import AppIcon from '@/components/ui/AppIcon.vue'
-import BaseButton from '@/components/ui/BaseButton.vue'
-import Select from '@/components/ui/Select.vue'
+import { AppIcon } from '@mnshahawy/daffa-console-ui'
+import { BaseButton } from '@mnshahawy/daffa-console-ui'
+import { Select } from '@mnshahawy/daffa-console-ui'
 
 const props = defineProps<{
   /** The saved config this form edits, or null when unset. */

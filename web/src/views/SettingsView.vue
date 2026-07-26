@@ -3,8 +3,8 @@ import { computed } from 'vue'
 import { RouterLink, RouterView, useRoute } from 'vue-router'
 import { settingsGroups } from '@/lib/nav'
 import { useSession } from '@/stores/session'
-import AppIcon from '@/components/ui/AppIcon.vue'
-import PageHeader from '@/components/ui/PageHeader.vue'
+import { AppIcon } from '@mnshahawy/daffa-console-ui'
+import { PageHeader } from '@mnshahawy/daffa-console-ui'
 
 const route = useRoute()
 const session = useSession()

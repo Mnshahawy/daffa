@@ -2,9 +2,9 @@
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import type { Deployment } from '@/lib/api'
 import { streamDeployment, type DeploymentEnd } from '@/lib/stream'
-import AppIcon from './ui/AppIcon.vue'
-import BaseButton from './ui/BaseButton.vue'
-import CopyButton from './ui/CopyButton.vue'
+import { AppIcon } from '@mnshahawy/daffa-console-ui'
+import { BaseButton } from '@mnshahawy/daffa-console-ui'
+import { CopyButton } from '@mnshahawy/daffa-console-ui'
 
 const props = defineProps<{ deployment: Deployment }>()
 const emit = defineEmits<{ end: [DeploymentEnd] }>()

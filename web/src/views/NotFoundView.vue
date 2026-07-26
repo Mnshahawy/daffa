@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useRoute } from 'vue-router'
-import AppIcon from '@/components/ui/AppIcon.vue'
-import BaseButton from '@/components/ui/BaseButton.vue'
+import { AppIcon } from '@mnshahawy/daffa-console-ui'
+import { BaseButton } from '@mnshahawy/daffa-console-ui'
 
 // A URL that matches no route — a mistyped path, a stale bookmark, a link to something that has
 // since been renamed. It renders INSIDE the app shell (it is an AppShell child, not a top-level

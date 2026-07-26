@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useSession } from '@/stores/session'
-import AppIcon from '@/components/ui/AppIcon.vue'
-import BaseButton from '@/components/ui/BaseButton.vue'
+import { AppIcon } from '@mnshahawy/daffa-console-ui'
+import { BaseButton } from '@mnshahawy/daffa-console-ui'
 
 // Somebody signed in successfully and holds no capability at all. That is a real state —
 // an administrator can revoke every role from an account — and it needs a page, because

@@ -23,10 +23,13 @@ on:
           - patch
 
 # contents: write cuts the tag and the Release; packages: write pushes to GHCR *and* is
-# what authenticates the npm publish to npm.pkg.github.com.
+# what authenticates the npm publish to npm.pkg.github.com; id-token: write lets npm
+# exchange the run's OIDC identity with npmjs.org (trusted publishing — no NPM_TOKEN
+# secret anywhere).
 permissions:
   contents: write
   packages: write
+  id-token: write
 
 # Serialise releases. The version is derived from the latest tag at run time, so two
 # concurrent runs would otherwise compute the same next version and race to push it.
@@ -121,6 +124,22 @@ jobs:
           version='${{ steps.version.outputs.version }}'
           npm version "${version#v}" --no-git-tag-version
           npm publish
+
+      # Second publish target: npmjs.org, where public installs are ANONYMOUS (GitHub
+      # Packages' npm endpoint demands a token even for public packages, so it can't be
+      # the only home). Auth is npm Trusted Publishing: npmjs.org is configured (package
+      # settings → Trusted Publisher) to trust THIS repo+workflow, and npm exchanges the
+      # run's OIDC token — enabled by `id-token: write` above — for a one-shot publish
+      # credential. No token secret exists; provenance is attested automatically.
+      #
+      # publishConfig in package.json pins the GitHub registry for the step above, so it
+      # is stripped here (never committed — the checkout is ephemeral). Requires npm ≥
+      # 11.5 for OIDC publishing; Node 24 ships newer.
+      - name: Publish console-ui to npmjs.org (trusted publishing)
+        working-directory: console-ui
+        run: |
+          npm pkg delete publishConfig
+          npm publish --registry https://registry.npmjs.org --access public
 
       # No QEMU: the Dockerfile builds on $BUILDPLATFORM and cross-compiles (see its header),
       # so nothing runs emulated and there is no binfmt to register.

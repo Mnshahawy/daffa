@@ -2,13 +2,16 @@ import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import { VueQueryPlugin } from '@tanstack/vue-query'
 
+import { initTheme, setAppName } from '@mnshahawy/daffa-console-ui'
+
 import App from './App.vue'
 import { router } from './router'
-import { initTheme } from './lib/theme'
 import './style.css'
 
-// Before mount, so a stored preference does not flash the wrong theme first.
-initTheme()
+setAppName('Daffa')
+// Before mount, so a stored preference does not flash the wrong theme first. The storage
+// key predates the shared kit — keeping it means existing preferences survive.
+initTheme({ storageKey: 'daffa.theme' })
 
 createApp(App)
   .use(createPinia())

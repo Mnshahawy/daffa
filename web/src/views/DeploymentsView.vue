@@ -5,11 +5,11 @@ import { daffa, type DeploymentStatus as Status } from '@/lib/api'
 import { ago, absolute, actionLabel, duration, shortSha } from '@/lib/format'
 import { deploymentStatus } from '@/lib/status'
 import { useSession } from '@/stores/session'
-import BaseButton from '@/components/ui/BaseButton.vue'
-import EmptyState from '@/components/ui/EmptyState.vue'
-import PageHeader from '@/components/ui/PageHeader.vue'
-import Select from '@/components/ui/Select.vue'
-import StatusPill from '@/components/ui/StatusPill.vue'
+import { BaseButton } from '@mnshahawy/daffa-console-ui'
+import { EmptyState } from '@mnshahawy/daffa-console-ui'
+import { PageHeader } from '@mnshahawy/daffa-console-ui'
+import { Select } from '@mnshahawy/daffa-console-ui'
+import { StatusPill } from '@mnshahawy/daffa-console-ui'
 
 // The cross-stack feed.
 //
