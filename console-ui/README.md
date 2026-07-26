@@ -1,4 +1,4 @@
-# daffa-console-ui
+# @mnshahawy/daffa-console-ui
 
 The shared component kit for Daffa-family operations consoles — Daffa itself
 and any other single-binary Go + Vue console that wants the same grammar: quiet chrome,
@@ -32,11 +32,21 @@ keeps full tree-shaking.
 
 ## Using it
 
+Published to the **GitHub Packages** npm registry, not npmjs.com, so the scope has to be
+pointed at it — and GitHub Packages requires a token even for reading a public package.
+A personal access token with `read:packages` is enough; in CI, `GITHUB_TOKEN` works.
+
+```ini
+# .npmrc (consumer, next to package.json)
+@mnshahawy:registry=https://npm.pkg.github.com
+//npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}
+```
+
 ```jsonc
 // package.json (published) …
-"dependencies": { "daffa-console-ui": "^0.1.0" }
-// … or, inside this repo / a sibling checkout:
-"dependencies": { "daffa-console-ui": "file:../daffa/console-ui" }
+"dependencies": { "@mnshahawy/daffa-console-ui": "^0.1.0" }
+// … or, inside this repo / a sibling checkout (no registry, no token):
+"dependencies": { "@mnshahawy/daffa-console-ui": "file:../daffa/console-ui" }
 ```
 
 App stylesheet (order matters — tokens and fonts are plain CSS, `base.css` needs Tailwind):
@@ -53,12 +63,12 @@ App stylesheet (order matters — tokens and fonts are plain CSS, `base.css` nee
   --ui-hue-rail: 275;
 }
 
-@import 'daffa-console-ui/styles/tokens.css';
-@import 'daffa-console-ui/styles/fonts.css';
-@import 'daffa-console-ui/styles/base.css';
+@import '@mnshahawy/daffa-console-ui/styles/tokens.css';
+@import '@mnshahawy/daffa-console-ui/styles/fonts.css';
+@import '@mnshahawy/daffa-console-ui/styles/base.css';
 
 /* Tailwind must scan the package source for the utilities its components use. */
-@source '../node_modules/daffa-console-ui/src';
+@source '../node_modules/@mnshahawy/daffa-console-ui/src';
 
 @theme {
   --font-sans: 'IBM Plex Sans Variable', ui-sans-serif, system-ui, sans-serif;
@@ -69,7 +79,7 @@ App stylesheet (order matters — tokens and fonts are plain CSS, `base.css` nee
 App startup:
 
 ```ts
-import { initTheme, setAppName } from 'daffa-console-ui'
+import { initTheme, setAppName } from '@mnshahawy/daffa-console-ui'
 
 setAppName('Diwan')
 initTheme({ storageKey: 'diwan.theme' })
@@ -85,6 +95,8 @@ it names a domain noun (container, mailbox, cell), it does not belong here.
 
 ## Versioning / publishing
 
-Published to npm from this repo's release workflow alongside the Daffa image, under the
-same version number. Consumers pin a caret range; breaking component API changes are a
-major bump like anywhere else.
+Published to GitHub Packages from this repo's release workflow alongside the Daffa image,
+under the same version number, authenticated with the workflow's own `GITHUB_TOKEN` — there
+is no npm publish secret to rotate, and the package is owned by the repository that builds
+it. Consumers pin a caret range; breaking component API changes are a major bump like
+anywhere else.

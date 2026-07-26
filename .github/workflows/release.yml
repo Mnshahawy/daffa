@@ -1,8 +1,10 @@
 name: Release
 
-# Manual only. A release cuts a tag, builds the multi-arch image, pushes it to GHCR, and
-# opens a GitHub Release. Nothing here fires on push — a tag exists because someone chose
-# to ship, not because a commit landed.
+# Manual only. A release cuts a tag, publishes console-ui to the GitHub Packages npm
+# registry, builds the multi-arch images, pushes them to GHCR, and opens a GitHub Release.
+# Everything lands under the one repository's packages, on the one GITHUB_TOKEN. Nothing
+# here fires on push — a tag exists because someone chose to ship, not because a commit
+# landed.
 #
 # The operator picks a bump type; the next version is derived from the latest tag, so there
 # is no hand-typed version to fat-finger. This cuts stable releases only — there is no
@@ -20,7 +22,8 @@ on:
           - minor
           - patch
 
-# contents: write cuts the tag and the Release; packages: write pushes to GHCR.
+# contents: write cuts the tag and the Release; packages: write pushes to GHCR *and* is
+# what authenticates the npm publish to npm.pkg.github.com.
 permissions:
   contents: write
   packages: write
@@ -91,26 +94,25 @@ jobs:
           git tag -a "$version" -m "Daffa $version"
           git push origin "$version"
 
-      # Publish console-ui (the shared Vue component kit under console-ui/) to npm at the
-      # same version as the release, so a console pinning daffa-console-ui@X.Y.Z and an
-      # operator running ghcr image vX.Y.Z are talking about the same commit. The package
-      # ships as source (no build), so this is a type-check + a version stamp + a publish.
+      # Publish console-ui (the shared Vue component kit under console-ui/) to the GitHub
+      # Packages npm registry at the same version as the release, so a console pinning
+      # @mnshahawy/daffa-console-ui@X.Y.Z and an operator running ghcr image vX.Y.Z are
+      # talking about the same commit. The package ships as source (no build), so this is a
+      # type-check + a version stamp + a publish.
       #
-      # Guarded on the NPM_TOKEN secret so releases keep working before npm publishing is
-      # set up (and in forks). The version write is not committed back — the tag is the
-      # record; package.json in git deliberately stays at its placeholder version.
+      # No publish secret to provision: GitHub Packages authenticates with the run's own
+      # GITHUB_TOKEN under the `packages: write` permission already granted above for GHCR.
+      # That also pins the package to this repository — the scope MUST match the repository
+      # owner (@mnshahawy) or the registry rejects the publish. The version write is not
+      # committed back — the tag is the record; package.json in git deliberately stays at
+      # its placeholder version.
       - uses: actions/setup-node@v6
-        if: ${{ env.NPM_TOKEN != '' }}
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         with:
           node-version: 24
-          registry-url: https://registry.npmjs.org
-      - name: Publish console-ui to npm
-        if: ${{ env.NPM_TOKEN != '' }}
+          registry-url: https://npm.pkg.github.com
+      - name: Publish console-ui to GitHub Packages
         env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         working-directory: console-ui
         run: |
           corepack enable
@@ -118,7 +120,7 @@ jobs:
           pnpm run check
           version='${{ steps.version.outputs.version }}'
           npm version "${version#v}" --no-git-tag-version
-          npm publish --access public
+          npm publish
 
       # No QEMU: the Dockerfile builds on $BUILDPLATFORM and cross-compiles (see its header),
       # so nothing runs emulated and there is no binfmt to register.

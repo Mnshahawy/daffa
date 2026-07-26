@@ -1,12 +1,12 @@
 /**
- * daffa-console-ui — the shared component kit for Daffa-family operations consoles
+ * @mnshahawy/daffa-console-ui — the shared component kit for Daffa-family operations consoles
  * (Daffa, Diwan, the Amany cell-manager, …).
  *
  * Distributed as SOURCE: consumers compile the .vue files with their own Vite + vue
  * plugin, and Tailwind must scan this package for the utility classes the components
  * use — add to the app stylesheet:
  *
- *   @source '../node_modules/daffa-console-ui/src';
+ *   @source '../node_modules/@mnshahawy/daffa-console-ui/src';
  *
  * Styles are imported separately (styles/tokens.css, styles/fonts.css, styles/base.css) —
  * see styles/base.css for the exact import order.

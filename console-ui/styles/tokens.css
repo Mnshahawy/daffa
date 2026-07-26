@@ -6,19 +6,13 @@
    lightness/chroma stop, both radii, both shadows, all six status tones — ships here,
    identical for every consumer.
 
-   A consumer sets its brand BEFORE importing (custom properties resolve at computed-value
-   time, so a plain :root block anywhere in the app stylesheet works):
-
-     :root {
-       --ui-hue: 285;          /* brand accent hue        (Daffa indigo 285, Diwan lapis 258) */
-       --ui-hue-2: 198;        /* informational 2nd hue   (Daffa marine 198, Diwan sand 85)   */
-       --ui-chroma-2: 1;       /* 2nd-hue chroma multiplier (Diwan's sand wants ~0.65)        */
-       --ui-hue-neutral: 265;  /* surface/border/text tint                                     */
-       --ui-hue-rail: 275;     /* nav-rail tint                                                */
-     }
-     @import 'daffa-console-ui/styles/tokens.css';
-
-   The defaults below are Daffa's, so an import with no overrides still renders sanely.
+   A consumer re-parameterizes the brand with a plain :root block declaring --ui-hue
+   (brand accent: Daffa indigo 285, Diwan lapis 258), --ui-hue-2 (informational second
+   hue: marine 198 / sand 85), --ui-chroma-2 (second-hue chroma multiplier; sand wants
+   ~0.65), --ui-hue-neutral (surface/border/text tint) and --ui-hue-rail. Custom
+   properties resolve at computed-value time, so the block may sit before or after this
+   import. The defaults below are Daffa's, so an import with no overrides renders sanely.
+   (Prose on purpose: a literal import-example here confuses naive @import scanners.)
 
    Deliberately plain CSS: no `@theme`, no `@font-face`. Tailwind's `@theme` is not valid
    in a browser-served stylesheet, and consumers use this ramp only through `var(--color-*)`

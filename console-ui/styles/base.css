@@ -9,9 +9,9 @@
 
      @import 'tailwindcss';
      :root { --ui-hue: 285; ... }
-     @import 'daffa-console-ui/styles/tokens.css';
-     @import 'daffa-console-ui/styles/fonts.css';
-     @import 'daffa-console-ui/styles/base.css';
+     @import '@mnshahawy/daffa-console-ui/styles/tokens.css';
+     @import '@mnshahawy/daffa-console-ui/styles/fonts.css';
+     @import '@mnshahawy/daffa-console-ui/styles/base.css';
      @theme {
        --font-sans: 'IBM Plex Sans Variable', ui-sans-serif, system-ui, sans-serif;
        --font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', monospace;

@@ -1,5 +1,5 @@
 {
-  "name": "daffa-console-ui",
+  "name": "@mnshahawy/daffa-console-ui",
   "version": "0.1.0",
   "description": "Vue 3 + Tailwind v4 component kit for Daffa-family operations consoles: status vocabulary, action grammar, tokens, and the primitives (buttons, selects, dialogs, toasts, confirm) extracted from Daffa's web console.",
   "license": "Apache-2.0",
@@ -28,6 +28,9 @@
   "sideEffects": [
     "*.css"
   ],
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
   "peerDependencies": {
     "vue": "^3.5.0",
     "vue-router": "^4.5.0"
