@@ -132,14 +132,20 @@ jobs:
       # run's OIDC token — enabled by `id-token: write` above — for a one-shot publish
       # credential. No token secret exists; provenance is attested automatically.
       #
-      # publishConfig in package.json pins the GitHub registry for the step above, so it
-      # is stripped here (never committed — the checkout is ephemeral). Requires npm ≥
-      # 11.5 for OIDC publishing; Node 24 ships newer.
+      # Two registry pins must be neutralised, and for a SCOPED package both outrank a
+      # `--registry` flag: publishConfig in package.json (stripped — the checkout is
+      # ephemeral, nothing is committed) and the `@mnshahawy:registry=npm.pkg.github.com`
+      # scope mapping setup-node wrote to the runner's user npmrc for the step above. A
+      # project-level .npmrc takes precedence over user config, so the scope is remapped
+      # there for the duration of this publish. Requires npm ≥ 11.5 for OIDC; Node 24
+      # ships newer.
       - name: Publish console-ui to npmjs.org (trusted publishing)
         working-directory: console-ui
         run: |
           npm pkg delete publishConfig
-          npm publish --registry https://registry.npmjs.org --access public
+          echo "@mnshahawy:registry=https://registry.npmjs.org" > .npmrc
+          npm publish --access public
+          rm .npmrc
 
       # No QEMU: the Dockerfile builds on $BUILDPLATFORM and cross-compiles (see its header),
       # so nothing runs emulated and there is no binfmt to register.

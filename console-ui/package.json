@@ -5,7 +5,7 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Mnshahawy/daffa.git",
+    "url": "git+https://github.com/Mnshahawy/daffa.git",
     "directory": "console-ui"
   },
   "type": "module",
