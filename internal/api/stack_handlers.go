@@ -549,11 +549,44 @@ func (s *Server) swarmWarnings(ctx context.Context, stack *store.Stack, bundle *
 	if env, err := s.pool.Get(stack.EnvID); err == nil {
 		nodes = len(env.Nodes())
 	}
-	ws, err := stacks.SwarmWarnings(ctx, bundle.YAML, stack.Name, bundle.Env, nodes)
+	ws, err := stacks.SwarmWarnings(ctx, bundle.YAML, stack.Name, bundle.Env, nodes,
+		s.daffaSyncedVolumes(ctx, stack.EnvID))
 	if err != nil {
 		return nil
 	}
 	return ws
+}
+
+// daffaSyncedVolumes is every volume on this environment whose contents Daffa itself
+// mirrors to every node: cert, fleet and keyring deliveries, and volume sources. For these
+// the node-local warning is a false alarm — whichever node a task lands on, the reconciler
+// has already written the same files there (a brand-new node is covered by the next sweep),
+// and the source of truth is Daffa's database, not any one node's copy. Best-effort on
+// purpose: a store error here loses an exemption, never a warning.
+func (s *Server) daffaSyncedVolumes(ctx context.Context, envID string) map[string]bool {
+	envs := []string{envID}
+	out := map[string]bool{}
+	if list, err := s.store.ListCertDeliveries(ctx, false, envs); err == nil {
+		for _, d := range list {
+			out[d.Volume] = true
+		}
+	}
+	if list, err := s.store.ListFleetDeliveries(ctx, false, envs); err == nil {
+		for _, d := range list {
+			out[d.Volume] = true
+		}
+	}
+	if list, err := s.store.ListKeyringDeliveries(ctx, false, envs); err == nil {
+		for _, d := range list {
+			out[d.Volume] = true
+		}
+	}
+	if list, err := s.store.ListVolumeSources(ctx, false, envs); err == nil {
+		for _, v := range list {
+			out[v.Volume] = true
+		}
+	}
+	return out
 }
 
 // stack returns the stack this request is about.

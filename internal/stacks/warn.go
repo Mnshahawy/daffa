@@ -40,7 +40,18 @@ type Warning struct {
 // Daffa already parses the compose file, so it can just SAY SO. Not refuse — say so, at deploy
 // time, in the log, and on the stack page. It costs one walk over the parsed services and it will
 // one day save somebody's database.
-func SwarmWarnings(ctx context.Context, yaml, projectName string, env []EnvVar, nodes int) ([]Warning, error) {
+// # The exemption
+//
+// synced names the volumes on this environment whose CONTENTS DAFFA ITSELF mirrors to every
+// node — cert, fleet and keyring deliveries, and volume sources. For those the trap cannot
+// spring: whichever machine a task lands on, the reconciler has already written the same
+// files there, and the source of truth is Daffa's database rather than any one node's copy.
+// Warning about them anyway is how a warning becomes something people learn to scroll past.
+//
+// Matching is by the RESOLVED engine name, not the compose key: a delivery's volume is only
+// reached through `external: true` (or an explicit `name:`), so a same-keyed volume WITHOUT
+// that is a different, project-prefixed volume — node-local for real — and keeps its warning.
+func SwarmWarnings(ctx context.Context, yaml, projectName string, env []EnvVar, nodes int, synced map[string]bool) ([]Warning, error) {
 	envMap := map[string]string{}
 	for _, v := range env {
 		envMap[v.Key] = v.Value
@@ -62,6 +73,7 @@ func SwarmWarnings(ctx context.Context, yaml, projectName string, env []EnvVar, 
 	var out []Warning
 	for name, svc := range project.Services {
 		vols := namedVolumes(svc)
+		vols = withoutSynced(vols, project, synced)
 		if len(vols) == 0 {
 			continue
 		}
@@ -90,6 +102,27 @@ func namedVolumes(svc types.ServiceConfig) []string {
 		}
 	}
 	sort.Strings(out)
+	return out
+}
+
+// withoutSynced drops the volumes Daffa mirrors to every node, resolving each compose key
+// to the engine name the deliveries are registered under. The per-volume filter is the
+// point: a service mounting the certs volume AND its own pgdata must still be warned —
+// about pgdata alone.
+func withoutSynced(vols []string, project *types.Project, synced map[string]bool) []string {
+	if len(synced) == 0 {
+		return vols
+	}
+	out := vols[:0]
+	for _, src := range vols {
+		name := src
+		if v, ok := project.Volumes[src]; ok && v.Name != "" {
+			name = v.Name
+		}
+		if !synced[name] {
+			out = append(out, src)
+		}
+	}
 	return out
 }
 

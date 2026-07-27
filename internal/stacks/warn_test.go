@@ -25,7 +25,7 @@ services:
 volumes:
   pgdata:
 `
-	ws, err := SwarmWarnings(context.Background(), yaml, "shop", nil, 3)
+	ws, err := SwarmWarnings(context.Background(), yaml, "shop", nil, 3, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +63,7 @@ services:
 volumes:
   pgdata:
 `
-	ws, err := SwarmWarnings(context.Background(), yaml, "shop", nil, 3)
+	ws, err := SwarmWarnings(context.Background(), yaml, "shop", nil, 3, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ services:
     volumes:
       - /scratch
 `
-	ws, err := SwarmWarnings(context.Background(), yaml, "shop", nil, 3)
+	ws, err := SwarmWarnings(context.Background(), yaml, "shop", nil, 3, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +111,7 @@ services:
 volumes:
   pgdata:
 `
-	ws, err := SwarmWarnings(context.Background(), yaml, "shop", nil, 1)
+	ws, err := SwarmWarnings(context.Background(), yaml, "shop", nil, 1, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,5 +126,61 @@ volumes:
 	if strings.Contains(ws[0].Text, "will NOT find its data") {
 		t.Errorf("the single-node warning claims today's data is in danger. It is not, and a "+
 			"warning that overstates gets switched off:\n%s", ws[0].Text)
+	}
+}
+
+// A volume Daffa itself syncs — a cert, fleet or keyring delivery, or a volume source — is
+// mirrored to EVERY node, so the trap cannot spring and the warning would be a false alarm.
+// The filter is per-volume: a service mounting the delivered certs AND its own pgdata is
+// still warned, about pgdata alone. And the match is by resolved engine name: a same-keyed
+// volume withOUT `external: true` is a different, project-prefixed volume — node-local for
+// real — and keeps its warning.
+func TestDaffaSyncedVolumesAreNotTheTrap(t *testing.T) {
+	yaml := `
+services:
+  db:
+    image: postgres:16
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - certs:/certs:ro
+  proxy:
+    image: nginx
+    volumes:
+      - certs:/certs:ro
+volumes:
+  pgdata:
+  certs:
+    external: true
+`
+	ws, err := SwarmWarnings(context.Background(), yaml, "shop", nil, 3, map[string]bool{"certs": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ws) != 1 || ws[0].Service != "db" {
+		t.Fatalf("got %+v; want exactly one warning, for db — proxy mounts only the delivered "+
+			"volume, which Daffa keeps identical on every node", ws)
+	}
+	if !strings.Contains(ws[0].Text, `"pgdata"`) || strings.Contains(ws[0].Text, `"certs"`) {
+		t.Errorf("db's warning must name pgdata and not the delivered certs volume:\n%s", ws[0].Text)
+	}
+
+	// The homonym: same compose key, but not external — compose prefixes it to shop_certs,
+	// which is NOT the volume the delivery writes. Exempting it would hide a real trap.
+	local := `
+services:
+  proxy:
+    image: nginx
+    volumes:
+      - certs:/certs:ro
+volumes:
+  certs:
+`
+	ws, err = SwarmWarnings(context.Background(), local, "shop", nil, 3, map[string]bool{"certs": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ws) != 1 {
+		t.Fatalf("a project-prefixed volume that merely shares the delivery's compose key was "+
+			"exempted: %+v — shop_certs is node-local for real", ws)
 	}
 }
