@@ -164,6 +164,8 @@ var (
 	CertsEdit = Cap{NSCerts, 1 << 1}
 	KeysView  = Cap{NSCerts, 1 << 2}
 	KeysEdit  = Cap{NSCerts, 1 << 3}
+	FleetView = Cap{NSCerts, 1 << 4}
+	FleetEdit = Cap{NSCerts, 1 << 5}
 
 	// ── keyrings ────────────────────────────────────────────────────────────────
 	KeyringsView = Cap{NSKeyrings, 1 << 0}
@@ -365,6 +367,15 @@ var All = []Def{
 
 	{KeysView, "keys.view", "keys", ModeView, ScopeEnv, "See backup encryption keys: their names and public halves. The private halves do not exist on the server."},
 	{KeysEdit, "keys.edit", "keys", ModeEdit, ScopeGlobal, "Generate and import backup encryption keys. The private half is downloaded once at generation and never stored."},
+
+	// Fleet deliveries compose certificates FROM ANY environment into one volume on a
+	// consumer's cluster (docs/fleet-deliveries.md). Their EDIT is deliberately not
+	// certs.edit: carrying another environment's client identity into a volume is a
+	// distinct trust from minting certificates, and an administrator should be able to
+	// grant either without the other. VIEW follows the area's rule — env-grantable,
+	// names and sync state only, never material.
+	{FleetView, "fleet.view", "fleet", ModeView, ScopeEnv, "See fleet deliveries — which certificates and roots they carry, where they land, and their sync status. Never a private key."},
+	{FleetEdit, "fleet.edit", "fleet", ModeEdit, ScopeGlobal, "Create and edit fleet deliveries, which compose certificates and trust from any environment into one volume. Cross-environment key material moves on this bit, so it is fleet-wide."},
 
 	// ── keyrings ────────────────────────────────────────────────────────────────
 	//

@@ -1095,6 +1095,56 @@ ALTER TABLE cert_authorities ADD COLUMN outbound_trust INTEGER NOT NULL DEFAULT 
 	// every run record and key grant. Rename the parent aside, rebuild both children onto the new
 	// one, and only then drop the orphan.
 	{name: "0014_backup_job_env_name", fn: migrateBackupJobEnvName},
+
+	// Fleet deliveries: a SEPARATE delivery entity that composes certificates from ANY
+	// environment — plus per-group trust bundles — into one volume on a consumer's cluster
+	// (see fleet-deliveries.md; Wali is the worked example). Deliberately not more columns
+	// on cert_deliveries: that entity's contract is "material stays inside its own
+	// environment", and the fleet case is the sanctioned exception, behind its own
+	// capability (fleet.edit), its own routes and its own volume manifest.
+	//
+	// A GROUP is one subdirectory of the volume ('' = the volume root): the certificates
+	// that land there and the roots its ca-bundle.crt carries. bundle_cas '' means DERIVED
+	// from the group's certificates' issuing CAs — not "all managed CAs" as it does on
+	// cert_deliveries: a fleet volume aggregates many trust domains, and the full-bundle
+	// default would hand every consumer every root precisely where trust is being kept
+	// apart on purpose.
+	//
+	// No ON DELETE CASCADE surprises here: all three tables are new, and the certificates
+	// FK cascade is wanted — an entry for a deleted certificate delivers nothing and means
+	// nothing (deletion of a still-carried cert is refused in the handler via
+	// CertificateInUse; the cascade is for env deletion taking its certs with it).
+	{name: "0015_fleet_deliveries", sql: `
+CREATE TABLE fleet_deliveries (
+    id              TEXT PRIMARY KEY,
+    env_id          TEXT NOT NULL REFERENCES environments (id) ON DELETE CASCADE,
+    volume          TEXT NOT NULL DEFAULT 'daffa-fleet-certs',
+    uid             INTEGER NOT NULL DEFAULT 0,
+    gid             INTEGER NOT NULL DEFAULT 0,
+    restart_targets TEXT NOT NULL DEFAULT '',   -- space-separated container names; empty = consumer hot-reloads
+    synced_hash     TEXT NOT NULL DEFAULT '',
+    synced_at       TEXT,
+    status          TEXT NOT NULL DEFAULT 'pending', -- pending | ok | error
+    last_error      TEXT NOT NULL DEFAULT '',
+    created_at      TEXT NOT NULL,
+    created_by      TEXT
+);
+CREATE INDEX fleet_deliveries_env_idx ON fleet_deliveries (env_id);
+
+CREATE TABLE fleet_delivery_groups (
+    delivery_id TEXT NOT NULL REFERENCES fleet_deliveries (id) ON DELETE CASCADE,
+    subdir      TEXT NOT NULL,                  -- '' = the volume root; else one slug-safe path level
+    bundle_cas  TEXT NOT NULL DEFAULT '',       -- space-separated CA ids; '' = derived from the group's issuers
+    PRIMARY KEY (delivery_id, subdir)
+);
+
+CREATE TABLE fleet_delivery_certs (
+    delivery_id TEXT NOT NULL REFERENCES fleet_deliveries (id) ON DELETE CASCADE,
+    cert_id     TEXT NOT NULL REFERENCES certificates (id) ON DELETE CASCADE,
+    subdir      TEXT NOT NULL,
+    PRIMARY KEY (delivery_id, cert_id)          -- a certificate appears once per delivery, in one subdir
+);
+`},
 }
 
 // migrateCertEnvScope is 0009: certificates gain a nullable env_id and lose global name

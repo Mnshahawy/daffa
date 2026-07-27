@@ -1081,6 +1081,41 @@ func (s *Server) apiRoutes() []route {
 		{pattern: "DELETE /api/certs/deliveries/{id}", cap: caps.CertsEdit, scope: scopeGlobal, h: s.handleDeleteCertDelivery,
 			resp: map[string]string(nil), ts: "deleteCertDelivery"},
 
+		// Fleet deliveries compose certificates from ANY environment — grouped into
+		// subdirectories, each with its own trust bundle — into one volume on the
+		// CONSUMER's environment (fleet-deliveries.md). Their own capability, not
+		// certs.*: composing cross-environment key material is a distinct trust from
+		// minting certificates. View follows the consumer env's visibility; every
+		// mutation is global-only, so no mayUseEnv — whoever passes the guard holds
+		// fleet.edit everywhere.
+		//oapi:summary List fleet deliveries and their sync state
+		//oapi:enum FleetDelivery.status pending|ok|error
+		{pattern: "GET /api/certs/fleet-deliveries", cap: caps.FleetView, scope: scopeAny, h: s.handleListFleetDeliveries,
+			resp: []fleetDeliveryView(nil), ts: "fleetDeliveries"},
+		// The first sync runs in the background right away, like a cert delivery's.
+		// bundle_cas empty = the group's trust is DERIVED from its certificates' issuers.
+		//oapi:summary Create a fleet delivery of cross-environment certificates into a volume
+		//oapi:example req {"env_id": "env_box", "volume": "wali-fleet-certs", "groups": [{"subdir": "eu-west-prod", "certs": ["crt_1"]}, {"subdir": "eu-west-staging", "certs": ["crt_2"], "bundle_cas": ["ca_staging"]}]}
+		{pattern: "POST /api/certs/fleet-deliveries", cap: caps.FleetEdit, scope: scopeGlobal, h: s.handleCreateFleetDelivery,
+			req: fleetDeliveryRequest{}, resp: fleetDeliveryView{}, ts: "createFleetDelivery"},
+		// Editable state only: the environment and the volume are what the consumer's
+		// mount is keyed on, so moving either is a new delivery rather than an edit.
+		//oapi:summary Replace a fleet delivery's groups and write options
+		//oapi:example req {"groups": [{"subdir": "eu-west-prod", "certs": ["crt_1"]}]}
+		{pattern: "PUT /api/certs/fleet-deliveries/{id}", cap: caps.FleetEdit, scope: scopeGlobal, h: s.handleUpdateFleetDelivery,
+			req: fleetDeliveryRequest{}, resp: fleetDeliveryView{}, ts: "updateFleetDelivery"},
+		// Synchronous, and forced — the cert-delivery reasoning verbatim.
+		//oapi:summary Sync a fleet delivery now and answer with the outcome
+		//oapi:noreq
+		{pattern: "POST /api/certs/fleet-deliveries/{id}/sync", cap: caps.FleetEdit, scope: scopeGlobal, h: s.handleSyncFleetDelivery,
+			resp: fleetDeliveryView{}, ts: "syncFleetDelivery"},
+		// The volume and its contents are left in place: the consumer may still be
+		// running on them, and deleting key material out from under it is a worse
+		// surprise than a stale file.
+		//oapi:summary Delete a fleet delivery, leaving the volume's files in place
+		{pattern: "DELETE /api/certs/fleet-deliveries/{id}", cap: caps.FleetEdit, scope: scopeGlobal, h: s.handleDeleteFleetDelivery,
+			resp: map[string]string(nil), ts: "deleteFleetDelivery"},
+
 		// Backup encryption keys. The one response in Daffa that ever carries a private
 		// key is the generate response, once — see handleCreateKey.
 		//oapi:summary List encryption keys — public age recipients only

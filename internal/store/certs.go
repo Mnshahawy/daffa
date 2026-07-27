@@ -135,13 +135,17 @@ func (s *Store) UpdateCertAuthority(ctx context.Context, ca *CertAuthority) erro
 // select it into their bundle, so deletion can be refused instead of orphaning either —
 // a CA deleted out of a selection would silently shrink what its consumers trust.
 func (s *Store) CertAuthorityInUse(ctx context.Context, id string) (int, error) {
-	var leaves, selected int
+	var leaves, selected, fleet int
 	if err := s.queryRow(ctx, `SELECT COUNT(*) FROM certificates WHERE ca_id = ?`, id).Scan(&leaves); err != nil {
 		return 0, err
 	}
-	err := s.queryRow(ctx, `SELECT COUNT(*) FROM cert_deliveries
-        WHERE (' ' || bundle_cas || ' ') LIKE ('% ' || ? || ' %')`, id).Scan(&selected)
-	return leaves + selected, err
+	if err := s.queryRow(ctx, `SELECT COUNT(*) FROM cert_deliveries
+        WHERE (' ' || bundle_cas || ' ') LIKE ('% ' || ? || ' %')`, id).Scan(&selected); err != nil {
+		return 0, err
+	}
+	err := s.queryRow(ctx, `SELECT COUNT(*) FROM fleet_delivery_groups
+        WHERE (' ' || bundle_cas || ' ') LIKE ('% ' || ? || ' %')`, id).Scan(&fleet)
+	return leaves + selected + fleet, err
 }
 
 func (s *Store) DeleteCertAuthority(ctx context.Context, id string) error {
@@ -305,12 +309,15 @@ func (s *Store) UpdateCertificate(ctx context.Context, c *Certificate) error {
 	return err
 }
 
-// CertificateInUse counts deliveries carrying this cert, so deletion can be refused while
-// something still consumes it.
+// CertificateInUse counts deliveries carrying this cert — certificate and fleet alike —
+// so deletion can be refused while something still consumes it.
 func (s *Store) CertificateInUse(ctx context.Context, id string) (int, error) {
-	var n int
-	err := s.queryRow(ctx, `SELECT COUNT(*) FROM cert_delivery_certs WHERE cert_id = ?`, id).Scan(&n)
-	return n, err
+	var n, fleet int
+	if err := s.queryRow(ctx, `SELECT COUNT(*) FROM cert_delivery_certs WHERE cert_id = ?`, id).Scan(&n); err != nil {
+		return 0, err
+	}
+	err := s.queryRow(ctx, `SELECT COUNT(*) FROM fleet_delivery_certs WHERE cert_id = ?`, id).Scan(&fleet)
+	return n + fleet, err
 }
 
 func (s *Store) DeleteCertificate(ctx context.Context, id string) error {

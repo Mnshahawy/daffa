@@ -12,10 +12,12 @@ import { AppIcon } from '@mnshahawy/daffa-console-ui'
 import { BaseButton } from '@mnshahawy/daffa-console-ui'
 import { EmptyState } from '@mnshahawy/daffa-console-ui'
 import { StatusPill } from '@mnshahawy/daffa-console-ui'
+import FleetDeliveries from '@/components/FleetDeliveries.vue'
 
 // The GLOBAL half of the certificate machinery: CA roots (rotation touches every
-// cluster) and backup encryption keys (no env dimension at all). The certificates the
-// roots sign live on the cluster-scoped Certificates page.
+// cluster), backup encryption keys (no env dimension at all), and fleet deliveries
+// (cross-cluster by definition). The certificates the roots sign live on the
+// cluster-scoped Certificates page.
 
 const session = useSession()
 const qc = useQueryClient()
@@ -480,5 +482,8 @@ async function onRemoveKey(k: EncryptionKey) {
       </div>
       <p v-else-if="!addingKey" class="muted text-sm">No encryption keys yet.</p>
     </section>
+
+    <!-- ── fleet deliveries ────────────────────────────────────────────────── -->
+    <FleetDeliveries v-if="session.canAnywhere(Cap.FleetView)" />
   </div>
 </template>

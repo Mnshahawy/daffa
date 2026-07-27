@@ -994,6 +994,49 @@ export interface DeliveryCertRequest {
   is_default?: boolean
 }
 
+export interface FleetDelivery {
+  id: string
+  env_id: string
+  env_name?: string
+  volume: string
+  uid: number
+  gid: number
+  restart_targets?: string
+  groups: FleetGroup[]
+  status: 'pending' | 'ok' | 'error'
+  last_error?: string
+  synced_at?: string
+}
+
+export interface FleetGroup {
+  subdir: string
+  bundle_cas?: string[]
+  derived_cas?: string[]
+  certs: FleetCert[]
+}
+
+export interface FleetCert {
+  cert_id: string
+  cert_name?: string
+  env_id?: string
+  env_name?: string
+}
+
+export interface FleetDeliveryRequest {
+  env_id?: string
+  volume?: string
+  uid?: number
+  gid?: number
+  restart_targets?: string
+  groups?: FleetGroupRequest[]
+}
+
+export interface FleetGroupRequest {
+  subdir?: string
+  bundle_cas?: string[]
+  certs?: string[]
+}
+
 export interface EncryptionKey {
   id: string
   name: string
@@ -1475,6 +1518,15 @@ export const daffa = {
     api.put<CertDelivery>(`/api/certs/deliveries/${id}`, body),
   syncCertDelivery: (id: string) => api.post<CertDelivery>(`/api/certs/deliveries/${id}/sync`),
   deleteCertDelivery: (id: string) => api.del<Record<string, string>>(`/api/certs/deliveries/${id}`),
+  fleetDeliveries: () => api.get<FleetDelivery[]>('/api/certs/fleet-deliveries'),
+  createFleetDelivery: (body: FleetDeliveryRequest) =>
+    api.post<FleetDelivery>('/api/certs/fleet-deliveries', body),
+  updateFleetDelivery: (id: string, body: FleetDeliveryRequest) =>
+    api.put<FleetDelivery>(`/api/certs/fleet-deliveries/${id}`, body),
+  syncFleetDelivery: (id: string) =>
+    api.post<FleetDelivery>(`/api/certs/fleet-deliveries/${id}/sync`),
+  deleteFleetDelivery: (id: string) =>
+    api.del<Record<string, string>>(`/api/certs/fleet-deliveries/${id}`),
   encryptionKeys: () => api.get<EncryptionKey[]>('/api/keys'),
   createKey: (body: KeyRequest) => api.post<CreatedKey>('/api/keys', body),
   deleteKey: (id: string) => api.del<Record<string, string>>(`/api/keys/${id}`),

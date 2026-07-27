@@ -21,6 +21,14 @@ const ManifestName = ".daffa-manifest"
 // fragment. See mixed-config-volumes.md.
 const ManifestCerts = ".daffa-certs-manifest"
 
+// ManifestFleet is the same mechanism for the third writer: a FLEET delivery
+// (fleet-deliveries.md). Its own filename is what makes the fleet delivery's pruning
+// blind to the other writers' files — though fleet and certificate deliveries still
+// refuse to share a volume at all (both write ca-bundle.crt-shaped content, and two
+// hash-reconciled writers of one filename would rewrite each other forever, both
+// reporting ok). Volume sources may share; the filename clash is refused at save/sync.
+const ManifestFleet = ".daffa-fleet-manifest"
+
 // Manifest builds the manifest content. Names are the delivered files, manifest excluded
 // (it is always rewritten, so listing it would only mean never deleting it — same result,
 // less honest a list).

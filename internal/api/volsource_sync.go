@@ -162,6 +162,9 @@ func (s *Server) refuseDeliveryFileClash(ctx context.Context, v *store.VolumeSou
 	if err := s.refuseDeliveryOwnedNames(ctx, v.EnvID, v.Volume, names); err != nil {
 		return fmt.Errorf("the subtree contains a file that clashes: %w", err)
 	}
+	if err := s.refuseFleetOwnedNames(ctx, v.EnvID, v.Volume, names); err != nil {
+		return fmt.Errorf("the subtree contains a file that clashes: %w", err)
+	}
 	return nil
 }
 
@@ -216,6 +219,13 @@ func (s *Server) syncStackVolumeSources(ctx context.Context, stack *store.Stack)
 		// is the join key: a delivery needs no link to the stack to be found this way.
 		for _, d := range s.deliveriesForVolume(ctx, v.EnvID, v.Volume) {
 			if err := s.reportDeliverySync(ctx, d); err != nil {
+				errs = append(errs, fmt.Sprintf("%s: %v", v.Volume, err))
+			}
+		}
+		// The fleet counterpart of the same fresh-node race: a consumer must not come up
+		// against its config present and its client material missing until the next sweep.
+		if fd, err := s.store.FleetDeliveryForVolume(ctx, v.EnvID, v.Volume); err == nil {
+			if err := s.reportFleetDeliverySync(ctx, fd); err != nil {
 				errs = append(errs, fmt.Sprintf("%s: %v", v.Volume, err))
 			}
 		}

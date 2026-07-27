@@ -263,12 +263,13 @@ export const settingsGroups: { title: string; items: SettingsTab[] }[] = [
         icon: 'database',
       },
       // The certificates themselves live on the cluster-scoped rail page; what remains
-      // here is the GLOBAL material — CA roots (rotation touches every cluster) and
-      // backup encryption keys (no env dimension at all).
+      // here is the GLOBAL material — CA roots (rotation touches every cluster), backup
+      // encryption keys (no env dimension at all), and fleet deliveries (cross-cluster
+      // by definition).
       {
         name: 'settings-certificates',
         label: 'Authorities',
-        hint: 'Internal CA roots, rotation, and backup encryption keys',
+        hint: 'Internal CA roots, rotation, encryption keys, and fleet deliveries',
         cap: Cap.CertsView,
         icon: 'shield',
       },

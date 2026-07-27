@@ -729,3 +729,77 @@ func TestMigrate0014OnPopulatedPostgres(t *testing.T) {
 		t.Errorf("IsDuplicate did not recognise the Postgres collision: %v", err)
 	}
 }
+
+// 0015 only creates tables, so unlike the rebuild migrations it cannot mangle old rows —
+// what a populated run proves instead is that the new FKs point at the REAL 0014-era
+// parents (a fresh-schema run would also pass with FKs against a parent that never
+// existed in the wild) and that the cascades cut where intended: env deletion takes the
+// delivery, certificate deletion takes the join row and nothing else.
+func TestMigrate0015FleetDeliveries(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	url := "sqlite://" + filepath.Join(dir, "test.db")
+
+	stopAfter = "0014_backup_job_env_name"
+	defer func() { stopAfter = "" }()
+
+	s, err := Open(ctx, url)
+	if err != nil {
+		t.Fatalf("open at 0014: %v", err)
+	}
+	defer s.Close()
+
+	// A populated 0014 world: two envs, a CA, an env-scoped leaf in each, and an ordinary
+	// certificate delivery that 0015 must leave untouched.
+	prod, staging, prodCA, _, prodLeaf, stagingLeaf := fleetWorld(t, s)
+	dlv := &CertDelivery{EnvID: prod.ID, Volume: "edge-certs",
+		Certs: []DeliveryCert{{CertID: prodLeaf.ID, IsDefault: true}}}
+	if err := s.CreateCertDelivery(ctx, dlv); err != nil {
+		t.Fatal(err)
+	}
+
+	stopAfter = ""
+	if err := s.migrate(ctx); err != nil {
+		t.Fatalf("migrating to 0015: %v", err)
+	}
+
+	fd := &FleetDelivery{EnvID: prod.ID, Volume: "wali-fleet-certs",
+		Groups: []FleetGroup{
+			{Subdir: "eu-west-prod", BundleCAs: prodCA.ID, CertIDs: []string{prodLeaf.ID}},
+			{Subdir: "eu-west-staging", CertIDs: []string{stagingLeaf.ID}},
+		}}
+	if err := s.CreateFleetDelivery(ctx, fd); err != nil {
+		t.Fatalf("creating a fleet delivery on the migrated schema: %v", err)
+	}
+
+	// Certificate cascade: staging's leaf goes away with staging's env, and with it the
+	// join row — but the delivery and its group survive (the group may still carry an
+	// explicit bundle worth keeping, and an empty group is visible where a vanished one
+	// would be a silent hole in the volume).
+	if err := s.DeleteEnvironment(ctx, staging.ID); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.FleetDeliveryByID(ctx, fd.ID)
+	if err != nil {
+		t.Fatalf("the fleet delivery did not survive a SOURCE env deletion: %v", err)
+	}
+	if len(got.Groups) != 2 {
+		t.Fatalf("got %d groups after source-env deletion; want 2", len(got.Groups))
+	}
+	if n := len(got.Groups[1].CertIDs); n != 0 {
+		t.Errorf("the staging group still carries %d certs after staging was deleted", n)
+	}
+
+	// Consumer-env cascade: the delivery lives where its volume lives.
+	if err := s.DeleteEnvironment(ctx, prod.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.FleetDeliveryByID(ctx, fd.ID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("the fleet delivery survived its consumer env: %v", err)
+	}
+	var orphans int
+	if err := s.queryRow(ctx,
+		`SELECT COUNT(*) FROM fleet_delivery_groups`).Scan(&orphans); err != nil || orphans != 0 {
+		t.Errorf("groups after consumer-env deletion = %d, %v; want 0", orphans, err)
+	}
+}

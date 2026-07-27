@@ -195,6 +195,10 @@ func (s *Server) applyVolumeSourceRequest(w http.ResponseWriter, r *http.Request
 			httpx.Fail(w, r, http.StatusConflict, "delivery_owns_file", err.Error())
 			return false
 		}
+		if err := s.refuseFleetOwnedNames(r.Context(), v.EnvID, v.Volume, names); err != nil {
+			httpx.Fail(w, r, http.StatusConflict, "delivery_owns_file", err.Error())
+			return false
+		}
 		// An inline source has no repository to push to, so git fields and the push-driven
 		// webhook are meaningless — clear them rather than store a lie.
 		v.GitURL, v.GitRef, v.GitPath, v.GitCredentialID = "", "", "", ""

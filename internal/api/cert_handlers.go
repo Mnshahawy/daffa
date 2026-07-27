@@ -465,6 +465,10 @@ func (s *Server) handleActivateCA(w http.ResponseWriter, r *http.Request) {
 			httpx.Error(w, r, err)
 			return
 		}
+		if err := s.store.ReplaceCAInFleetBundles(r.Context(), old.ID, next.ID); err != nil {
+			httpx.Error(w, r, err)
+			return
+		}
 	}
 
 	target := next.Name

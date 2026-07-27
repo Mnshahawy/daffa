@@ -49,6 +49,16 @@
     "bit": 0,
     "scope": "env"
   },
+  "fleet.edit": {
+    "ns": "certs",
+    "bit": 5,
+    "scope": "global"
+  },
+  "fleet.view": {
+    "ns": "certs",
+    "bit": 4,
+    "scope": "env"
+  },
   "gitcreds.edit": {
     "ns": "deploy",
     "bit": 5,

@@ -74,6 +74,18 @@ func (s *Server) certSweep(ctx context.Context) {
 			slog.Warn("cert delivery sync failed", "delivery", d.ID, "volume", d.Volume, "err", err)
 		}
 	}
+	// Fleet deliveries converge on the same sweep — this is what carries a source
+	// environment's renewal or rotation into consumer volumes in OTHER environments,
+	// so it must stay fleet-wide: every delivery, not the changed cert's own env.
+	fleet, err := s.store.AllFleetDeliveries(ctx)
+	if err != nil {
+		return
+	}
+	for _, d := range fleet {
+		if err := s.reportFleetDeliverySync(ctx, d); err != nil {
+			slog.Warn("fleet delivery sync failed", "delivery", d.ID, "volume", d.Volume, "err", err)
+		}
+	}
 }
 
 func (s *Server) sweepCertificates(ctx context.Context) {

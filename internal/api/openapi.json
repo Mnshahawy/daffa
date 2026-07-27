@@ -8495,6 +8495,381 @@
         }
       }
     },
+    "/api/certs/fleet-deliveries": {
+      "get": {
+        "operationId": "fleetDeliveries",
+        "tags": [
+          "certificates \u0026 encryption keys"
+        ],
+        "summary": "List fleet deliveries and their sync state",
+        "description": "Fleet deliveries compose certificates from ANY environment — grouped into subdirectories, each with its own trust bundle — into one volume on the CONSUMER's environment (fleet-deliveries.md). Their own capability, not certs.*: composing cross-environment key material is a distinct trust from minting certificates. View follows the consumer env's visibility; every mutation is global-only, so no mayUseEnv — whoever passes the guard holds fleet.edit everywhere.\n\nSatisfied by the capability held globally or on any cluster; list responses are filtered to what the caller may see.",
+        "x-daffa-capability": "fleet.view",
+        "x-daffa-scope": "any",
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/FleetDelivery"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No live session or valid token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but the capability is not held at the required scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something went wrong on the server; the audit log has the details.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createFleetDelivery",
+        "tags": [
+          "certificates \u0026 encryption keys"
+        ],
+        "summary": "Create a fleet delivery of cross-environment certificates into a volume",
+        "description": "The first sync runs in the background right away, like a cert delivery's. bundle_cas empty = the group's trust is DERIVED from its certificates' issuers.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
+        "x-daffa-capability": "fleet.edit",
+        "x-daffa-scope": "global",
+        "requestBody": {
+          "description": "Request bodies are capped at 1 MiB; unknown fields are refused.",
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FleetDeliveryRequest"
+              },
+              "example": {
+                "env_id": "env_box",
+                "volume": "wali-fleet-certs",
+                "groups": [
+                  {
+                    "subdir": "eu-west-prod",
+                    "certs": [
+                      "crt_1"
+                    ]
+                  },
+                  {
+                    "subdir": "eu-west-staging",
+                    "certs": [
+                      "crt_2"
+                    ],
+                    "bundle_cas": [
+                      "ca_staging"
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FleetDelivery"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is wrong, and the message says how to fix it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No live session or valid token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but the capability is not held at the required scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something went wrong on the server; the audit log has the details.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/certs/fleet-deliveries/{id}": {
+      "put": {
+        "operationId": "updateFleetDelivery",
+        "tags": [
+          "certificates \u0026 encryption keys"
+        ],
+        "summary": "Replace a fleet delivery's groups and write options",
+        "description": "Editable state only: the environment and the volume are what the consumer's mount is keyed on, so moving either is a new delivery rather than an edit.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
+        "x-daffa-capability": "fleet.edit",
+        "x-daffa-scope": "global",
+        "requestBody": {
+          "description": "Request bodies are capped at 1 MiB; unknown fields are refused.",
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FleetDeliveryRequest"
+              },
+              "example": {
+                "groups": [
+                  {
+                    "subdir": "eu-west-prod",
+                    "certs": [
+                      "crt_1"
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FleetDelivery"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is wrong, and the message says how to fix it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No live session or valid token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but the capability is not held at the required scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Nothing lives at that id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something went wrong on the server; the audit log has the details.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteFleetDelivery",
+        "tags": [
+          "certificates \u0026 encryption keys"
+        ],
+        "summary": "Delete a fleet delivery, leaving the volume's files in place",
+        "description": "The volume and its contents are left in place: the consumer may still be running on them, and deleting key material out from under it is a worse surprise than a stale file.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
+        "x-daffa-capability": "fleet.edit",
+        "x-daffa-scope": "global",
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No live session or valid token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but the capability is not held at the required scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Nothing lives at that id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something went wrong on the server; the audit log has the details.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/certs/fleet-deliveries/{id}/sync": {
+      "post": {
+        "operationId": "syncFleetDelivery",
+        "tags": [
+          "certificates \u0026 encryption keys"
+        ],
+        "summary": "Sync a fleet delivery now and answer with the outcome",
+        "description": "Synchronous, and forced — the cert-delivery reasoning verbatim.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
+        "x-daffa-capability": "fleet.edit",
+        "x-daffa-scope": "global",
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FleetDelivery"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No live session or valid token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but the capability is not held at the required scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Nothing lives at that id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something went wrong on the server; the audit log has the details.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/keys": {
       "get": {
         "operationId": "encryptionKeys",
@@ -15453,6 +15828,160 @@
           },
           "is_default": {
             "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "FleetDelivery": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "env_id": {
+            "type": "string"
+          },
+          "env_name": {
+            "type": "string"
+          },
+          "volume": {
+            "type": "string"
+          },
+          "uid": {
+            "type": "integer"
+          },
+          "gid": {
+            "type": "integer"
+          },
+          "restart_targets": {
+            "type": "string"
+          },
+          "groups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FleetGroup"
+            }
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "ok",
+              "error"
+            ]
+          },
+          "last_error": {
+            "type": "string"
+          },
+          "synced_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "env_id",
+          "volume",
+          "uid",
+          "gid",
+          "groups",
+          "status"
+        ]
+      },
+      "FleetGroup": {
+        "type": "object",
+        "properties": {
+          "subdir": {
+            "type": "string"
+          },
+          "bundle_cas": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "derived_cas": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "certs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FleetCert"
+            }
+          }
+        },
+        "required": [
+          "subdir",
+          "certs"
+        ]
+      },
+      "FleetCert": {
+        "type": "object",
+        "properties": {
+          "cert_id": {
+            "type": "string"
+          },
+          "cert_name": {
+            "type": "string"
+          },
+          "env_id": {
+            "type": "string"
+          },
+          "env_name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "cert_id"
+        ]
+      },
+      "FleetDeliveryRequest": {
+        "type": "object",
+        "properties": {
+          "env_id": {
+            "type": "string"
+          },
+          "volume": {
+            "type": "string"
+          },
+          "uid": {
+            "type": "integer"
+          },
+          "gid": {
+            "type": "integer"
+          },
+          "restart_targets": {
+            "type": "string"
+          },
+          "groups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FleetGroupRequest"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "FleetGroupRequest": {
+        "type": "object",
+        "properties": {
+          "subdir": {
+            "type": "string"
+          },
+          "bundle_cas": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "certs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         },
         "additionalProperties": false

@@ -180,6 +180,16 @@ func (s *Server) handleCreateCertDelivery(w http.ResponseWriter, r *http.Request
 			return
 		}
 	}
+	// The exclusivity rule's other direction (see refuseFleetVolumeClash): a fleet
+	// delivery and a certificate delivery never share a volume.
+	if _, err := s.store.FleetDeliveryForVolume(r.Context(), d.EnvID, d.Volume); err == nil {
+		httpx.Fail(w, r, http.StatusConflict, "volume_taken",
+			fmt.Sprintf("a fleet delivery already writes the volume %q on this environment — give this delivery its own volume", d.Volume))
+		return
+	} else if !errors.Is(err, store.ErrNotFound) {
+		httpx.Error(w, r, err)
+		return
+	}
 	if err := s.store.CreateCertDelivery(r.Context(), d); err != nil {
 		httpx.Error(w, r, err)
 		return
@@ -375,6 +385,24 @@ func (s *Server) refuseDeliveryOwnedNames(ctx context.Context, envID, volume str
 	return nil
 }
 
+// refuseFleetOwnedNames is the same question against the volume's FLEET delivery, asked
+// at the same two moments. Separate from refuseDeliveryOwnedNames because ownership works
+// differently: a cert delivery owns nothing without its Traefik fragment, while a fleet
+// delivery owns every file it writes — there is no fragment, so there is no lesser mode.
+func (s *Server) refuseFleetOwnedNames(ctx context.Context, envID, volume string, names []string) error {
+	owned, err := s.fleetOwnedNames(ctx, envID, volume)
+	if err != nil || owned == nil {
+		return err
+	}
+	for _, name := range names {
+		if owned[name] {
+			return fmt.Errorf("%s is written by the fleet delivery on this volume — "+
+				"remove it here, or point this source at a different volume", name)
+		}
+	}
+	return nil
+}
+
 // cleanMountPath validates where the consumer says it mounts the volume. The path is never
 // opened here — it is interpolated into YAML that TRAEFIK resolves — so the check is about
 // producing a fragment that means what the operator thinks it means.
@@ -464,9 +492,10 @@ func (s *Server) handleDeleteCertDelivery(w http.ResponseWriter, r *http.Request
 
 // ── the reconciler ──────────────────────────────────────────────────────────────
 
-// resyncDeliveries sweeps every delivery in the background. Called after anything that
-// changes what a volume should hold — a renewal, a rotation, a bundle change. Content
-// hashing makes an unnecessary sweep cost one query and no Docker calls.
+// resyncDeliveries sweeps every delivery in the background — certificate and fleet alike,
+// so every existing invalidation path (a renewal, a rotation, a bundle change) covers both
+// with no second set of call sites to keep in step. Content hashing makes an unnecessary
+// sweep cost one query and no Docker calls.
 func (s *Server) resyncDeliveries(ctx context.Context) {
 	ctx = context.WithoutCancel(ctx)
 	go func() {
@@ -476,6 +505,13 @@ func (s *Server) resyncDeliveries(ctx context.Context) {
 		}
 		for _, d := range deliveries {
 			_ = s.reportDeliverySync(ctx, d)
+		}
+		fleet, err := s.store.AllFleetDeliveries(ctx)
+		if err != nil {
+			return
+		}
+		for _, d := range fleet {
+			_ = s.reportFleetDeliverySync(ctx, d)
 		}
 	}()
 }

@@ -113,6 +113,10 @@ export const Cap = {
   KeysView: { ns: Ns.Certs, bit: 4 },
   /** Generate and import backup encryption keys. The private half is downloaded once at generation and never stored. */
   KeysEdit: { ns: Ns.Certs, bit: 8 },
+  /** See fleet deliveries — which certificates and roots they carry, where they land, and their sync status. Never a private key. */
+  FleetView: { ns: Ns.Certs, bit: 16 },
+  /** Create and edit fleet deliveries, which compose certificates and trust from any environment into one volume. Cross-environment key material moves on this bit, so it is fleet-wide. */
+  FleetEdit: { ns: Ns.Certs, bit: 32 },
   /** See keyrings, their version timeline and their deliveries — names, states, ages, sync status. Never key material. */
   KeyringsView: { ns: Ns.Keyrings, bit: 1 },
   /** Create, rotate and retire keyrings, and deliver them to hosts. Retiring a version makes data encrypted under it unreadable to every consumer. */
