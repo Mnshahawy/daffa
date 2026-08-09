@@ -2,8 +2,10 @@ package api
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 
+	"github.com/Mnshahawy/daffa/internal/dockerx"
 	"github.com/Mnshahawy/daffa/internal/httpx"
 )
 
@@ -125,4 +127,84 @@ func (s *Server) handleSwarmLeave(w http.ResponseWriter, r *http.Request) {
 	s.reconcileEnv(r.Context(), node.EnvID)
 
 	httpx.JSON(w, http.StatusOK, statusResponse{Status: "ok"})
+}
+
+// ── task history retention ──────────────────────────────────────────────────────
+
+// taskHistoryResponse is the cluster's retention setting, plus the default so the UI can say
+// "5 (Docker's default)" rather than presenting an unset field as a deliberate 5.
+type taskHistoryResponse struct {
+	Limit   int64 `json:"limit"`
+	Default int64 `json:"default"`
+}
+
+type taskHistoryRequest struct {
+	Limit int64 `json:"limit"`
+}
+
+// maxTaskHistoryLimit is a sanity bound, not a Docker one. Docker takes any number, and negatives
+// mean "never remove" — but every kept task is a stopped container with a writable layer, so a
+// three-digit limit is not a retention policy, it is the disk-filling bug this setting exists to
+// avoid.
+const maxTaskHistoryLimit = 100
+
+// handleGetTaskHistory reports how many finished tasks Swarm keeps per replica.
+//
+// clusters.view, not swarm.edit: unlike the join tokens next door this is not a credential, and the
+// cleanup card shows it to anyone who can see the host's disk — which is the context that makes the
+// number mean anything.
+func (s *Server) handleGetTaskHistory(w http.ResponseWriter, r *http.Request) {
+	control, ok := s.control(w, r)
+	if !ok {
+		return
+	}
+
+	limit, err := control.TaskHistoryLimit(r.Context())
+	if err != nil {
+		httpx.Fail(w, r, http.StatusBadGateway, "swarm_unreachable", err.Error())
+		return
+	}
+	httpx.JSON(w, http.StatusOK, taskHistoryResponse{Limit: limit, Default: dockerx.DefaultTaskHistoryLimit})
+}
+
+// handleSetTaskHistory changes it.
+//
+// Lowering it does not delete anything by itself — Swarm applies the new limit as services update,
+// and the tasks already on disk are the scheduled cleanup's job. Saying so in the UI matters:
+// somebody who sets this expecting the disk to drop and sees nothing happen will conclude it did
+// not work.
+func (s *Server) handleSetTaskHistory(w http.ResponseWriter, r *http.Request) {
+	control, ok := s.control(w, r)
+	if !ok {
+		return
+	}
+
+	var req taskHistoryRequest
+	if err := httpx.Decode(w, r, &req); err != nil {
+		httpx.BadRequest(w, r, err.Error())
+		return
+	}
+
+	// Docker reads a negative as "keep every finished task forever". That is a real Docker feature
+	// and a straight path to the disk filling with dead containers, so it is refused here by name
+	// rather than passed through as a number nobody meant to type.
+	if req.Limit < 0 {
+		httpx.BadRequest(w, r, "A negative limit tells Swarm to keep every finished task forever, "+
+			"and each one is a stopped container on disk. Use 0 to keep none.")
+		return
+	}
+	if req.Limit > maxTaskHistoryLimit {
+		httpx.BadRequest(w, r, "Keep at most "+strconv.Itoa(maxTaskHistoryLimit)+" finished tasks per replica — "+
+			"each one is a stopped container, writable layer and all.")
+		return
+	}
+
+	err := control.SetTaskHistoryLimit(r.Context(), req.Limit)
+	s.auditResource(r, control.EnvID, "swarm.task_history.update", strconv.FormatInt(req.Limit, 10), err)
+	if err != nil {
+		httpx.Fail(w, r, http.StatusBadGateway, "swarm_update_failed", err.Error())
+		return
+	}
+
+	httpx.JSON(w, http.StatusOK, taskHistoryResponse{Limit: req.Limit, Default: dockerx.DefaultTaskHistoryLimit})
 }

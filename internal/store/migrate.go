@@ -1145,6 +1145,53 @@ CREATE TABLE fleet_delivery_certs (
     PRIMARY KEY (delivery_id, cert_id)          -- a certificate appears once per delivery, in one subdir
 );
 `},
+
+	// Automatic disk cleanup: a cron that prunes what Docker leaves behind. Deploying
+	// forever on a host that never prunes is a disk that only grows — the superseded image
+	// of every release stays tagged, and swarm keeps the stopped task containers of the
+	// last few deployments, writable layers and all. See .ai/cleanup.md.
+	//
+	// The two-table shape is log_settings/env_log_configs, for the same reasons written
+	// there: a fixed-id singleton for the fleet default, an env_id-keyed row for the
+	// per-host override so the FK can cascade.
+	//
+	// keep_hours is the whole difference between this and `docker system prune -a`: only
+	// artifacts OLDER than it are eligible, so the previous release survives long enough
+	// to roll back to. Default 168 (a week) rather than 0 — an installation that turns
+	// this on without thinking gets the safe version.
+	//
+	// env_cleanup_runs holds the LAST run per host, not a history: the question it answers
+	// is "is this still running, and did it work?" — and a cleanup that silently stopped
+	// looks exactly like one with nothing to do. Per-run detail is in the audit log.
+	{name: "0016_cleanup_policies", sql: `
+CREATE TABLE cleanup_settings (
+    id         TEXT PRIMARY KEY,             -- always 'cleanup'
+    enabled    INTEGER NOT NULL DEFAULT 0,
+    schedule   TEXT NOT NULL DEFAULT '',     -- cron, UTC
+    targets    TEXT NOT NULL DEFAULT '',     -- space-separated: images containers networks build-cache
+    keep_hours INTEGER NOT NULL DEFAULT 168, -- only prune artifacts older than this
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE env_cleanup_policies (
+    env_id     TEXT PRIMARY KEY REFERENCES environments (id) ON DELETE CASCADE,
+    enabled    INTEGER NOT NULL DEFAULT 0,
+    schedule   TEXT NOT NULL DEFAULT '',
+    targets    TEXT NOT NULL DEFAULT '',
+    keep_hours INTEGER NOT NULL DEFAULT 168,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE env_cleanup_runs (
+    env_id     TEXT PRIMARY KEY REFERENCES environments (id) ON DELETE CASCADE,
+    trigger    TEXT NOT NULL DEFAULT 'schedule', -- schedule | manual
+    started_at TEXT NOT NULL,
+    ended_at   TEXT,
+    freed      INTEGER NOT NULL DEFAULT 0,
+    deleted    INTEGER NOT NULL DEFAULT 0,
+    error      TEXT NOT NULL DEFAULT ''
+);
+`},
 }
 
 // migrateCertEnvScope is 0009: certificates gain a nullable env_id and lose global name

@@ -131,3 +131,65 @@ func TestBackupJobKeysResolveToRecipients(t *testing.T) {
 		}
 	})
 }
+
+// Changing a schedule must move ONLY the schedule. The destination, the sealed password and the
+// encryption keys are what the job IS — an "update" that reset any of them would turn a routine
+// "run it at 4 instead of 3" into a job that dumps to the wrong place, or one nobody can decrypt.
+// Clearing the schedule back to manual-only is a legitimate edit, not an empty-means-unchanged.
+func TestSetBackupJobScheduleTouchesNothingElse(t *testing.T) {
+	eachDialect(t, func(t *testing.T, s *Store) {
+		ctx := context.Background()
+
+		env := &Environment{Name: "prod"}
+		if err := s.CreateEnvironment(ctx, env); err != nil {
+			t.Fatal(err)
+		}
+		target := &StorageTarget{Name: "r2", Endpoint: "https://r2.example.com", Bucket: "backups",
+			KeyID: "k", SecretEnc: "sealed"}
+		if err := s.CreateStorageTarget(ctx, target); err != nil {
+			t.Fatal(err)
+		}
+		key := &EncryptionKey{Name: "key a",
+			Recipient: "age1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqaaaaa"}
+		if err := s.CreateEncryptionKey(ctx, key); err != nil {
+			t.Fatal(err)
+		}
+
+		job := &BackupJob{EnvID: env.ID, Name: "nightly", Container: "db-1", Engine: "postgres",
+			DBUser: "postgres", DBPasswordEnc: "sealed", Schedule: "0 3 * * *",
+			StorageID: target.ID, Prefix: "prod/postgres", Encryption: "age",
+			KeyIDs: []string{key.ID}, Enabled: true}
+		if err := s.CreateBackupJob(ctx, job); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := s.SetBackupJobSchedule(ctx, job.ID, "0 4 * * *"); err != nil {
+			t.Fatal(err)
+		}
+		got, err := s.BackupJobByID(ctx, job.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Schedule != "0 4 * * *" {
+			t.Errorf("Schedule = %q; want %q", got.Schedule, "0 4 * * *")
+		}
+		if got.Container != "db-1" || got.DBPasswordEnc != "sealed" || got.StorageID != target.ID ||
+			got.Prefix != "prod/postgres" || got.Encryption != "age" || !got.Enabled {
+			t.Errorf("changing the schedule disturbed the job: %+v", got)
+		}
+		if len(got.KeyIDs) != 1 || got.KeyIDs[0] != key.ID {
+			t.Errorf("KeyIDs = %v; want [%s]", got.KeyIDs, key.ID)
+		}
+
+		// Empty means manual only here, exactly as it does at creation.
+		if err := s.SetBackupJobSchedule(ctx, job.ID, ""); err != nil {
+			t.Fatal(err)
+		}
+		if got, err = s.BackupJobByID(ctx, job.ID); err != nil {
+			t.Fatal(err)
+		}
+		if got.Schedule != "" {
+			t.Errorf("Schedule after clearing = %q; want empty", got.Schedule)
+		}
+	})
+}

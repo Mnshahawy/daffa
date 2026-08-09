@@ -1,12 +1,17 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useQuery, useQueryClient } from '@tanstack/vue-query'
 import { bytes, daffa } from '@/lib/api'
 import { useSession } from '@/stores/session'
 import { hostStatus, nodeStatus } from '@/lib/status'
 import { Cap } from '@/lib/caps'
 import { confirm } from '@mnshahawy/daffa-console-ui'
-import { type ClusterNode, type JoinTokens, type LogConfigRequest } from '@/lib/api'
+import {
+  type ClusterNode,
+  type CleanupPolicyRequest,
+  type JoinTokens,
+  type LogConfigRequest,
+} from '@/lib/api'
 import { toast } from '@mnshahawy/daffa-console-ui'
 import { BaseButton } from '@mnshahawy/daffa-console-ui'
 import { PageHeader } from '@mnshahawy/daffa-console-ui'
@@ -14,6 +19,7 @@ import { StatusPill } from '@mnshahawy/daffa-console-ui'
 import PruneButton from '@/components/PruneButton.vue'
 import MetricPanel from '@/components/MetricPanel.vue'
 import LogConfigForm from '@/components/LogConfigForm.vue'
+import CleanupPolicyForm from '@/components/CleanupPolicyForm.vue'
 
 const session = useSession()
 const enabled = computed(() => !!session.envId)
@@ -263,6 +269,117 @@ async function clearLogConfig() {
   } finally {
     logBusy.value = false
   }
+}
+
+// ── automatic cleanup ────────────────────────────────────────────────────────────
+//
+// THIS host's scheduled prune: its override if one is set, else the fleet policy. Unlike
+// the log defaults this one DELETES things, so the card leads with what the last sweep
+// actually reclaimed — a policy that quietly stopped running looks exactly like one with
+// nothing left to do.
+const canPrune = computed(() => session.can(Cap.SystemPrune))
+
+const { data: cleanup } = useQuery({
+  queryKey: ['host-cleanup', () => session.envId],
+  queryFn: () => daffa.hostCleanup(session.envId),
+  enabled: computed(() => !!session.envId && canPrune.value),
+})
+
+const cleanupBusy = ref(false)
+
+const cleanupSource = computed(() => {
+  if (!cleanup.value) return ''
+  if (cleanup.value.override) return 'host override'
+  if (cleanup.value.global) return 'fleet default'
+  return 'none — nothing is deleted automatically'
+})
+
+const cleanupSummary = computed(() => {
+  const p = cleanup.value?.effective
+  if (!p || !p.enabled) return 'off'
+  const days = Math.round((p.keep_hours / 24) * 10) / 10
+  return `${p.schedule} UTC · keeps < ${days}d`
+})
+
+async function saveCleanup(body: CleanupPolicyRequest) {
+  cleanupBusy.value = true
+  try {
+    await daffa.saveHostCleanup(session.envId, body)
+    toast.ok('Cleanup policy saved.')
+    await qc.invalidateQueries({ queryKey: ['host-cleanup'] })
+  } catch (e) {
+    toast.err(e, 'Could not save.')
+  } finally {
+    cleanupBusy.value = false
+  }
+}
+
+async function clearCleanup() {
+  cleanupBusy.value = true
+  try {
+    await daffa.clearHostCleanup(session.envId)
+    toast.ok('Reverted to the fleet policy.')
+    await qc.invalidateQueries({ queryKey: ['host-cleanup'] })
+  } catch (e) {
+    toast.err(e, 'Could not revert.')
+  } finally {
+    cleanupBusy.value = false
+  }
+}
+
+// How many finished tasks Swarm keeps per replica. It lives on the cleanup card rather than with
+// the Swarm controls because it is the other half of the same problem: the sweep removes the dead
+// task containers, this decides how many get made. Swarm-only — a standalone host has no tasks.
+const isSwarm = computed(() => !!host.value?.swarm)
+
+const { data: taskHistory } = useQuery({
+  queryKey: ['task-history', () => session.envId],
+  queryFn: () => daffa.taskHistory(session.envId),
+  enabled: computed(() => !!session.envId && isSwarm.value),
+})
+
+const taskHistoryDraft = ref<number | string>('')
+const taskHistoryBusy = ref(false)
+
+watch(
+  taskHistory,
+  (t) => {
+    if (t) taskHistoryDraft.value = t.limit
+  },
+  { immediate: true },
+)
+
+async function saveTaskHistory() {
+  taskHistoryBusy.value = true
+  try {
+    await daffa.setTaskHistory(session.envId, { limit: Number(taskHistoryDraft.value) || 0 })
+    toast.ok('Task history limit saved.')
+    await qc.invalidateQueries({ queryKey: ['task-history'] })
+  } catch (e) {
+    toast.err(e, 'Could not save.')
+  } finally {
+    taskHistoryBusy.value = false
+  }
+}
+
+async function runCleanupNow() {
+  // A sweep this host has not been given a policy for would 400; the button is hidden in
+  // that case, so reaching here means there is something to run.
+  const ok = await confirm({
+    title: 'Run the cleanup now?',
+    body: 'It deletes everything the policy names that is older than the age floor — on every node of this host. What the last few releases need is inside the floor and is not touched, but this is not undoable: anything reclaimed comes back only by pulling or rebuilding it.',
+    confirmLabel: 'Run cleanup',
+    intent: 'caution',
+  })
+  if (!ok) return
+  try {
+    await daffa.runCleanup(session.envId)
+    toast.ok('Cleanup started.')
+  } catch (e) {
+    toast.err(e, 'Could not start the cleanup.')
+  }
+  // The sweep runs in the background; give it a moment before asking what it did.
+  setTimeout(() => qc.invalidateQueries({ queryKey: ['host-cleanup'] }), 3000)
 }
 
 // Disk is fanned out across every node (each machine has its own layers), fetched once on load.
@@ -645,6 +762,112 @@ const instruments = computed<{ label: string; value: string; of?: string }[]>(()
             </tr>
           </tbody>
           </table>
+        </div>
+      </div>
+
+      <!-- Automatic cleanup: the buttons in the table above, on a schedule. It sits directly
+           under the disk numbers because those numbers are the reason it exists — and it
+           leads with the last sweep, since a policy that stopped running is invisible. -->
+      <div v-if="canPrune" class="surface rounded-[var(--radius-card)] p-5">
+        <div class="mb-1 flex flex-wrap items-baseline justify-between gap-x-3">
+          <h3 class="text-sm font-semibold">Automatic cleanup</h3>
+          <span v-if="cleanup" class="subtle text-xs">
+            in effect: <span class="font-mono">{{ cleanupSummary }}</span> · {{ cleanupSource }}
+          </span>
+        </div>
+        <p class="muted mb-4 max-w-[70ch] text-sm leading-relaxed">
+          Prunes what deploying leaves behind — superseded release images, the stopped
+          containers of old deployments, build cache — on every node of this cluster. The age
+          floor is what makes it safe to leave running: nothing newer than it is eligible, so
+          the last few releases stay rollback-able.
+        </p>
+
+        <!-- What the last sweep reclaimed, which is the only evidence the policy is alive. -->
+        <div
+          v-if="cleanup?.last_run"
+          class="mb-4 rounded-[var(--radius-control)] px-3 py-2.5 text-sm"
+          :style="{
+            background: cleanup.last_run.error ? 'var(--warn-soft)' : 'var(--surface-sunken)',
+          }"
+        >
+          <template v-if="cleanup.last_run.error">
+            <span class="font-medium">Last sweep failed:</span> {{ cleanup.last_run.error }}
+          </template>
+          <template v-else-if="!cleanup.last_run.ended_at">Sweeping now…</template>
+          <template v-else>
+            Last sweep
+            <time :title="cleanup.last_run.started_at">
+              {{ new Date(cleanup.last_run.started_at).toLocaleString() }}
+            </time>
+            ({{ cleanup.last_run.trigger }}) reclaimed
+            <span class="font-mono text-xs">{{ bytes(cleanup.last_run.freed) }}</span>
+            across {{ cleanup.last_run.deleted }} items.
+          </template>
+        </div>
+
+        <CleanupPolicyForm
+          :model-value="cleanup?.override ?? cleanup?.global ?? null"
+          :busy="cleanupBusy"
+          :show-clear="!!cleanup?.override"
+          clear-label="Revert to the fleet policy"
+          @save="saveCleanup"
+          @clear="clearCleanup"
+        />
+
+        <div class="mt-4 flex flex-wrap items-center gap-3 border-t pt-4" :style="{ borderColor: 'var(--border)' }">
+          <BaseButton
+            v-if="cleanup?.effective?.targets?.length"
+            intent="secondary"
+            size="sm"
+            @click="runCleanupNow"
+          >
+            Run cleanup now
+          </BaseButton>
+          <p v-if="cleanup && !cleanup.override && cleanup.global" class="subtle text-xs">
+            Showing the fleet policy — saving makes it this cluster's own override.
+          </p>
+        </div>
+
+        <!-- The other half of the same problem: the sweep removes dead task containers, this
+             decides how many Swarm makes in the first place. -->
+        <div
+          v-if="isSwarm && taskHistory"
+          class="mt-4 border-t pt-4"
+          :style="{ borderColor: 'var(--border)' }"
+        >
+          <label for="th-limit" class="block text-sm font-medium">
+            Finished tasks Swarm keeps <span class="subtle font-normal">(per replica)</span>
+          </label>
+          <p class="muted mb-2.5 mt-1 max-w-[70ch] text-sm leading-relaxed">
+            Each one Swarm keeps is a stopped container on the node that ran it, writable layer and
+            all — at Docker's default of {{ taskHistory.default }} that is five deployments' worth
+            per service, and usually most of the reclaimable figure above. Lowering it deletes
+            nothing by itself: Swarm applies the new limit as services update, and what is already
+            on disk is the sweep's job.
+          </p>
+          <div class="flex flex-wrap items-center gap-2">
+            <input
+              id="th-limit"
+              v-model="taskHistoryDraft"
+              type="number"
+              min="0"
+              max="100"
+              class="field max-w-28 font-mono text-xs"
+              :disabled="!canEditSwarm"
+            />
+            <BaseButton
+              v-if="canEditSwarm"
+              intent="secondary"
+              size="sm"
+              :loading="taskHistoryBusy"
+              @click="saveTaskHistory"
+            >
+              Save
+            </BaseButton>
+            <span v-if="taskHistory.limit === taskHistory.default" class="subtle text-xs">
+              Docker's default.
+            </span>
+          </div>
         </div>
       </div>
 

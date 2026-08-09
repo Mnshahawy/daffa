@@ -53,6 +53,8 @@ type Server struct {
 	ssh *sshManager
 	// sched runs backup jobs on their cron expressions.
 	sched *scheduler
+	// cleanup runs each host's disk cleanup on its cron. See cleanup_worker.go.
+	cleanup *cleanupScheduler
 	// collector samples CPU and memory; retention expires the samples.
 	collector *monitor.Collector
 	retention *monitor.Retention
@@ -88,6 +90,7 @@ func NewServer(cfg *config.Config, st *store.Store, pool *dockerx.Pool, sealer *
 		agents:     newRegistry(),
 		ssh:        newSSHManager(),
 		sched:      newScheduler(),
+		cleanup:    newCleanupScheduler(),
 		collector:  monitor.NewCollector(st, pool, slog.Default()),
 		retention:  monitor.NewRetention(st, slog.Default()),
 		certAlarms: &certAlarms{},
@@ -125,6 +128,10 @@ func (s *Server) Start(ctx context.Context) {
 	s.workerCtx = ctx
 
 	s.startScheduler(ctx)
+
+	// The disk cleanup's cron. Loaded after ReconcileAll, so the first sweep of a host
+	// finds its nodes registered rather than reporting it unreachable.
+	s.rebuildCleanupSchedule(ctx)
 
 	// The outbox drains outside any transaction — see notify/worker.go for why that is not
 	// an optimisation but a correctness requirement.
@@ -166,6 +173,7 @@ const workerStopGrace = 15 * time.Second
 // waits (bounded) for every spawned worker to return. Safe to call once, after Start.
 func (s *Server) Stop() {
 	s.stopScheduler()
+	s.stopCleanupScheduler()
 	if s.stopWorker != nil {
 		s.stopWorker()
 	}
@@ -397,6 +405,32 @@ func (s *Server) apiRoutes() []route {
 		{pattern: "DELETE /api/clusters/{cluster}/logging", cap: caps.LoggingEdit, scope: scopeEnv, h: s.handleDeleteEnvLogConfig,
 			ts: "clearHostLogConfig"},
 
+		// A cluster's automatic disk cleanup: the same override-or-inherit shape as the
+		// log defaults above, and the /api/settings/cleanup trio is its fleet default.
+		// The response carries the last run because "is this still sweeping?" is the only
+		// question that matters after the policy is set.
+		//oapi:summary Read this cluster's cleanup policy and its last sweep
+		{pattern: "GET /api/clusters/{cluster}/cleanup", cap: caps.SystemPrune, scope: scopeEnv, h: s.handleGetEnvCleanup,
+			resp: envCleanupResponse{}, ts: "hostCleanup"},
+		//oapi:summary Set this cluster's cleanup override
+		//oapi:example req {"enabled": true, "schedule": "30 3 * * *",
+		//  "targets": ["containers", "images"], "keep_hours": 336}
+		{pattern: "PUT /api/clusters/{cluster}/cleanup", cap: caps.SystemPrune, scope: scopeEnv, h: s.handleSaveEnvCleanup,
+			req: cleanupPolicyRequest{}, resp: store.CleanupPolicy{}, ts: "saveHostCleanup"},
+		// Deleting the override reverts the cluster to the fleet default. Idempotent.
+		//oapi:summary Revert this cluster to the fleet's cleanup policy
+		//oapi:status 204
+		{pattern: "DELETE /api/clusters/{cluster}/cleanup", cap: caps.SystemPrune, scope: scopeEnv, h: s.handleDeleteEnvCleanup,
+			ts: "clearHostCleanup"},
+		// Runs the host's EFFECTIVE policy now — same targets, same age floor the cron
+		// would use, so this is a rehearsal of the nightly sweep and not a second button
+		// with different behaviour. Answers 202: a prune takes minutes.
+		//oapi:summary Run this cluster's cleanup now
+		//oapi:status 202
+		//oapi:noreq
+		{pattern: "POST /api/clusters/{cluster}/cleanup/run", cap: caps.SystemPrune, scope: scopeEnv, h: s.handleRunCleanup,
+			resp: statusResponse{}, ts: "runCleanup"},
+
 		// Enrolling an agent adds a machine Daffa can reach, and the enrolment token is a
 		// credential. That is clusters.edit, not clusters.view.
 		//oapi:summary List enrolled agents and their connection state
@@ -577,6 +611,21 @@ func (s *Server) apiRoutes() []route {
 		//oapi:summary Read the swarm's join tokens — the credentials that admit a machine
 		{pattern: "GET /api/clusters/{cluster}/swarm/tokens", cap: caps.SwarmEdit, scope: scopeEnv, h: s.handleJoinTokens,
 			resp: dockerx.JoinTokens{}, ts: "joinTokens"},
+		// How many finished tasks Swarm keeps per replica (Docker's default is 5). It reads
+		// as an orchestration knob and behaves as a disk one: every kept task is a stopped
+		// container with a writable layer, so five deployments' worth of them is what the
+		// cleanup card is usually looking at. Reading it is clusters.view — unlike the join
+		// tokens next door it is not a credential, and the number only means something
+		// beside the disk figures.
+		//oapi:summary Read how many finished tasks the Swarm keeps per replica
+		{pattern: "GET /api/clusters/{cluster}/swarm/task-history", cap: caps.ClustersView, scope: scopeEnv, h: s.handleGetTaskHistory,
+			resp: taskHistoryResponse{}, ts: "taskHistory"},
+		// Lowering it deletes nothing by itself: Swarm applies the new limit as services
+		// update, and what is already on disk is the cleanup's job.
+		//oapi:summary Set how many finished tasks the Swarm keeps per replica
+		//oapi:example req {"limit": 2}
+		{pattern: "PUT /api/clusters/{cluster}/swarm/task-history", cap: caps.SwarmEdit, scope: scopeEnv, h: s.handleSetTaskHistory,
+			req: taskHistoryRequest{}, resp: taskHistoryResponse{}, ts: "setTaskHistory"},
 		// For the last manager this dissolves the cluster — the raft store goes, and with
 		// it every service definition — which is why Docker demands force, and so do we.
 		//oapi:summary Take a node out of its Swarm
@@ -851,6 +900,12 @@ func (s *Server) apiRoutes() []route {
 		//oapi:summary Delete a backup job, leaving its snapshots in the bucket
 		{pattern: "DELETE /api/backups/{id}", cap: caps.BackupsEdit, scope: scopeJob, h: s.handleDeleteBackupJob,
 			resp: map[string]string(nil), ts: "deleteBackup"},
+		// Only the cron expression. What the job dumps, where it sends it and which keys can
+		// read it are what the job IS — moving it an hour should not re-send a password.
+		//oapi:summary Change when a job runs; empty means manual only
+		//oapi:example req {"schedule": "0 4 * * *"}
+		{pattern: "PUT /api/backups/{id}/schedule", cap: caps.BackupsEdit, scope: scopeJob, h: s.handleSetBackupSchedule,
+			req: scheduleRequest{}, resp: statusResponse{}, ts: "setBackupSchedule"},
 		//oapi:summary Flip a job's schedule on or off
 		//oapi:noreq
 		{pattern: "POST /api/backups/{id}/toggle", cap: caps.BackupsEdit, scope: scopeJob, h: s.handleToggleBackupJob,
@@ -1331,6 +1386,31 @@ func (s *Server) apiRoutes() []route {
 		//oapi:status 204
 		{pattern: "DELETE /api/settings/logging", cap: caps.LoggingEdit, scope: scopeGlobal, h: s.handleDeleteGlobalLogConfig,
 			ts: "clearGlobalLogConfig"},
+
+		// ── automatic disk cleanup ─────────────────────────────────────────────────
+		// system.prune, not a capability of its own: scheduling a prune is the same power
+		// as pressing the button, aimed at 03:30 instead of now. The fleet default is one
+		// setting, so it takes that capability globally; a host's override takes it at
+		// that host — see the /api/clusters/{cluster}/cleanup trio.
+		//
+		// `volumes` is not an option here and must not become one: a pruned image is a
+		// re-pull, a pruned volume is deleted data. See .ai/cleanup.md.
+		//oapi:summary Read the fleet-wide automatic cleanup policy
+		//oapi:enum CleanupPolicy.targets images|containers|networks|build-cache
+		{pattern: "GET /api/settings/cleanup", cap: caps.SystemPrune, scope: scopeGlobal, h: s.handleGetGlobalCleanup,
+			resp: (*store.CleanupPolicy)(nil), ts: "globalCleanup"},
+		// keep_hours is the age floor under every prune: nothing younger is eligible, so
+		// the image the current release runs — and the one before it — survive the sweep.
+		//oapi:summary Set the fleet-wide automatic cleanup policy
+		//oapi:example req {"enabled": true, "schedule": "30 3 * * *",
+		//  "targets": ["containers", "images", "build-cache"], "keep_hours": 168}
+		{pattern: "PUT /api/settings/cleanup", cap: caps.SystemPrune, scope: scopeGlobal, h: s.handleSaveGlobalCleanup,
+			req: cleanupPolicyRequest{}, resp: store.CleanupPolicy{}, ts: "saveGlobalCleanup"},
+		// Unset means no host sweeps unless it has its own policy. Idempotent.
+		//oapi:summary Unset the fleet-wide automatic cleanup policy
+		//oapi:status 204
+		{pattern: "DELETE /api/settings/cleanup", cap: caps.SystemPrune, scope: scopeGlobal, h: s.handleDeleteGlobalCleanup,
+			ts: "clearGlobalCleanup"},
 
 		// ── identity providers ─────────────────────────────────────────────────────
 		// Responses carry has_secret, never the client secret: it is sealed with the

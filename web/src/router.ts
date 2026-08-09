@@ -191,6 +191,12 @@ export const router = createRouter({
               meta: { cap: Cap.LoggingView },
             },
             {
+              path: 'cleanup',
+              name: 'settings-cleanup',
+              component: () => import('./views/CleanupSettingsView.vue'),
+              meta: { cap: Cap.SystemPrune },
+            },
+            {
               path: 'clusters',
               name: 'settings-clusters',
               component: () => import('./views/ClustersView.vue'),

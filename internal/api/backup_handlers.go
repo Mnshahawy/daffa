@@ -318,6 +318,55 @@ func (s *Server) handleDeleteBackupJob(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
+type scheduleRequest struct {
+	Schedule string `json:"schedule"`
+}
+
+// handleSetBackupSchedule moves a job to a different hour.
+//
+// It is the one part of a job that gets revised routinely — 03:00 turns out to be when the
+// nightly report runs — and the alternative was deleting the job and recreating it, which
+// throws away its run history and asks for the database password again just to change a
+// number. Nothing else about the job is touched: what it dumps, where it sends it and which
+// keys can read it stay put.
+func (s *Server) handleSetBackupSchedule(w http.ResponseWriter, r *http.Request) {
+	job, ok := s.backupJob(w, r)
+	if !ok {
+		return
+	}
+
+	var req scheduleRequest
+	if err := httpx.Decode(w, r, &req); err != nil {
+		httpx.BadRequest(w, r, err.Error())
+		return
+	}
+	req.Schedule = strings.TrimSpace(req.Schedule)
+
+	// Validate here rather than discovering it is nonsense at midnight — same check the
+	// job passed when it was created.
+	if req.Schedule != "" {
+		if _, err := cron.ParseStandard(req.Schedule); err != nil {
+			httpx.BadRequest(w, r, "That is not a valid cron expression (e.g. \"0 3 * * *\" for 03:00 UTC daily).")
+			return
+		}
+	}
+
+	if err := s.store.SetBackupJobSchedule(r.Context(), job.ID, req.Schedule); err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	// The cron is rebuilt from the stored jobs, so the new time is live now rather than at
+	// the next restart — an edit that only takes effect after a redeploy is an edit that
+	// silently did nothing.
+	s.rebuildSchedule(r.Context())
+
+	s.audit(r.Context(), store.AuditEntry{
+		EnvID: job.EnvID, Action: "backup.schedule", Target: job.Name, Outcome: "ok",
+		Detail: store.AuditDetail(map[string]string{"from": job.Schedule, "to": req.Schedule}),
+	})
+	httpx.JSON(w, http.StatusOK, statusResponse{Status: "ok"})
+}
+
 func (s *Server) handleToggleBackupJob(w http.ResponseWriter, r *http.Request) {
 	job, ok := s.backupJob(w, r)
 	if !ok {

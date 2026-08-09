@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
@@ -354,16 +355,69 @@ type PruneResult struct {
 	Items   []string    `json:"items,omitempty"`
 }
 
+// PruneOptions widens a prune beyond the conservative default. Both fields exist for the
+// same caller — the scheduled cleanup — and neither is safe without the other: pruning
+// every unused image is how a deploy host stays flat, and an age floor is what stops that
+// from deleting the image the previous release ran ten minutes ago.
+type PruneOptions struct {
+	// MinAge confines the prune to artifacts older than it. Zero means no age filter, and
+	// is what the manual buttons use.
+	//
+	// Docker measures this from the artifact's CREATION, not its last use — for an image
+	// that is when it was BUILT, which for a registry image can be long before it was
+	// pulled. That is the right measure for the thing this protects (a release built today
+	// survives; the v0.33.1 image built three weeks ago does not), but it means a rarely
+	// updated base image is eligible the moment nothing references it.
+	MinAge time.Duration
+
+	// UnusedImages widens the image prune from dangling-only to every image no container
+	// references. This is the `-a` in `docker image prune -a`, and the single biggest
+	// reclaim on a host that deploys versioned tags: without it, the previous release's
+	// image stays tagged and stays forever.
+	UnusedImages bool
+}
+
+// Prune is the manual, conservative sweep behind the buttons on the disk card: dangling
+// images only, no age filter. The scheduled cleanup calls PruneWith instead.
 func (e *Node) Prune(ctx context.Context, target PruneTarget) (*PruneResult, error) {
-	res := &PruneResult{Target: target}
+	return e.PruneWith(ctx, target, PruneOptions{})
+}
+
+// pruneFilters is the wire form of a prune's options. It is a function of its own, and
+// tested as one, because the difference between the safe sweep and the destructive one is
+// entirely in these two strings — "dangling=false" with no "until" would delete the image
+// of the release that went out this morning, and nothing in the call site would look wrong.
+func pruneFilters(target PruneTarget, opts PruneOptions) filters.Args {
 	args := filters.NewArgs()
+
+	// Docker parses `until` daemon-side, and accepts a Go duration there as well as a
+	// timestamp. Sending the duration rather than a computed instant is deliberate: the
+	// daemon may be on another machine whose clock is not ours, and an absolute timestamp
+	// derived from OUR clock would prune the wrong window on a host that is minutes off.
+	//
+	// Volumes take no `until` — Docker's volume prune does not support it, and a filter the
+	// daemon rejects would fail the whole sweep. Volumes are never in an automatic sweep
+	// anyway; this is the belt to that policy's braces.
+	if opts.MinAge > 0 && target != PruneVolumes {
+		args.Add("until", opts.MinAge.String())
+	}
+
+	// dangling=true is the default, but say it out loud: the alternative prunes every image
+	// not currently used by a container, which on a deploy host means the next rollback has
+	// to pull everything again — safe only when the caller has also set an age floor, which
+	// is why the two travel together in PruneOptions.
+	if target == PruneImages {
+		args.Add("dangling", boolFilter(!opts.UnusedImages))
+	}
+	return args
+}
+
+func (e *Node) PruneWith(ctx context.Context, target PruneTarget, opts PruneOptions) (*PruneResult, error) {
+	res := &PruneResult{Target: target}
+	args := pruneFilters(target, opts)
 
 	switch target {
 	case PruneImages:
-		// dangling=true is the default, but say it out loud: the alternative prunes
-		// every image not currently used by a container, which on a deploy host means
-		// the next rollback has to pull everything again.
-		args.Add("dangling", "true")
 		r, err := e.Client.ImagesPrune(ctx, args)
 		if err != nil {
 			return nil, fmt.Errorf("dockerx: pruning images: %w", err)
@@ -409,7 +463,7 @@ func (e *Node) Prune(ctx context.Context, target PruneTarget) (*PruneResult, err
 		res.Items = r.VolumesDeleted
 
 	case PruneBuildCache:
-		r, err := e.Client.BuildCachePrune(ctx, BuildCachePruneOptions())
+		r, err := e.Client.BuildCachePrune(ctx, BuildCachePruneOptions(args))
 		if err != nil {
 			return nil, fmt.Errorf("dockerx: pruning build cache: %w", err)
 		}
@@ -421,6 +475,16 @@ func (e *Node) Prune(ctx context.Context, target PruneTarget) (*PruneResult, err
 	}
 
 	return res, nil
+}
+
+// boolFilter renders a filter value the way Docker's filter parser reads it. The dangling
+// filter is a string on the wire, not a flag: omitting it and sending "false" mean opposite
+// things, so this is spelled out rather than left to a conditional Add.
+func boolFilter(v bool) string {
+	if v {
+		return "true"
+	}
+	return "false"
 }
 
 func shortID(id string) string {

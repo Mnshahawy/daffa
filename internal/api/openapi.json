@@ -69,6 +69,9 @@
       "name": "container log defaults"
     },
     {
+      "name": "automatic disk cleanup"
+    },
+    {
       "name": "identity providers"
     },
     {
@@ -1234,6 +1237,281 @@
         "responses": {
           "204": {
             "description": "No content."
+          },
+          "401": {
+            "description": "No live session or valid token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but the capability is not held at the required scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Nothing lives at that id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something went wrong on the server; the audit log has the details.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/clusters/{cluster}/cleanup": {
+      "get": {
+        "operationId": "hostCleanup",
+        "tags": [
+          "clusters"
+        ],
+        "summary": "Read this cluster's cleanup policy and its last sweep",
+        "description": "A cluster's automatic disk cleanup: the same override-or-inherit shape as the log defaults above, and the /api/settings/cleanup trio is its fleet default. The response carries the last run because \"is this still sweeping?\" is the only question that matters after the policy is set.\n\nRequires the capability at the cluster named in the path.",
+        "x-daffa-capability": "system.prune",
+        "x-daffa-scope": "env",
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvCleanupResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No live session or valid token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but the capability is not held at the required scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Nothing lives at that id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something went wrong on the server; the audit log has the details.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "saveHostCleanup",
+        "tags": [
+          "clusters"
+        ],
+        "summary": "Set this cluster's cleanup override",
+        "description": "Requires the capability at the cluster named in the path.",
+        "x-daffa-capability": "system.prune",
+        "x-daffa-scope": "env",
+        "requestBody": {
+          "description": "Request bodies are capped at 1 MiB; unknown fields are refused.",
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CleanupPolicyRequest"
+              },
+              "example": {
+                "enabled": true,
+                "schedule": "30 3 * * *",
+                "targets": [
+                  "containers",
+                  "images"
+                ],
+                "keep_hours": 336
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CleanupPolicy"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is wrong, and the message says how to fix it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No live session or valid token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but the capability is not held at the required scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Nothing lives at that id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something went wrong on the server; the audit log has the details.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "clearHostCleanup",
+        "tags": [
+          "clusters"
+        ],
+        "summary": "Revert this cluster to the fleet's cleanup policy",
+        "description": "Deleting the override reverts the cluster to the fleet default. Idempotent.\n\nRequires the capability at the cluster named in the path.",
+        "x-daffa-capability": "system.prune",
+        "x-daffa-scope": "env",
+        "responses": {
+          "204": {
+            "description": "No content."
+          },
+          "401": {
+            "description": "No live session or valid token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but the capability is not held at the required scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Nothing lives at that id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something went wrong on the server; the audit log has the details.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/clusters/{cluster}/cleanup/run": {
+      "post": {
+        "operationId": "runCleanup",
+        "tags": [
+          "clusters"
+        ],
+        "summary": "Run this cluster's cleanup now",
+        "description": "Runs the host's EFFECTIVE policy now — same targets, same age floor the cron would use, so this is a rehearsal of the nightly sweep and not a second button with different behaviour. Answers 202: a prune takes minutes.\n\nRequires the capability at the cluster named in the path.",
+        "x-daffa-capability": "system.prune",
+        "x-daffa-scope": "env",
+        "responses": {
+          "202": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusResponse"
+                }
+              }
+            }
           },
           "401": {
             "description": "No live session or valid token.",
@@ -3111,6 +3389,156 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/JoinTokens"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No live session or valid token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but the capability is not held at the required scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Nothing lives at that id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something went wrong on the server; the audit log has the details.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/clusters/{cluster}/swarm/task-history": {
+      "get": {
+        "operationId": "taskHistory",
+        "tags": [
+          "images, networks, volumes"
+        ],
+        "summary": "Read how many finished tasks the Swarm keeps per replica",
+        "description": "How many finished tasks Swarm keeps per replica (Docker's default is 5). It reads as an orchestration knob and behaves as a disk one: every kept task is a stopped container with a writable layer, so five deployments' worth of them is what the cleanup card is usually looking at. Reading it is clusters.view — unlike the join tokens next door it is not a credential, and the number only means something beside the disk figures.\n\nRequires the capability at the cluster named in the path.",
+        "x-daffa-capability": "clusters.view",
+        "x-daffa-scope": "env",
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskHistoryResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No live session or valid token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but the capability is not held at the required scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Nothing lives at that id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something went wrong on the server; the audit log has the details.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "setTaskHistory",
+        "tags": [
+          "images, networks, volumes"
+        ],
+        "summary": "Set how many finished tasks the Swarm keeps per replica",
+        "description": "Lowering it deletes nothing by itself: Swarm applies the new limit as services update, and what is already on disk is the cleanup's job.\n\nRequires the capability at the cluster named in the path.",
+        "x-daffa-capability": "swarm.edit",
+        "x-daffa-scope": "env",
+        "requestBody": {
+          "description": "Request bodies are capped at 1 MiB; unknown fields are refused.",
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskHistoryRequest"
+              },
+              "example": {
+                "limit": 2
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskHistoryResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is wrong, and the message says how to fix it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
                 }
               }
             }
@@ -5904,6 +6332,84 @@
                   "additionalProperties": {
                     "type": "string"
                   }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No live session or valid token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown id — or one the caller may not see; the two are indistinguishable on purpose.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something went wrong on the server; the audit log has the details.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/backups/{id}/schedule": {
+      "put": {
+        "operationId": "setBackupSchedule",
+        "tags": [
+          "backups"
+        ],
+        "summary": "Change when a job runs; empty means manual only",
+        "description": "Only the cron expression. What the job dumps, where it sends it and which keys can read it are what the job IS — moving it an hour should not re-send a password.\n\nRequires the capability at the backup job's owning cluster. Unknown and unauthorized ids both answer 404.",
+        "x-daffa-capability": "backups.edit",
+        "x-daffa-scope": "job",
+        "requestBody": {
+          "description": "Request bodies are capped at 1 MiB; unknown fields are refused.",
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScheduleRequest"
+              },
+              "example": {
+                "schedule": "0 4 * * *"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is wrong, and the message says how to fix it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
                 }
               }
             }
@@ -11233,6 +11739,195 @@
         }
       }
     },
+    "/api/settings/cleanup": {
+      "get": {
+        "operationId": "globalCleanup",
+        "tags": [
+          "automatic disk cleanup"
+        ],
+        "summary": "Read the fleet-wide automatic cleanup policy",
+        "description": "system.prune, not a capability of its own: scheduling a prune is the same power as pressing the button, aimed at 03:30 instead of now. The fleet default is one setting, so it takes that capability globally; a host's override takes it at that host — see the /api/clusters/{cluster}/cleanup trio.\n\n`volumes` is not an option here and must not become one: a pruned image is a re-pull, a pruned volume is deleted data. See .ai/cleanup.md.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
+        "x-daffa-capability": "system.prune",
+        "x-daffa-scope": "global",
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/CleanupPolicy"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No live session or valid token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but the capability is not held at the required scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something went wrong on the server; the audit log has the details.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "saveGlobalCleanup",
+        "tags": [
+          "automatic disk cleanup"
+        ],
+        "summary": "Set the fleet-wide automatic cleanup policy",
+        "description": "keep_hours is the age floor under every prune: nothing younger is eligible, so the image the current release runs — and the one before it — survive the sweep.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
+        "x-daffa-capability": "system.prune",
+        "x-daffa-scope": "global",
+        "requestBody": {
+          "description": "Request bodies are capped at 1 MiB; unknown fields are refused.",
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CleanupPolicyRequest"
+              },
+              "example": {
+                "enabled": true,
+                "schedule": "30 3 * * *",
+                "targets": [
+                  "containers",
+                  "images",
+                  "build-cache"
+                ],
+                "keep_hours": 168
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CleanupPolicy"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is wrong, and the message says how to fix it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No live session or valid token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but the capability is not held at the required scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something went wrong on the server; the audit log has the details.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "clearGlobalCleanup",
+        "tags": [
+          "automatic disk cleanup"
+        ],
+        "summary": "Unset the fleet-wide automatic cleanup policy",
+        "description": "Unset means no host sweeps unless it has its own policy. Idempotent.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
+        "x-daffa-capability": "system.prune",
+        "x-daffa-scope": "global",
+        "responses": {
+          "204": {
+            "description": "No content."
+          },
+          "401": {
+            "description": "No live session or valid token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but the capability is not held at the required scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something went wrong on the server; the audit log has the details.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/settings/oidc": {
       "get": {
         "operationId": "providers",
@@ -13382,6 +14077,142 @@
         },
         "additionalProperties": false
       },
+      "EnvCleanupResponse": {
+        "type": "object",
+        "properties": {
+          "override": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CleanupPolicy"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "global": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CleanupPolicy"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "effective": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CleanupPolicy"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "last_run": {
+            "$ref": "#/components/schemas/CleanupRun"
+          }
+        },
+        "required": [
+          "override",
+          "global",
+          "effective"
+        ]
+      },
+      "CleanupPolicy": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "schedule": {
+            "type": "string"
+          },
+          "targets": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "images",
+                "containers",
+                "networks",
+                "build-cache"
+              ]
+            }
+          },
+          "keep_hours": {
+            "type": "integer"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "enabled",
+          "schedule",
+          "targets",
+          "keep_hours",
+          "updated_at"
+        ]
+      },
+      "CleanupRun": {
+        "type": "object",
+        "properties": {
+          "env_id": {
+            "type": "string"
+          },
+          "trigger": {
+            "type": "string"
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "ended_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "freed": {
+            "type": "integer"
+          },
+          "deleted": {
+            "type": "integer"
+          },
+          "error": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "env_id",
+          "trigger",
+          "started_at",
+          "freed",
+          "deleted"
+        ]
+      },
+      "CleanupPolicyRequest": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "schedule": {
+            "type": "string"
+          },
+          "targets": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "keep_hours": {
+            "type": "integer"
+          }
+        },
+        "additionalProperties": false
+      },
       "Agent": {
         "type": "object",
         "properties": {
@@ -13893,6 +14724,30 @@
           "manager",
           "addr"
         ]
+      },
+      "TaskHistoryResponse": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer"
+          },
+          "default": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "limit",
+          "default"
+        ]
+      },
+      "TaskHistoryRequest": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer"
+          }
+        },
+        "additionalProperties": false
       },
       "Image": {
         "type": "object",
@@ -15096,6 +15951,15 @@
             "items": {
               "type": "string"
             }
+          }
+        },
+        "additionalProperties": false
+      },
+      "ScheduleRequest": {
+        "type": "object",
+        "properties": {
+          "schedule": {
+            "type": "string"
           }
         },
         "additionalProperties": false

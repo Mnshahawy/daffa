@@ -23,10 +23,11 @@ func DiskUsageOptions() types.DiskUsageOptions {
 	return types.DiskUsageOptions{}
 }
 
-func BuildCachePruneOptions() types.BuildCachePruneOptions {
+func BuildCachePruneOptions(f filters.Args) types.BuildCachePruneOptions {
 	// Not All: pruning only the unused cache leaves the layers an in-flight build is
-	// relying on alone.
-	return types.BuildCachePruneOptions{}
+	// relying on alone. The filters carry the age floor, if the caller set one — BuildKit
+	// reads `until` as "unused for longer than", which is exactly the question asked.
+	return types.BuildCachePruneOptions{Filters: f}
 }
 
 // lineWriter turns the byte stream Docker hands us into whole lines. Docker does not

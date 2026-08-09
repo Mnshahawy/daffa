@@ -265,6 +265,38 @@ export interface LogConfigRequest {
   opts?: Record<string, string>
 }
 
+export interface EnvCleanupResponse {
+  override: CleanupPolicy | null
+  global: CleanupPolicy | null
+  effective: CleanupPolicy | null
+  last_run?: CleanupRun
+}
+
+export interface CleanupPolicy {
+  enabled: boolean
+  schedule: string
+  targets: ('images' | 'containers' | 'networks' | 'build-cache')[]
+  keep_hours: number
+  updated_at: string
+}
+
+export interface CleanupRun {
+  env_id: string
+  trigger: string
+  started_at: string
+  ended_at?: string
+  freed: number
+  deleted: number
+  error?: string
+}
+
+export interface CleanupPolicyRequest {
+  enabled?: boolean
+  schedule?: string
+  targets?: string[]
+  keep_hours?: number
+}
+
 export interface Agent {
   id: string
   name: string
@@ -414,6 +446,15 @@ export interface JoinTokens {
   worker: string
   manager: string
   addr: string
+}
+
+export interface TaskHistoryResponse {
+  limit: number
+  default: number
+}
+
+export interface TaskHistoryRequest {
+  limit?: number
 }
 
 export interface Image {
@@ -772,6 +813,10 @@ export interface JobRequest {
   prefix?: string
   encryption?: string
   key_ids?: string[]
+}
+
+export interface ScheduleRequest {
+  schedule?: string
 }
 
 export interface StorageTarget {
@@ -1415,6 +1460,11 @@ export const daffa = {
   saveHostLogConfig: (cluster: string, body: LogConfigRequest) =>
     api.put<LogConfig>(`/api/clusters/${cluster}/logging`, body),
   clearHostLogConfig: (cluster: string) => api.del<void>(`/api/clusters/${cluster}/logging`),
+  hostCleanup: (cluster: string) => api.get<EnvCleanupResponse>(`/api/clusters/${cluster}/cleanup`),
+  saveHostCleanup: (cluster: string, body: CleanupPolicyRequest) =>
+    api.put<CleanupPolicy>(`/api/clusters/${cluster}/cleanup`, body),
+  clearHostCleanup: (cluster: string) => api.del<void>(`/api/clusters/${cluster}/cleanup`),
+  runCleanup: (cluster: string) => api.post<StatusResponse>(`/api/clusters/${cluster}/cleanup/run`),
   agents: () => api.get<Agent[]>('/api/agents'),
   createAgent: (body: CreateAgentRequest) => api.post<NewAgent>('/api/agents', body),
   deleteAgent: (id: string) => api.del<StatusResponse>(`/api/agents/${id}`),
@@ -1436,6 +1486,10 @@ export const daffa = {
   updateNode: (cluster: string, id: string, body: NodeUpdateRequest) =>
     api.patch<StatusResponse>(`/api/clusters/${cluster}/nodes/${id}`, body),
   joinTokens: (cluster: string) => api.get<JoinTokens>(`/api/clusters/${cluster}/swarm/tokens`),
+  taskHistory: (cluster: string) =>
+    api.get<TaskHistoryResponse>(`/api/clusters/${cluster}/swarm/task-history`),
+  setTaskHistory: (cluster: string, body: TaskHistoryRequest) =>
+    api.put<TaskHistoryResponse>(`/api/clusters/${cluster}/swarm/task-history`, body),
   images: (cluster: string) => api.get<Image[]>(`/api/clusters/${cluster}/images`),
   networks: (cluster: string) => api.get<Network[]>(`/api/clusters/${cluster}/networks`),
   volumes: (cluster: string) => api.get<Volume[]>(`/api/clusters/${cluster}/volumes`),
@@ -1480,6 +1534,8 @@ export const daffa = {
   snapshots: (id: string) => api.get<Snapshot[]>(`/api/backups/${id}/snapshots`),
   createBackup: (body: JobRequest) => api.post<Record<string, string>>('/api/backups', body),
   deleteBackup: (id: string) => api.del<Record<string, string>>(`/api/backups/${id}`),
+  setBackupSchedule: (id: string, body: ScheduleRequest) =>
+    api.put<StatusResponse>(`/api/backups/${id}/schedule`, body),
   toggleBackup: (id: string) => api.post<Record<string, boolean>>(`/api/backups/${id}/toggle`),
   runBackup: (id: string) => api.post<StatusResponse>(`/api/backups/${id}/run`),
   storage: () => api.get<StorageTarget[]>('/api/storage'),
@@ -1564,6 +1620,10 @@ export const daffa = {
   globalLogConfig: () => api.get<LogConfig | null>('/api/settings/logging'),
   saveGlobalLogConfig: (body: LogConfigRequest) => api.put<LogConfig>('/api/settings/logging', body),
   clearGlobalLogConfig: () => api.del<void>('/api/settings/logging'),
+  globalCleanup: () => api.get<CleanupPolicy | null>('/api/settings/cleanup'),
+  saveGlobalCleanup: (body: CleanupPolicyRequest) =>
+    api.put<CleanupPolicy>('/api/settings/cleanup', body),
+  clearGlobalCleanup: () => api.del<void>('/api/settings/cleanup'),
   providers: () => api.get<Provider[]>('/api/settings/oidc'),
   createProvider: (body: ProviderRequest) => api.post<Provider>('/api/settings/oidc', body),
   updateProvider: (id: string, body: ProviderRequest) =>

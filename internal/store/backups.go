@@ -230,6 +230,15 @@ func (s *Store) ListBackupJobs(ctx context.Context, global bool, envs []string) 
 	return out, nil
 }
 
+// SetBackupJobSchedule changes when a job runs. Only the cron expression moves: the
+// container, credentials and destination are what the job IS, and re-sending them to
+// change an hour is how a re-typed password ends up in a working job. An empty schedule
+// means manual only, exactly as it does at creation.
+func (s *Store) SetBackupJobSchedule(ctx context.Context, id, schedule string) error {
+	_, err := s.exec(ctx, `UPDATE backup_jobs SET schedule = ? WHERE id = ?`, schedule, id)
+	return err
+}
+
 func (s *Store) SetBackupJobEnabled(ctx context.Context, id string, enabled bool) error {
 	_, err := s.exec(ctx, `UPDATE backup_jobs SET enabled = ? WHERE id = ?`, boolInt(enabled), id)
 	return err

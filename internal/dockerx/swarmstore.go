@@ -118,6 +118,56 @@ func SwarmJoinVia(ctx context.Context, dial Dialer, remoteAddr, token, advertise
 	return (&Node{Name: "join", Client: c}).SwarmJoin(ctx, remoteAddr, token, advertiseAddr)
 }
 
+// TaskHistoryLimit is how many finished tasks Swarm keeps per replica.
+//
+// It is a disk setting wearing orchestration clothes. Every kept task is a real stopped CONTAINER
+// on whichever node ran it, writable layer and all — on a service that writes into its own
+// filesystem that is gigabytes per dead task, and Docker's default of 5 means five deployments'
+// worth. Lowering it reduces what accumulates; the scheduled cleanup removes what already has
+// (.ai/cleanup.md). The two are complements, not alternatives.
+//
+// Docker's own default when the field is unset is 5, and that is what this reports rather than 0 —
+// an unset field is not "keep nothing", and showing 0 would invite an operator to "fix" a number
+// that was never wrong.
+const DefaultTaskHistoryLimit int64 = 5
+
+// TaskHistoryLimit reads the cluster's setting. Cluster-wide, so it must be asked of a manager.
+func (e *Node) TaskHistoryLimit(ctx context.Context) (int64, error) {
+	sw, err := e.Client.SwarmInspect(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("dockerx: reading the swarm spec: %w", err)
+	}
+	if l := sw.Spec.Orchestration.TaskHistoryRetentionLimit; l != nil {
+		return *l, nil
+	}
+	return DefaultTaskHistoryLimit, nil
+}
+
+// SetTaskHistoryLimit changes how many finished tasks Swarm keeps.
+//
+// Read-modify-write, and it has to be: Docker's swarm update replaces the WHOLE spec, so sending a
+// freshly built one with only this field set would silently wipe the raft configuration, the
+// dispatcher heartbeat and the CA config with it. We inspect, change the one field, and send it
+// back at the version we read — which is also what makes a concurrent edit fail loudly (Docker
+// refuses a stale version) rather than clobber.
+//
+// The rotation flags stay false. Rotating a join token is a different act with different
+// consequences, and it is not something a retention change should do on the way past.
+func (e *Node) SetTaskHistoryLimit(ctx context.Context, limit int64) error {
+	sw, err := e.Client.SwarmInspect(ctx)
+	if err != nil {
+		return fmt.Errorf("dockerx: reading the swarm spec: %w", err)
+	}
+
+	spec := sw.Spec
+	spec.Orchestration.TaskHistoryRetentionLimit = &limit
+
+	if err := e.Client.SwarmUpdate(ctx, sw.Version, spec, swarm.UpdateFlags{}); err != nil {
+		return fmt.Errorf("dockerx: updating the swarm spec: %w", err)
+	}
+	return nil
+}
+
 // SwarmLeave takes THIS daemon out of the swarm.
 //
 // force is required for the last manager, because leaving with it dissolves the cluster: the raft

@@ -128,6 +128,31 @@ const toggle = useMutation({
   onSettled: () => qc.invalidateQueries({ queryKey: ['backups'] }),
 })
 
+// The schedule is the one part of a job that gets revised after the fact — 03:00 turns out to
+// be when the nightly report runs. Editing it in place beats deleting and recreating the job,
+// which loses the run history and asks for the database password again to change an hour.
+const editingSchedule = ref<string | null>(null)
+const scheduleDraft = ref('')
+
+function onEditSchedule(j: BackupJob) {
+  if (editingSchedule.value === j.id) {
+    editingSchedule.value = null
+    return
+  }
+  editingSchedule.value = j.id
+  scheduleDraft.value = j.schedule ?? ''
+}
+
+const saveSchedule = useMutation({
+  mutationFn: (id: string) => daffa.setBackupSchedule(id, { schedule: scheduleDraft.value }),
+  onSuccess: () => {
+    editingSchedule.value = null
+    toast.ok('Schedule updated.')
+  },
+  onError: (e) => toast.err(e, 'Could not change the schedule.'),
+  onSettled: () => qc.invalidateQueries({ queryKey: ['backups'] }),
+})
+
 const remove = useMutation({
   mutationFn: (id: string) => daffa.deleteBackup(id),
   onSuccess: () => toast.ok('Backup job deleted.'),
@@ -539,7 +564,8 @@ function runStatus(j: BackupJob): Status {
             <div class="subtle mt-1 truncate font-mono text-xs">
               {{ j.engine === 'volume' ? j.volume : j.container }} → {{ j.storage_name || j.bucket
               }}<span v-if="j.prefix">/{{ j.prefix }}</span
-              ><span v-if="j.schedule"> · {{ j.schedule }} UTC</span>
+              ><span v-if="j.schedule"> · {{ j.schedule }} UTC</span
+              ><span v-else> · manual only</span>
             </div>
 
             <div
@@ -591,6 +617,16 @@ function runStatus(j: BackupJob): Status {
               </BaseButton>
 
               <BaseButton
+                intent="ghost"
+                size="xs"
+                :aria-expanded="editingSchedule === j.id"
+                @click="onEditSchedule(j)"
+              >
+                <AppIcon name="pencil" class="size-3" />
+                Schedule
+              </BaseButton>
+
+              <BaseButton
                 :intent="j.enabled ? 'caution' : 'secondary'"
                 size="xs"
                 :disabled="toggle.isPending.value"
@@ -612,6 +648,32 @@ function runStatus(j: BackupJob): Status {
             </template>
           </div>
         </div>
+
+        <form
+          v-if="editingSchedule === j.id"
+          class="border-t px-4 py-3"
+          :style="{ borderColor: 'var(--border)', background: 'var(--surface-sunken)' }"
+          @submit.prevent="saveSchedule.mutate(j.id)"
+        >
+          <label :for="'b-sched-' + j.id" class="mb-1.5 block text-sm font-medium">Schedule</label>
+          <div class="flex flex-wrap items-center gap-2">
+            <input
+              :id="'b-sched-' + j.id"
+              v-model="scheduleDraft"
+              placeholder="0 3 * * *"
+              class="field max-w-56 font-mono text-xs"
+              data-cursor="text"
+            />
+            <BaseButton type="submit" intent="primary" size="xs" :loading="saveSchedule.isPending.value">
+              Save
+            </BaseButton>
+            <BaseButton intent="ghost" size="xs" @click="editingSchedule = null">Cancel</BaseButton>
+          </div>
+          <p class="subtle mt-1.5 text-xs">
+            Cron, in UTC. Empty = manual only. The new time takes effect immediately — the
+            paused/running state and everything else about the job are untouched.
+          </p>
+        </form>
 
         <BackupSnapshots v-if="expanded === j.id" :job="j" />
       </div>

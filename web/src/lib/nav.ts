@@ -300,6 +300,13 @@ export const settingsGroups: { title: string; items: SettingsTab[] }[] = [
         icon: 'scroll',
       },
       {
+        name: 'settings-cleanup',
+        label: 'Automatic cleanup',
+        hint: 'Prune old images, containers and build cache on a schedule',
+        cap: Cap.SystemPrune,
+        icon: 'trash',
+      },
+      {
         name: 'settings-notifications',
         label: 'Notifications',
         hint: 'Who gets told, and when',
