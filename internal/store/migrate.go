@@ -1187,11 +1187,30 @@ CREATE TABLE env_cleanup_runs (
     trigger    TEXT NOT NULL DEFAULT 'schedule', -- schedule | manual
     started_at TEXT NOT NULL,
     ended_at   TEXT,
-    freed      INTEGER NOT NULL DEFAULT 0,
+    -- BIGINT, not INTEGER: this is a byte count, and Postgres's INTEGER is a signed 32-bit
+    -- int4 that stops at 2GB. A single sweep of a deploy host reclaims more than that
+    -- routinely — the first 3GB of images pruned would have failed the write, losing the
+    -- outcome of a run that had already deleted everything. Same trap as role_caps.mask.
+    freed      BIGINT NOT NULL DEFAULT 0,
     deleted    INTEGER NOT NULL DEFAULT 0,
     error      TEXT NOT NULL DEFAULT ''
 );
 `},
+
+	// backup_runs.bytes has been INTEGER since 0001, which is 64-bit on SQLite and a signed
+	// 32-bit int4 on Postgres. The Go field is an int64 holding the size of the artifact that
+	// was just uploaded, so on Postgres every backup over 2GiB failed its FinishBackupRun
+	// UPDATE — AFTER the upload had succeeded. The object was in the bucket and the run row
+	// still said "running": the worst shape a failure can take, because the thing that broke
+	// is the record of the thing that worked.
+	//
+	// Found by the sibling bug in env_cleanup_runs.freed (0016), which was caught by a test
+	// before it shipped. This one shipped. Nothing widens on SQLite — its INTEGER already
+	// held these values, and the rows written there need no repair.
+	{name: "0017_backup_run_bytes_bigint", sql: `
+-- Nothing to do on SQLite: INTEGER is already 64-bit there, so the column and every row
+-- in it are correct. The widening is Postgres-only, below.
+`, pg: `ALTER TABLE backup_runs ALTER COLUMN bytes TYPE BIGINT;`},
 }
 
 // migrateCertEnvScope is 0009: certificates gain a nullable env_id and lose global name

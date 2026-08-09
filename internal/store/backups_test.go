@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"os"
 	"testing"
 )
 
@@ -192,4 +193,153 @@ func TestSetBackupJobScheduleTouchesNothingElse(t *testing.T) {
 			t.Errorf("Schedule after clearing = %q; want empty", got.Schedule)
 		}
 	})
+}
+
+// A backup bigger than 2GiB has to survive its own run record. backup_runs.bytes was
+// INTEGER from 0001 — 64-bit on SQLite, a SIGNED 32-bit int4 on Postgres — while the Go
+// field holding the size of the artifact just uploaded is an int64. On Postgres every
+// backup past the int4 ceiling therefore failed its FinishBackupRun UPDATE *after* the
+// upload succeeded: the object sat in the bucket while the run row still read "running".
+// Migration 0017 widens the column. Same trap as role_caps.mask and env_cleanup_runs.freed.
+func TestABackupLargerThanInt4SurvivesTheDatabase(t *testing.T) {
+	eachDialect(t, func(t *testing.T, s *Store) {
+		ctx := context.Background()
+
+		env := &Environment{Name: "prod"}
+		if err := s.CreateEnvironment(ctx, env); err != nil {
+			t.Fatal(err)
+		}
+		target := &StorageTarget{Name: "r2", Endpoint: "https://r2.example.com", Bucket: "backups",
+			KeyID: "k", SecretEnc: "sealed"}
+		if err := s.CreateStorageTarget(ctx, target); err != nil {
+			t.Fatal(err)
+		}
+		job := &BackupJob{EnvID: env.ID, Name: "postgres", Engine: "postgres", Container: "db-1",
+			StorageID: target.ID, Encryption: "none"}
+		if err := s.CreateBackupJob(ctx, job); err != nil {
+			t.Fatal(err)
+		}
+
+		run := &BackupRun{JobID: job.ID, Trigger: "manual"}
+		if err := s.StartBackupRun(ctx, run); err != nil {
+			t.Fatal(err)
+		}
+
+		// 9.5GB: past the int4 ceiling by enough that no amount of treating the column as
+		// unsigned would have rescued it. An unremarkable size for a volume snapshot.
+		const big int64 = 9_500_000_000
+		if err := s.FinishBackupRun(ctx, run.ID, big, "prod/postgres/2026-08-09.sql", nil); err != nil {
+			t.Fatalf("recording a %d-byte backup: %v.\n\n"+
+				"If this is \"greater than maximum value for int4\", backup_runs.bytes is a "+
+				"32-bit INTEGER on Postgres and migration 0017 did not widen it.", big, err)
+		}
+
+		runs, err := s.ListBackupRuns(ctx, job.ID, 10)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(runs) != 1 {
+			t.Fatalf("ListBackupRuns returned %d runs; want 1", len(runs))
+		}
+		if runs[0].Bytes != big || runs[0].Status != "ok" {
+			t.Errorf("the finished run = %+v; want %d bytes and status ok", runs[0], big)
+		}
+	})
+}
+
+// The widening lands on a POPULATED table: any installation that reaches 0017 has run
+// backups already, and their byte counts must come through the ALTER unchanged. Postgres
+// only — on SQLite the column was always 64-bit and 0017 is a no-op — and it drives the
+// schema version directly through the stopAfter seam, which is a package var, so it opens
+// its own store rather than going through eachDialect.
+func TestMigrate0017WidensBackupBytesOnAPopulatedDatabase(t *testing.T) {
+	url := os.Getenv("DAFFA_TEST_PG_URL")
+	if url == "" {
+		t.Skip("DAFFA_TEST_PG_URL not set — the int4 widening is NOT covered by this run")
+	}
+	ctx := context.Background()
+
+	stopAfter = "0016_cleanup_policies"
+	defer func() { stopAfter = "" }()
+
+	s, err := Open(ctx, url)
+	if err != nil {
+		t.Fatalf("open at 0016: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = s.db.Exec("DROP SCHEMA IF EXISTS " + quoteIdent(s.pgSchema) + " CASCADE")
+		s.Close()
+	})
+
+	env := &Environment{Name: "prod"}
+	if err := s.CreateEnvironment(ctx, env); err != nil {
+		t.Fatal(err)
+	}
+	target := &StorageTarget{Name: "r2", Endpoint: "https://r2.example.com", Bucket: "backups",
+		KeyID: "k", SecretEnc: "sealed"}
+	if err := s.CreateStorageTarget(ctx, target); err != nil {
+		t.Fatal(err)
+	}
+	job := &BackupJob{EnvID: env.ID, Name: "postgres", Engine: "postgres", Container: "db-1",
+		StorageID: target.ID, Encryption: "none"}
+	if err := s.CreateBackupJob(ctx, job); err != nil {
+		t.Fatal(err)
+	}
+
+	// The run an operator already has: just under the old int4 ceiling, which is the largest
+	// backup the pre-0017 schema could record at all.
+	const old int64 = 2_000_000_000
+	run := &BackupRun{JobID: job.ID, Trigger: "schedule"}
+	if err := s.StartBackupRun(ctx, run); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.FinishBackupRun(ctx, run.ID, old, "prod/postgres/old.sql", nil); err != nil {
+		t.Fatalf("recording a pre-0017 run: %v", err)
+	}
+
+	stopAfter = ""
+	if err := s.migrate(ctx); err != nil {
+		t.Fatalf("migrating to 0017: %v", err)
+	}
+
+	var colType string
+	if err := s.db.QueryRow(`SELECT data_type FROM information_schema.columns
+        WHERE table_schema = $1 AND table_name = 'backup_runs' AND column_name = 'bytes'`,
+		s.pgSchema).Scan(&colType); err != nil {
+		t.Fatal(err)
+	}
+	if colType != "bigint" {
+		t.Fatalf("backup_runs.bytes is %s after 0017; want bigint", colType)
+	}
+
+	// The existing row survived the rewrite with its number.
+	runs, err := s.ListBackupRuns(ctx, job.ID, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 1 || runs[0].Bytes != old || runs[0].Status != "ok" {
+		t.Fatalf("the pre-0017 run did not survive the migration: %+v", runs)
+	}
+
+	// The big write goes through a REOPENED store, because pgx caches each statement's
+	// parameter OIDs per connection and this one described that UPDATE while the column was
+	// still int4 — it would refuse to encode client-side, never reaching the widened column.
+	// Production never sees that: migrations run inside Open, before a single handler query.
+	s2, err := Open(ctx, url)
+	if err != nil {
+		t.Fatalf("reopen after 0017: %v", err)
+	}
+	defer s2.Close()
+
+	// The same row now takes a size the old column could not hold.
+	const big int64 = 9_500_000_000
+	if err := s2.FinishBackupRun(ctx, run.ID, big, "prod/postgres/new.sql", nil); err != nil {
+		t.Fatalf("recording a %d-byte backup after 0017: %v", big, err)
+	}
+	if runs, err = s2.ListBackupRuns(ctx, job.ID, 10); err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 1 || runs[0].Bytes != big {
+		t.Errorf("the widened run = %+v; want %d bytes", runs, big)
+	}
 }
