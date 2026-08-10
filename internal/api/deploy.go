@@ -278,6 +278,15 @@ func (s *Server) finishDeploy(ctx context.Context, dep *store.Deployment, stack 
 		if err := s.store.MarkStackDeployed(ctx, stack.ID, dep.BundleHash, dep.CommitSHA); err != nil {
 			slog.Error("marking the stack deployed", "stack", stack.ID, "err", err)
 		}
+		// On Swarm, `docker stack deploy --detach=false` returns zero once the services are
+		// CONVERGED, not once they are RUNNING. A container that exits immediately after
+		// convergence — crash-loop hit, wrong entrypoint, missing dependency — leaves the
+		// stack deployed but degraded, with no notification. A 35-second post-deploy check
+		// catches those before the operator finds out by staring at the screen the next
+		// morning. See docs/monitoring.md §swarm-liveness.
+		if stack.Engine == stacks.SwarmEngine.Name() {
+			go s.reconfirmPostDeploy(s.workerCtx, stack, dep)
+		}
 	}
 
 	outcome := map[string]string{
@@ -302,6 +311,60 @@ func (s *Server) finishDeploy(ctx context.Context, dep *store.Deployment, stack 
 // already deployed.
 func isDeploying(a stacks.Action) bool {
 	return a == stacks.ActionUp || a == stacks.ActionPull
+}
+
+const postDeployReconfirmDelay = 35 * time.Second
+
+func (s *Server) reconfirmPostDeploy(ctx context.Context, stack *store.Stack, dep *store.Deployment) {
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(postDeployReconfirmDelay):
+	}
+
+	ctx, cancel := finishContext(ctx)
+	defer cancel()
+
+	// Re-read: the stack might have been deleted or the environment removed.
+	latest, err := s.store.StackByID(ctx, stack.ID)
+	if err != nil {
+		return
+	}
+
+	node, err := s.runnerNode(ctx, latest)
+	if err != nil {
+		return
+	}
+
+	eng, err := stacks.EngineFor(latest.Engine)
+	if err != nil {
+		return
+	}
+
+	bundle, services, err := s.bundleFor(ctx, latest)
+	if err != nil {
+		return
+	}
+
+	status, err := stacks.Describe(ctx, node, eng, latest.Name, services, latest.DeployedHash, bundle.Hash)
+	if err != nil {
+		return
+	}
+
+	for _, svc := range status.Services {
+		if svc.State == "hook" {
+			continue
+		}
+		if svc.State == "missing" || svc.State == "partial" {
+			msg := fmt.Sprintf("post-deploy check: service %q in state %q 35 seconds after deploy — the container exited immediately", svc.Name, svc.State)
+			if _, err := s.store.FinishDeployment(ctx, dep.ID, 1, msg, false); err != nil {
+				slog.Error("flipping deployment verdict after post-deploy check", "deployment", dep.ID, "err", err)
+				return
+			}
+			s.notifyDeploy(ctx, latest, dep, 1, msg)
+			return
+		}
+	}
 }
 
 // bundleForDeploy resolves what a deployment will actually ship.

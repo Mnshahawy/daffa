@@ -99,6 +99,15 @@ export function containerStatus(state: string, statusText?: string, health?: str
       if (code === undefined || code === 0) return { tone: 'neutral', label: 'Completed' }
       return { tone: 'danger', label: 'Exited', detail: `code ${code}` }
     }
+    // Swarm-level states that fall through from stack Describe — not Docker container
+    // lifecycle states, but what the swarm status layer reports. They land here because
+    // the same StatusPill that draws a container also draws a service inside a stack row.
+    case 'missing':
+      return { tone: 'danger', label: 'Missing' }
+    case 'partial':
+      return { tone: 'warn', label: 'Partial', live: true }
+    case 'stopped':
+      return { tone: 'neutral', label: 'Stopped' }
     case 'dead':
       return { tone: 'danger', label: 'Dead' }
     default:
