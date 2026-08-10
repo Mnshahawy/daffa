@@ -312,6 +312,12 @@ const LogLimit = 1 << 20 // 1 MiB
 // allocate until it dies.
 const readCeiling = 16 << 20
 
+// StreamTail bounds the catch-up a LIVE log viewer gets when it attaches — see StreamLogs for
+// why an unbounded one is a denial of service against the browser. Generous enough that the
+// interesting part of a normal deploy is already on screen, small enough that a reconnect
+// against a runner in a print loop costs kilobytes rather than megabytes.
+const StreamTail = "2000"
+
 // runnerLogs reads what the engine printed.
 //
 // Two things here are easy to get wrong, and both were:
@@ -409,9 +415,18 @@ func Reap(ctx context.Context, node *dockerx.Node, ctrID string) {
 // was not always the log that got stored. Docker makes no promise that a read ends on a line
 // boundary; container logs already know this (see dockerx's lineWriter), and this is the same
 // problem.
+//
+// The catch-up is BOUNDED (StreamTail), and that bound is load-bearing rather than tidy. An
+// attach replays from byte 0, and EventSource reconnects on its own — so an unbounded catch-up
+// makes every reconnect re-send the whole log, and the browser appends each copy to the one it
+// already has. A `stack deploy` that cannot converge prints the same progress line every few
+// seconds for as long as it is allowed to run; at 25,000 lines a reconnect loop took the
+// deployment page down. Losing the head of a LIVE view costs nothing: when the row leaves
+// `running` the handler sends the stored log as a `replace` frame, which is the authoritative
+// copy including everything trimmed here.
 func StreamLogs(ctx context.Context, node *dockerx.Node, ctrID string, emit func(string) error) error {
 	rc, err := node.Client.ContainerLogs(ctx, ctrID, container.LogsOptions{
-		ShowStdout: true, ShowStderr: true, Follow: true,
+		ShowStdout: true, ShowStderr: true, Follow: true, Tail: StreamTail,
 	})
 	if errdefs.IsNotFound(err) {
 		// The runner was already collected and removed — in a hooked pipeline that is a

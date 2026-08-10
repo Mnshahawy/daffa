@@ -84,6 +84,13 @@ func (s *Server) runHookedDeployment(node *dockerx.Node, dep *store.Deployment, 
 
 	result, err := stacks.Wait(ctx, node, ctrID)
 	if err != nil {
+		// Wait does NOT remove the runner on this path, and once the pipeline returns nothing
+		// is watching it. Reap it before declaring the deploy failed — a root-capable container
+		// still running `stack deploy` behind a "failed" verdict is the worst of both: the
+		// history says the deploy is over and the box says otherwise. (It happened: a runner
+		// outlived its own 20-minute bound by more than an hour.) watchDeployment has always
+		// reaped here; the hooked pipeline forgot to.
+		stacks.Reap(ctx, node, ctrID)
 		log.WriteString("the runner could not be waited on: " + err.Error() + "\n")
 		s.finishDeploy(ctx, dep, stack, 1, log.String(), false)
 		return

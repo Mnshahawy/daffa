@@ -193,6 +193,28 @@ func (s *Server) runnerNode(ctx context.Context, stack *store.Stack) (*dockerx.N
 	return env.Control()
 }
 
+// finishTimeout bounds the bookkeeping that closes a deployment out. It is short on purpose:
+// this is a handful of local writes and one notification enqueue, never a Docker call that
+// could be waiting on a wedged daemon.
+const finishTimeout = 30 * time.Second
+
+// finishContext is the context a deployment's LAST writes run under, and it is deliberately
+// detached from the run's own deadline.
+//
+// A deploy reaches its terminal path with ctx ALREADY expired on exactly the paths that matter
+// most — the timeout ones. Recording the timeout with the context that just timed out fails,
+// which is how a row gets stuck in `running` FOREVER: it holds the stack's deploy claim so
+// every later deploy is refused, and the log endpoint keeps treating it as live, replaying the
+// whole runner log to every browser that reconnects. That shipped: a swarm `stack deploy` that
+// could never converge sat at the 20-minute bound, and the one line that would have recorded
+// it failed with "context deadline exceeded".
+//
+// The fix is that the verdict outlives the deadline, NOT that the deadline is longer — no run
+// bound is long enough to make writing the outcome optional.
+func finishContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), finishTimeout)
+}
+
 // watchDeployment collects a runner's verdict. It deliberately does not hold the request's
 // context: the deployment outlives the request that started it, and cancelling on disconnect
 // would abandon a deploy the moment someone closed a tab.
@@ -207,7 +229,12 @@ func (s *Server) watchDeployment(node *dockerx.Node, dep *store.Deployment, stac
 		// keeps mutating the stack behind a "failed" verdict.
 		stacks.Reap(ctx, node, dep.RunnerCtrID)
 		slog.Error("waiting for the runner", "deployment", dep.ID, "stack", stack.Name, "err", err)
-		_, _ = s.store.FinishDeployment(ctx, dep.ID, 1, "the runner could not be waited on: "+err.Error(), false)
+		reason := "the runner could not be waited on: " + err.Error()
+		fctx, fcancel := finishContext(ctx)
+		defer fcancel()
+		if _, ferr := s.store.FinishDeployment(fctx, dep.ID, 1, reason, false); ferr != nil {
+			slog.Error("recording an un-waitable runner", "deployment", dep.ID, "err", ferr)
+		}
 		return
 	}
 
@@ -220,6 +247,12 @@ func (s *Server) watchDeployment(node *dockerx.Node, dep *store.Deployment, stac
 // cannot forget to notify. It returns the status so a caller with a next step (an
 // automatic rollback) can decide on it.
 func (s *Server) finishDeploy(ctx context.Context, dep *store.Deployment, stack *store.Stack, exitCode int, log string, truncated bool) string {
+	// Detached from the run's deadline — see finishContext. Callers reach this funnel with an
+	// expired context on every timeout path, and a verdict that cannot be written is a
+	// deployment that never ends.
+	ctx, cancel := finishContext(ctx)
+	defer cancel()
+
 	// FinishDeployment decides the status, because it is the only place that can: a killed
 	// runner and a broken one both exit non-zero, and only the cancel flag in the database tells
 	// them apart.
@@ -764,14 +797,23 @@ func (s *Server) tearDown(ctx context.Context, stack *store.Stack, volumes bool,
 	waitCtx, cancel := stacks.DeployContext(context.Background())
 	defer cancel()
 
+	// Closing the row out is detached from waitCtx — see finishContext. On the timeout path
+	// waitCtx is precisely the thing that just expired, and a teardown recorded nowhere leaves
+	// the stack claimed and undeletable.
+	fctx, fcancel := finishContext(waitCtx)
+	defer fcancel()
+
 	result, err := stacks.Wait(waitCtx, node, ctrID)
 	if err != nil {
 		// See watchDeployment: Wait leaves the runner in place on this path, so reap it.
 		stacks.Reap(waitCtx, node, ctrID)
-		_, _ = s.store.FinishDeployment(waitCtx, dep.ID, 1, "the runner could not be waited on: "+err.Error(), false)
+		reason := "the runner could not be waited on: " + err.Error()
+		if _, ferr := s.store.FinishDeployment(fctx, dep.ID, 1, reason, false); ferr != nil {
+			slog.Error("recording an un-waitable teardown runner", "deployment", dep.ID, "err", ferr)
+		}
 		return err
 	}
-	if _, err := s.store.FinishDeployment(waitCtx, dep.ID, result.ExitCode, result.Log, result.Truncated); err != nil {
+	if _, err := s.store.FinishDeployment(fctx, dep.ID, result.ExitCode, result.Log, result.Truncated); err != nil {
 		slog.Error("recording the teardown result", "deployment", dep.ID, "err", err)
 	}
 
@@ -792,6 +834,12 @@ func (s *Server) tearDown(ctx context.Context, stack *store.Stack, volumes bool,
 // It returns the error so the caller can `return nil, s.failDeployment(...)` and be sure the
 // deployment was closed on every path out.
 func (s *Server) failDeployment(ctx context.Context, stack *store.Stack, dep *store.Deployment, reason string) error {
+	// This one runs on the REQUEST's context, and the claim is already taken. A browser that
+	// gives up between the claim and this write would otherwise leave the stack locked out of
+	// deploying by a row nothing will ever finish. See finishContext.
+	ctx, cancel := finishContext(ctx)
+	defer cancel()
+
 	if _, err := s.store.FinishDeployment(ctx, dep.ID, 1, reason, false); err != nil {
 		slog.Error("recording a failed deployment", "deployment", dep.ID, "err", err)
 	}

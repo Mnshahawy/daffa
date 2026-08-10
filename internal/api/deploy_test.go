@@ -93,6 +93,104 @@ func TestEveryDeployAttemptIsRecorded(t *testing.T) {
 	}
 }
 
+// A deployment's VERDICT must survive the deadline that produced it.
+//
+// This is the bug that made a stack undeployable and took the console down with it. A swarm
+// `stack deploy` that could never converge ran until the 20-minute run bound expired; the
+// pipeline then recorded the timeout using the very context that had just timed out, the write
+// failed with "context deadline exceeded", and the row stayed `running` forever. Downstream:
+// the stack's deploy claim was never released, so every later deploy was refused; and the log
+// endpoint went on treating the row as live, replaying the whole 25,000-line runner log to
+// every browser that reconnected until the tab died.
+//
+// So the assertion is deliberately brutal — an ALREADY-DEAD context, which is the exact state
+// every timeout path arrives in. If a future refactor threads the run's context into one of
+// these writes again, this fails.
+func TestADeploymentIsRecordedEvenWhenItsContextIsAlreadyDead(t *testing.T) {
+	ctx := context.Background()
+
+	st, err := store.Open(ctx, "sqlite://"+filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+
+	log := slog.New(slog.DiscardHandler)
+	s := &Server{store: st, pool: dockerx.NewPool(), notify: notify.New(st, fakeSealer{}, log)}
+
+	env := &store.Environment{Name: "prod"}
+	if err := st.CreateEnvironment(ctx, env); err != nil {
+		t.Fatal(err)
+	}
+
+	// dead is what a run context looks like the moment after it times out.
+	dead, cancel := context.WithCancel(ctx)
+	cancel()
+
+	for _, tc := range []struct {
+		name   string
+		stack  string
+		finish func(*store.Stack, *store.Deployment)
+		want   string
+	}{
+		{
+			name:  "the funnel every completed deploy ends in",
+			stack: "finish-deploy",
+			finish: func(stack *store.Stack, dep *store.Deployment) {
+				s.finishDeploy(dead, dep, stack, 1, "the runner could not be waited on", false)
+			},
+			want: store.DeployFailed,
+		},
+		{
+			name:  "a deploy that fell over before the runner started",
+			stack: "fail-deployment",
+			finish: func(stack *store.Stack, dep *store.Deployment) {
+				_ = s.failDeployment(dead, stack, dep, "the compose file will not parse")
+			},
+			want: store.DeployFailed,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stack := &store.Stack{
+				EnvID: env.ID, Name: tc.stack, SourceKind: "inline",
+				InlineYAML: "services:\n  app:\n    image: nginx:alpine\n",
+			}
+			if err := st.CreateStack(ctx, stack); err != nil {
+				t.Fatal(err)
+			}
+			dep := &store.Deployment{StackID: stack.ID, Action: string(stacks.ActionUp), Engine: "compose"}
+			if err := st.ClaimDeployment(ctx, dep); err != nil {
+				t.Fatal(err)
+			}
+
+			tc.finish(stack, dep)
+
+			got, err := st.DeploymentByID(ctx, dep.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Status == store.DeployRunning {
+				t.Fatalf("the deployment is STILL %q after being finished on a dead context.\n\n"+
+					"A row stuck in `running` holds the stack's deploy claim forever and makes "+
+					"the log endpoint replay a live stream that will never end. The verdict has "+
+					"to be written on a context detached from the run's deadline — see "+
+					"finishContext.", got.Status)
+			}
+			if got.Status != tc.want {
+				t.Errorf("the deployment is %q; want %q", got.Status, tc.want)
+			}
+
+			// And the claim is gone with it: the whole cost of a stuck row is the next deploy.
+			second := &store.Deployment{StackID: stack.ID, Action: string(stacks.ActionUp), Engine: "compose"}
+			if err := st.ClaimDeployment(ctx, second); err != nil {
+				t.Fatalf("the stack could not be deployed again: %v\n\n"+
+					"The finished deployment never released its claim, so this stack is now "+
+					"permanently undeployable.", err)
+			}
+		})
+	}
+}
+
 type fakeSealer struct{}
 
 func (fakeSealer) Open(s string) (string, error) { return s, nil }
