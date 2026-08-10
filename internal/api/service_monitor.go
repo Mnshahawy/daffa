@@ -98,10 +98,10 @@ func (s *Server) watchServices(ctx context.Context) {
 					detail := crashDetail(ctx, ctl, svc)
 
 					s.notify.Send(ctx, e.ID, notify.Data{
-						Event:    notify.ServiceDegraded,
-						Subject:  fmt.Sprintf("Service degraded: %s/%s on %s", svc.Stack, svc.Name, e.Name),
-						Title:    fmt.Sprintf("Service degraded: %s/%s", svc.Stack, svc.Name),
-						Summary:  fmt.Sprintf("Service %q in stack %q has %d/%d replicas running.",
+						Event:   notify.ServiceDegraded,
+						Subject: fmt.Sprintf("Service degraded: %s/%s on %s", svc.Stack, svc.Name, e.Name),
+						Title:   fmt.Sprintf("Service degraded: %s/%s", svc.Stack, svc.Name),
+						Summary: fmt.Sprintf("Service %q in stack %q has %d/%d replicas running.",
 							svc.Name, svc.Stack, svc.Running, svc.Desired),
 						HostName: e.Name,
 						Target:   svc.Stack + "/" + svc.Name,
