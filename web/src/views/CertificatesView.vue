@@ -48,6 +48,10 @@ function refresh() {
 // ── certificates ────────────────────────────────────────────────────────────────
 
 const addingCert = ref(false)
+// Set while editing an existing issued certificate; null while creating one. Only SANs and
+// usages are editable — the server re-issues immediately with the same key. Name, CA and
+// environment are fixed, so the form disables or hides them.
+const editingCert = ref<Certificate | null>(null)
 const certUpload = ref(false)
 const certBlank = () => ({
   name: '',
@@ -63,13 +67,39 @@ const certBlank = () => ({
 const certForm = ref(certBlank())
 const signingCAs = computed(() => (cas.value ?? []).filter((c) => c.can_sign && c.status === 'active'))
 
-const createCert = useMutation({
+function startEditCert(c: Certificate) {
+  editingCert.value = c
+  addingCert.value = true
+  certUpload.value = false
+  certForm.value = {
+    ...certBlank(),
+    name: c.name,
+    shared: !c.env_id,
+    ca_id: c.ca_id ?? '',
+    sans: c.sans.join(' '),
+    server: c.usages?.includes('server') ?? true,
+    client: c.usages?.includes('client') ?? false,
+  }
+}
+
+function closeCertForm() {
+  addingCert.value = false
+  editingCert.value = null
+  certForm.value = certBlank()
+}
+
+const saveCert = useMutation({
   mutationFn: () => {
     const f = certForm.value
+    const usages = [...(f.server ? ['server'] : []), ...(f.client ? ['client'] : [])]
+    if (editingCert.value)
+      return daffa.updateCert(editingCert.value.id, {
+        sans: f.sans.split(/[\s,]+/).filter(Boolean),
+        usages,
+      })
     // Created from a cluster's page, the cert belongs to that cluster unless
     // explicitly shared — the narrow default; other clusters never see it.
     const env_id = f.shared ? '' : session.envId
-    const usages = [...(f.server ? ['server'] : []), ...(f.client ? ['client'] : [])]
     return daffa.createCert(
       certUpload.value
         ? { name: f.name, env_id, cert_pem: f.cert_pem, chain_pem: f.chain_pem, key_pem: f.key_pem }
@@ -77,12 +107,13 @@ const createCert = useMutation({
     )
   },
   onSuccess: () => {
-    certForm.value = certBlank()
-    addingCert.value = false
-    toast.ok('Certificate created.')
+    const edited = !!editingCert.value
+    closeCertForm()
+    toast.ok(edited ? 'Certificate re-issued.' : 'Certificate created.')
     refresh()
   },
-  onError: (e) => toast.err(e, 'Could not create the certificate.'),
+  onError: (e) =>
+    toast.err(e, editingCert.value ? 'Could not re-issue the certificate.' : 'Could not create the certificate.'),
 })
 
 function certStatus(c: Certificate): Status {
@@ -283,15 +314,15 @@ async function onRemoveDelivery(d: CertDelivery) {
           </p>
         </div>
         <div class="ml-auto">
-          <BaseButton v-if="canEditCerts" :intent="addingCert ? 'secondary' : 'primary'" size="sm" @click="addingCert = !addingCert">
+          <BaseButton v-if="canEditCerts" :intent="addingCert ? 'secondary' : 'primary'" size="sm" @click="addingCert ? closeCertForm() : (addingCert = true)">
             <AppIcon v-if="!addingCert" name="plus" class="size-3.5" />
             {{ addingCert ? 'Cancel' : 'Add certificate' }}
           </BaseButton>
         </div>
       </div>
 
-      <form v-if="addingCert" class="surface mb-5 rounded-[var(--radius-card)] p-5" @submit.prevent="createCert.mutate()">
-        <div class="mb-3 flex items-center gap-4 text-sm">
+      <form v-if="addingCert" class="surface mb-5 rounded-[var(--radius-card)] p-5" @submit.prevent="saveCert.mutate()">
+        <div v-if="!editingCert" class="mb-3 flex items-center gap-4 text-sm">
           <label class="flex items-center gap-2">
             <input v-model="certUpload" type="radio" :value="false" class="accent-[var(--color-accent-500)]" />
             Issue from a CA
@@ -305,11 +336,12 @@ async function onRemoveDelivery(d: CertDelivery) {
         <div class="grid gap-4 sm:grid-cols-3">
           <div>
             <label for="crt-name" class="mb-1.5 block text-sm font-medium">Name</label>
-            <input id="crt-name" v-model="certForm.name" required placeholder="web-frontend" class="field" data-cursor="text" />
-            <p class="subtle mt-1 text-xs">Becomes the filenames in the volume: {{ certForm.name || 'name' }}.crt / .key</p>
+            <input id="crt-name" v-model="certForm.name" required :disabled="!!editingCert" placeholder="web-frontend" class="field disabled:opacity-60" data-cursor="text" />
+            <p v-if="editingCert" class="subtle mt-1 text-xs">The name is the filenames already delivered — fixed after creation.</p>
+            <p v-else class="subtle mt-1 text-xs">Becomes the filenames in the volume: {{ certForm.name || 'name' }}.crt / .key</p>
           </div>
           <template v-if="!certUpload">
-            <div>
+            <div v-if="!editingCert">
               <label for="crt-ca" class="mb-1.5 block text-sm font-medium">Authority</label>
               <Select id="crt-ca" v-model="certForm.ca_id" required>
                 <option value="" disabled>Choose a CA…</option>
@@ -319,7 +351,8 @@ async function onRemoveDelivery(d: CertDelivery) {
             <div>
               <label for="crt-sans" class="mb-1.5 block text-sm font-medium">SANs</label>
               <input id="crt-sans" v-model="certForm.sans" required placeholder="app.example.com www.example.com" class="field font-mono text-xs" data-cursor="text" />
-              <p class="subtle mt-1 text-xs">Space-separated. The first one is the common name. Editable later — editing re-issues.</p>
+              <p v-if="editingCert" class="subtle mt-1 text-xs">Space-separated. The first one is the common name. Saving re-issues immediately with the same key.</p>
+              <p v-else class="subtle mt-1 text-xs">Space-separated. The first one is the common name. Editable later — editing re-issues.</p>
             </div>
             <div>
               <span class="mb-1.5 block text-sm font-medium">Used as</span>
@@ -356,8 +389,8 @@ async function onRemoveDelivery(d: CertDelivery) {
           </div>
         </div>
 
-        <label class="mt-3 flex items-center gap-2 text-sm">
-          <input v-model="certForm.shared" type="checkbox" class="accent-[var(--color-accent-500)]" />
+        <label class="mt-3 flex items-center gap-2 text-sm" :class="{ 'opacity-60': !!editingCert }">
+          <input v-model="certForm.shared" type="checkbox" :disabled="!!editingCert" class="accent-[var(--color-accent-500)]" />
           Share with every cluster
         </label>
         <p class="subtle mt-1 text-xs">
@@ -365,8 +398,8 @@ async function onRemoveDelivery(d: CertDelivery) {
           cluster can have its own certificate under this name. Fixed after creation.
         </p>
 
-        <BaseButton type="submit" intent="primary" size="md" class="mt-4" :loading="createCert.isPending.value">
-          {{ certUpload ? 'Upload certificate' : 'Issue certificate' }}
+        <BaseButton type="submit" intent="primary" size="md" class="mt-4" :loading="saveCert.isPending.value">
+          {{ editingCert ? 'Re-issue certificate' : certUpload ? 'Upload certificate' : 'Issue certificate' }}
         </BaseButton>
       </form>
 
@@ -400,6 +433,7 @@ async function onRemoveDelivery(d: CertDelivery) {
               <td class="subtle hidden py-3 pr-3 text-right font-mono text-xs md:table-cell" :title="c.not_after">{{ expiry(c.not_after) }}</td>
               <td class="py-3 pr-4 text-right">
                 <div v-if="canEditCerts" class="flex items-center justify-end gap-1">
+                  <BaseButton v-if="c.ca_id" intent="secondary" size="xs" @click="startEditCert(c)">Edit</BaseButton>
                   <BaseButton v-if="c.ca_id" intent="secondary" size="xs" :disabled="renewCert.isPending.value" @click="renewCert.mutate(c.id)">
                     <AppIcon name="restart" class="size-3" />
                     Renew

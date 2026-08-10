@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"crypto"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -342,6 +343,53 @@ func TestCertEnvScopingAndUsages(t *testing.T) {
 
 // A CA with outbound_trust off is bundled and delivered but never joins the pool Daffa's
 // own registry/git reach-out verifies against.
+// Editing SANs on an issued certificate re-issues it immediately — new names in the PEM,
+// same private key, still verifying against its CA. The same-key half matters because it
+// is what makes the edit safe to ship to a delivery: consumers holding the .key file keep
+// working the moment the .crt lands.
+func TestSANEditReissuesWithTheSameKey(t *testing.T) {
+	s, ctx := certServer(t)
+
+	ca := postJSON[caView](t, s.handleCreateCA, "POST", "/api/certs/cas", nil,
+		`{"name":"edit-ca","common_name":"Edit CA"}`, http.StatusOK)
+	leaf := postJSON[certView](t, s.handleCreateCertificate, "POST", "/api/certs", nil,
+		`{"name":"web","ca_id":"`+ca.ID+`","sans":["app.example.com"]}`, http.StatusOK)
+
+	stored, err := s.store.CertificateByID(ctx, leaf.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := certs.ParseCert(stored.CertPEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	updated := postJSON[certView](t, s.handleUpdateCertificate, "PUT", "/api/certs/"+leaf.ID,
+		map[string]string{"id": leaf.ID},
+		`{"sans":["app.example.com","www.example.com","10.0.0.5"]}`, http.StatusOK)
+	if strings.Join(updated.SANs, " ") != "app.example.com www.example.com 10.0.0.5" {
+		t.Fatalf("updated SANs = %v", updated.SANs)
+	}
+
+	stored, err = s.store.CertificateByID(ctx, leaf.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := certs.ParseCert(stored.CertPEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(certs.SANList(parsed), " "); got != "app.example.com www.example.com 10.0.0.5" {
+		t.Fatalf("re-issued PEM SANs = %q", got)
+	}
+	if err := certs.Verify(stored.CertPEM, mustCA(t, s, ctx, ca.ID).CertPEM); err != nil {
+		t.Fatalf("the re-issued leaf does not verify against its CA: %v", err)
+	}
+	if !before.PublicKey.(interface{ Equal(crypto.PublicKey) bool }).Equal(parsed.PublicKey) {
+		t.Fatal("editing SANs replaced the private key; it must re-issue with the same one")
+	}
+}
+
 func TestOutboundTrustGatesManagedCAs(t *testing.T) {
 	s, ctx := certServer(t)
 
