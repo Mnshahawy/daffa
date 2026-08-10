@@ -137,6 +137,7 @@ func (s *Server) Start(ctx context.Context) {
 	// an optimisation but a correctness requirement.
 	s.spawn(ctx, s.notify.Worker)
 	s.spawn(ctx, s.watchHosts)
+	s.spawn(ctx, s.watchServices)
 
 	// Sampling, and the partition maintenance that keeps it from filling the disk.
 	s.spawn(ctx, s.collector.Run)

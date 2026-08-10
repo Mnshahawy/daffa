@@ -23,6 +23,10 @@ const (
 	MonitorFired    Event = "monitor.fired"
 	MonitorResolved Event = "monitor.resolved"
 
+	// Raised by the Swarm service liveness monitor when a service falls below its desired
+	// replica count after having been fully running. See docs/monitoring.md.
+	ServiceDegraded Event = "service.degraded"
+
 	// Raised by the certificate manager. See docs/certs.md.
 	CertExpiring    Event = "cert.expiring"
 	CertRenewFailed Event = "cert.renew_failed"
@@ -47,6 +51,7 @@ type Def struct {
 // All is the catalogue, in display order.
 var All = []Def{
 	{DeployFailed, "Deploy failed", "A stack deploy exited non-zero — including one a webhook started.", false},
+	{ServiceDegraded, "Service degraded", "A Swarm service fell below its desired replica count after having been fully running.", false},
 	{BackupFailed, "Backup failed", "A backup run failed. This is the one you want.", false},
 	{AgentOffline, "Host offline", "A host stopped answering.", false},
 	{MonitorFired, "Resource monitor fired", "A container crossed a threshold and stayed across it — memory above 70% for ten minutes, or whatever the rule says.", false},
