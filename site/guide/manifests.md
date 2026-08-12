@@ -11,6 +11,11 @@ daffa plan  -f myapp.yaml --server https://daffa.example.com --token $DAFFA_TOKE
 daffa apply -f myapp.yaml --deploy
 ```
 
+The CLI is the `daffa` binary itself — grab a prebuilt one for your platform from the
+[releases page](https://github.com/Mnshahawy/daffa/releases) (Linux, macOS, and Windows,
+with a `SHA256SUMS` beside them), drop it on your `PATH`, and point it at your server
+with `--server`/`--token` or the `DAFFA_SERVER`/`DAFFA_TOKEN` environment variables.
+
 Apply is **ensure-only**: it creates what is missing and updates safe fields, but it
 never deletes anything and never rotates trust — a certificate that differs from its
 declaration is reported as *drifted* and left alone. Removing things stays a decision

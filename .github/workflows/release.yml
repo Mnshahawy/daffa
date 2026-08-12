@@ -41,6 +41,8 @@ jobs:
   release:
     name: Cut ${{ github.event.inputs.bump }} release
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       # fetch-depth: 0 brings the full tag history the version math reads below.
       - uses: actions/checkout@v5
@@ -230,3 +232,77 @@ jobs:
           gh release create "$version" \
             --title "Daffa $version" \
             --generate-notes
+
+  # Ready-to-use binaries on the Release, for the CLI use of the daffa binary — `daffa
+  # plan` / `daffa apply` from a laptop or CI, `daffa restore --identity` on the
+  # operator machine that holds the age key. It is the SAME binary the image ships
+  # (server included, SPA embedded), cross-compiled per platform: one artifact, no
+  # separate CLI build to drift from the server.
+  #
+  # A separate job on purpose: the web build needs pnpm 9 exactly (the pin the whole
+  # repo carries — pnpm 10+'s ignored-builds gate exits non-zero), while the console-ui
+  # publish above deliberately rides corepack's floating pnpm. Two runners keep the two
+  # toolchains from fighting over one PATH.
+  binaries:
+    name: Attach release binaries
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      # Build exactly the tagged commit — not whatever the branch head has become while
+      # the release job ran.
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.release.outputs.version }}
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      # The SPA embeds into the binary via go:embed, so it builds once, first — the
+      # output is platform-independent and every cross-compile below reuses it.
+      - name: Build the SPA
+        working-directory: web
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      # Same flags as the Dockerfile: CGO off (pure-Go SQLite), trimpath, stripped,
+      # version stamped. tar.gz for unix, zip for windows; SHA256SUMS covers them all.
+      - name: Cross-compile and package
+        run: |
+          version='${{ needs.release.outputs.version }}'
+          mkdir -p dist
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
+            goos="${target%/*}"; goarch="${target#*/}"
+            bin=daffa; [ "$goos" = windows ] && bin=daffa.exe
+            out="daffa_${version#v}_${goos}_${goarch}"
+            CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" \
+              go build -trimpath -ldflags="-s -w -X main.version=${version}" \
+              -o "dist/${out}/${bin}" ./cmd/daffa
+            cp LICENSE "dist/${out}/"
+            if [ "$goos" = windows ]; then
+              (cd dist && zip -q -r "${out}.zip" "$out")
+            else
+              tar -czf "dist/${out}.tar.gz" -C dist "$out"
+            fi
+            rm -r "dist/${out}"
+          done
+          (cd dist && sha256sum daffa_* > SHA256SUMS)
+
+      - name: Upload to the Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          version='${{ needs.release.outputs.version }}'
+          gh release upload "$version" dist/* --clobber
