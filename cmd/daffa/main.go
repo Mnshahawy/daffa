@@ -73,6 +73,8 @@ func main() {
 		// The embedded spec, pipeable into external tooling without authentication —
 		// `daffa openapi | npx @redocly/cli lint -` and the like.
 		_, err = os.Stdout.Write(api.OpenAPISpec())
+	case "upgrade":
+		err = upgradeCmd(os.Args[2:])
 	case "-h", "--help", "help":
 		usage()
 		return
@@ -103,6 +105,7 @@ func usage() {
   daffa edge init --domain D --volume V   issue an internal-CA edge certificate and print its trust bundle
   daffa stack adopt [--name N]         record the running compose deployment as an editable Daffa stack
   daffa openapi                        print the API's OpenAPI 3.1 description
+  daffa upgrade [--check]              replace this binary with the latest release (--check: report only)
 
 Restore runs here, not in the browser: an encrypted snapshot needs your age PRIVATE
 key, and that key must never reach the server — otherwise the machine taking the
@@ -644,6 +647,20 @@ func manifestCmd(verb string) int {
 		fmt.Fprintf(os.Stderr, "daffa: %v\n", err)
 	}
 	return code
+}
+
+// upgradeCmd is `daffa upgrade`: replace this binary with the latest public release.
+// It reads the version stamped at build time, so a from-source "dev" build refuses
+// with instructions rather than clobbering itself with who-knows-what.
+func upgradeCmd(args []string) error {
+	fs := flag.NewFlagSet("upgrade", flag.ExitOnError)
+	check := fs.Bool("check", false, "only report whether a newer release exists")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return cli.Upgrade(ctx, cli.UpgradeOptions{Current: version, Check: *check})
 }
 
 // ── user ────────────────────────────────────────────────────────────────────────

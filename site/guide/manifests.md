@@ -15,6 +15,9 @@ The CLI is the `daffa` binary itself — grab a prebuilt one for your platform f
 [releases page](https://github.com/Mnshahawy/daffa/releases) (Linux, macOS, and Windows,
 with a `SHA256SUMS` beside them), drop it on your `PATH`, and point it at your server
 with `--server`/`--token` or the `DAFFA_SERVER`/`DAFFA_TOKEN` environment variables.
+From then on it keeps itself current: `daffa upgrade` downloads the latest release for
+your platform, verifies its checksum, and swaps the binary in place
+(`daffa upgrade --check` only reports).
 
 Apply is **ensure-only**: it creates what is missing and updates safe fields, but it
 never deletes anything and never rotates trust — a certificate that differs from its
