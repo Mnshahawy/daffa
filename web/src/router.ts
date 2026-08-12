@@ -139,6 +139,12 @@ export const router = createRouter({
           meta: { cap: Cap.CertsView },
         },
         {
+          path: 'manifests',
+          name: 'manifests',
+          component: () => import('./views/ManifestsView.vue'),
+          meta: { cap: Cap.ManifestsView },
+        },
+        {
           path: 'audit',
           name: 'audit',
           component: () => import('./views/AuditView.vue'),
@@ -306,6 +312,7 @@ function landingFor(session: ReturnType<typeof useSession>): string {
     [Cap.NetworksView, 'networks'],
     [Cap.ClustersView, 'cluster'],
     [Cap.AuditView, 'audit'],
+    [Cap.ManifestsView, 'manifests'],
     [Cap.UsersView, 'settings-users'],
     [Cap.RolesView, 'settings-roles'],
     [Cap.SettingsView, 'settings-auth'],

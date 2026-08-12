@@ -171,6 +171,14 @@ export const navGroups: NavGroup[] = [
     title: 'Records',
     items: [
       {
+        name: 'manifests',
+        label: 'Manifests',
+        icon: 'file',
+        cap: Cap.ManifestsView,
+        hint: 'Declared infrastructure — every plan and apply, with its report',
+        keywords: 'iac declarative provision apply plan yaml infrastructure document',
+      },
+      {
         name: 'audit',
         label: 'Audit',
         icon: 'scroll',
