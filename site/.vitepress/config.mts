@@ -61,6 +61,7 @@ export default defineConfig({
             { text: 'Getting started', link: '/guide/getting-started' },
             { text: 'Features', link: '/guide/features' },
             { text: 'Stacks & deployments', link: '/guide/stacks' },
+            { text: 'Manifests', link: '/guide/manifests' },
             { text: 'Backups', link: '/guide/backups' },
             { text: 'Security & access', link: '/guide/security' },
           ],
