@@ -6,6 +6,8 @@
 //	daffa user role -u NAME --role R grant a role to an existing account
 //	daffa user passwd -u NAME        change a password
 //	daffa admin-token                print a one-time break-glass sign-in URL
+//	daffa plan -f FILE               show what apply would change, touching nothing
+//	daffa apply -f FILE [--deploy]   create and update the resources a manifest declares
 //	daffa openapi                    print the API's OpenAPI 3.1 description
 package main
 
@@ -57,6 +59,10 @@ func main() {
 		err = userCmd(os.Args[2:])
 	case "restore":
 		err = restoreCmd()
+	case "plan", "apply":
+		// These carry their own exit-code contract (0 in sync, 2 diverged, 1 error)
+		// so CI can read divergence without parsing output — hence the early exit.
+		os.Exit(manifestCmd(cmd))
 	case "admin-token":
 		err = adminToken()
 	case "edge":
@@ -87,6 +93,8 @@ func usage() {
   daffa serve                          run the server (default)
   daffa agent --server URL --token T   run the agent on a managed host
   daffa restore --job J --snapshot S   restore a database backup (see below)
+  daffa plan -f manifest.yaml          show what apply would change, touching nothing
+  daffa apply -f manifest.yaml         create and update the resources a manifest declares (--deploy: then deploy its stacks in order)
   daffa user add -u NAME --role ROLE [--on HOST]   create a local account
   daffa user list                      list accounts and the roles they hold
   daffa user role -u NAME --role ROLE [--on HOST]  grant a role, optionally on one host
@@ -596,6 +604,46 @@ func restoreCmd() error {
 		Yes:      *yes,
 		Wipe:     *wipe,
 	})
+}
+
+// manifestCmd runs `daffa plan` / `daffa apply` — the declarative half of the CLI
+// (docs/provisioning.md). Both talk to a server over its API, like restore; the
+// document is parsed and validated locally first so a broken file never costs a
+// round-trip, and value_from_env slots resolve from THIS environment so no secret
+// ever sits in the file.
+func manifestCmd(verb string) int {
+	fs := flag.NewFlagSet(verb, flag.ExitOnError)
+	server := fs.String("server", os.Getenv("DAFFA_SERVER"), "Daffa server URL, e.g. https://ops.example.com")
+	file := fs.String("f", "", "path to the manifest file")
+	user := fs.String("user", os.Getenv("DAFFA_USER"), "Daffa username")
+	password := fs.String("password", os.Getenv("DAFFA_PASSWORD"), "Daffa password (prompted if omitted)")
+	token := fs.String("token", os.Getenv("DAFFA_TOKEN"), "Daffa API token (used instead of user/password)")
+	insecure := fs.Bool("insecure", false, "skip TLS verification (for an internal CA)")
+	deploy := false
+	if verb == "apply" {
+		fs.BoolVar(&deploy, "deploy", false, "after applying, deploy the manifest's stacks in document order")
+	}
+	if err := fs.Parse(os.Args[2:]); err != nil {
+		return 1
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	code, err := cli.Manifest(ctx, cli.ManifestOptions{
+		Verb:     verb,
+		Server:   *server,
+		File:     *file,
+		Username: *user,
+		Password: *password,
+		Token:    *token,
+		Insecure: *insecure,
+		Deploy:   deploy,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "daffa: %v\n", err)
+	}
+	return code
 }
 
 // ── user ────────────────────────────────────────────────────────────────────────

@@ -3,13 +3,11 @@
 package cli
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
-	"net/http/cookiejar"
 	"os"
 	"strings"
 	"time"
@@ -159,62 +157,19 @@ func readIdentity(path string) (string, error) {
 	return string(b), nil
 }
 
-// login authenticates to the Daffa server: an API token rides every request as a bearer
-// header, a username/password does one login round-trip and keeps the session cookie.
+// login wraps the shared connect with restore's error prefix.
 func login(ctx context.Context, o RestoreOptions) (*http.Client, error) {
-	jar, err := cookiejar.New(nil)
+	client, err := connect(ctx, connectOptions{
+		server:   o.Server,
+		username: o.Username,
+		password: o.Password,
+		token:    o.Token,
+		insecure: o.Insecure,
+	})
 	if err != nil {
-		return nil, err
-	}
-	client := &http.Client{Jar: jar, Timeout: 0} // no timeout: a restore can take a while
-	client.Transport = transport(o.Insecure)
-
-	if o.Token != "" {
-		client.Transport = &bearerTransport{token: o.Token, next: client.Transport}
-		return client, nil
-	}
-
-	if o.Username == "" {
-		return nil, fmt.Errorf("restore: --user is required (or set DAFFA_TOKEN)")
-	}
-	password := o.Password
-	if password == "" {
-		password, err = promptPassword("Password: ")
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	body, _ := json.Marshal(map[string]string{"username": o.Username, "password": password})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, o.Server+"/api/auth/login", bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("restore: connecting to %s: %w", o.Server, err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("restore: sign-in failed: %s", apiError(resp))
+		return nil, fmt.Errorf("restore: %w", err)
 	}
 	return client, nil
-}
-
-// bearerTransport stamps the token onto every request, so the rest of the CLI does not
-// know or care which credential it is running under.
-type bearerTransport struct {
-	token string
-	next  http.RoundTripper
-}
-
-func (t *bearerTransport) RoundTrip(r *http.Request) (*http.Response, error) {
-	r = r.Clone(r.Context())
-	r.Header.Set("Authorization", "Bearer "+t.token)
-	return t.next.RoundTrip(r)
 }
 
 func download(ctx context.Context, client *http.Client, o RestoreOptions) (io.ReadCloser, error) {
@@ -276,21 +231,4 @@ func upload(ctx context.Context, client *http.Client, o RestoreOptions, jobName 
 		fmt.Fprintln(os.Stderr, "\n--- database output ---\n"+out.Output)
 	}
 	return nil
-}
-
-func apiError(resp *http.Response) string {
-	var e struct {
-		Message string `json:"message"`
-	}
-	_ = json.NewDecoder(resp.Body).Decode(&e)
-	return firstNonEmpty(e.Message, resp.Status)
-}
-
-func firstNonEmpty(vals ...string) string {
-	for _, v := range vals {
-		if v != "" {
-			return v
-		}
-	}
-	return ""
 }
