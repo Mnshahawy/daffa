@@ -30,6 +30,17 @@ func manifestServer(t *testing.T) (*Server, context.Context, *store.Environment)
 	return s, ctx, env
 }
 
+// pretendSwarm marks the registered env as a Swarm so swarm-engine stacks pass
+// placement. Nothing in these tests deploys, so the daemon is never actually asked.
+func pretendSwarm(t *testing.T, s *Server, envID string) {
+	t.Helper()
+	env, err := s.pool.Get(envID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env.SwarmID = "swarm-pretend"
+}
+
 func manifestAdmin() *store.User {
 	return &store.User{ID: "u_manifest", Caps: caps.ScopedMask{Global: caps.Of(
 		caps.SSHKeysEdit, caps.RegistriesEdit, caps.GitCredsEdit, caps.NetworksEdit,
@@ -49,7 +60,7 @@ func runManifestDoc(t *testing.T, s *Server, ctx context.Context, u *store.User,
 	}
 	run := &manifestRun{
 		s: s, m: m, values: values, user: u, apply: apply,
-		envs:   map[string]string{},
+		envs: map[string]string{}, genValues: map[string]string{},
 		report: manifestReport{Name: m.Name, DocHash: manifest.Hash([]byte(doc))},
 	}
 	if code, msg := run.preflight(ctx); code != "" {
@@ -356,5 +367,124 @@ func TestManifestPreflightCoversEveryKind(t *testing.T) {
 		if c, _ := manifestCapFor(k); c == (caps.Cap{}) {
 			t.Errorf("kind %q has no capability — decide its authorization in manifestCapFor", k)
 		}
+	}
+}
+
+const generatedDoc = `
+version: 1
+cluster: local
+generated_secrets:
+  - { name: db-password, length: 24 }
+stacks:
+  - name: db
+    engine: swarm
+    source: {compose: "services: {}"}
+    secret_files:
+      - { name: db_password, from_generated: db-password }
+  - name: app
+    engine: swarm
+    source: {compose: "services: {}"}
+    env:
+      - { key: PG_PASSWORD, secret: true, from_generated: db-password }
+    secret_files:
+      - { name: database_url, value: "postgres://app:${generated:db-password}@db:5432/app" }
+`
+
+// One generated value reaches every slot that references it — the db's secret file,
+// the app's env var, and the composed DSN — and a second apply changes nothing.
+func TestManifestGeneratedSecretInjection(t *testing.T) {
+	s, ctx, env := manifestServer(t)
+	u := manifestAdmin()
+
+	// The local env is standalone, and these stacks are swarm — placement would block
+	// them. Pretend the env is a swarm so stack creation proceeds; nothing here
+	// deploys, so the daemon is never asked.
+	pretendSwarm(t, s, env.ID)
+
+	first := runManifestDoc(t, s, ctx, u, generatedDoc, nil, true)
+	if first.Summary.Create != 3 || first.Summary.Blocked != 0 {
+		t.Fatalf("first apply: %+v\n%+v", first.Summary, first.Resources)
+	}
+	if len(first.Unfilled) != 0 {
+		t.Fatalf("generated-backed slots reported unfilled: %+v", first.Unfilled)
+	}
+
+	row, err := s.store.SecretValueByName(ctx, "db-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, err := s.sealer.Open(row.ValueEnc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(value) != 24 {
+		t.Fatalf("generated value has length %d, want 24", len(value))
+	}
+
+	db, _ := s.store.StackByName(ctx, env.ID, "db")
+	app, _ := s.store.StackByName(ctx, env.ID, "app")
+	dbSecrets, _ := s.store.StackSecrets(ctx, db.ID)
+	if got, _ := s.sealer.Open(dbSecrets[0].ContentEnc); got != value {
+		t.Fatalf("db secret file %q != generated %q", got, value)
+	}
+	appVars, _ := s.store.StackEnv(ctx, app.ID)
+	if got, _ := s.sealer.Open(appVars[0].ValueEnc); got != value {
+		t.Fatalf("app env %q != generated %q", got, value)
+	}
+	appSecrets, _ := s.store.StackSecrets(ctx, app.ID)
+	if got, _ := s.sealer.Open(appSecrets[0].ContentEnc); got != "postgres://app:"+value+"@db:5432/app" {
+		t.Fatalf("composed DSN wrong: %q", got)
+	}
+
+	second := runManifestDoc(t, s, ctx, u, generatedDoc, nil, true)
+	if second.Summary.InSync != 3 || second.Summary.Create+second.Summary.Update != 0 {
+		t.Fatalf("second apply was not a no-op: %+v", second.Summary)
+	}
+	after, _ := s.store.SecretValueByName(ctx, "db-password")
+	if after.ValueEnc != row.ValueEnc {
+		t.Fatal("re-apply regenerated the secret")
+	}
+
+	// Owned slots CONVERGE: a hand-edited value is put back, and the report says so.
+	sealed, _ := s.sealer.Seal("tampered")
+	appVars[0].ValueEnc = sealed
+	if err := s.store.SetStackEnv(ctx, app.ID, appVars); err != nil {
+		t.Fatal(err)
+	}
+	third := runManifestDoc(t, s, ctx, u, generatedDoc, nil, true)
+	if res := verdictOf(t, third, "stack", "app"); res.Verdict != verdictUpdate {
+		t.Fatalf("tampered owned slot: verdict %q, want update", res.Verdict)
+	}
+	appVars, _ = s.store.StackEnv(ctx, app.ID)
+	if got, _ := s.sealer.Open(appVars[0].ValueEnc); got != value {
+		t.Fatalf("owned slot not converged: %q", got)
+	}
+
+	// Changed parameters are drift; the value does not move.
+	changed := strings.Replace(generatedDoc, "length: 24", "length: 32", 1)
+	fourth := runManifestDoc(t, s, ctx, u, changed, nil, true)
+	if res := verdictOf(t, fourth, "generated_secret", "db-password"); res.Verdict != verdictDrifted {
+		t.Fatalf("changed length: verdict %q, want drifted", res.Verdict)
+	}
+	final, _ := s.store.SecretValueByName(ctx, "db-password")
+	if final.ValueEnc != row.ValueEnc {
+		t.Fatal("drift regenerated the secret")
+	}
+}
+
+// Plan mints nothing: the generated secret and its consumers read as create, and no
+// value exists afterwards.
+func TestManifestGeneratedSecretPlanTouchesNothing(t *testing.T) {
+	s, ctx, env := manifestServer(t)
+	pretendSwarm(t, s, env.ID)
+	rep := runManifestDoc(t, s, ctx, manifestAdmin(), generatedDoc, nil, false)
+	if res := verdictOf(t, rep, "generated_secret", "db-password"); res.Verdict != verdictCreate {
+		t.Fatalf("plan verdict %q, want create", res.Verdict)
+	}
+	if len(rep.Unfilled) != 0 {
+		t.Fatalf("plan reported generated-backed slots unfilled: %+v", rep.Unfilled)
+	}
+	if _, err := s.store.SecretValueByName(ctx, "db-password"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatal("plan minted a secret value")
 	}
 }

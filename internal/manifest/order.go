@@ -13,6 +13,7 @@ const (
 	KindKeyring         Kind = "keyring"
 	KindCertDelivery    Kind = "cert_delivery"
 	KindKeyringDelivery Kind = "keyring_delivery"
+	KindGeneratedSecret Kind = "generated_secret"
 	KindStack           Kind = "stack"
 	KindVolumeSource    Kind = "volume_source"
 )
@@ -32,6 +33,7 @@ var Order = []Kind{
 	KindKeyring,
 	KindCertDelivery,
 	KindKeyringDelivery,
+	KindGeneratedSecret, // before stacks: their slots consume the generated values
 	KindStack,
 	KindVolumeSource,
 }

@@ -854,3 +854,49 @@ func TestMigrate0018ManifestApplies(t *testing.T) {
 		t.Fatalf("pre-migration registry after 0018: %v, %v", got, err)
 	}
 }
+
+func TestMigrate0019SecretValues(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	url := "sqlite://" + filepath.Join(dir, "test.db")
+
+	stopAfter = "0018_manifest_applies"
+	defer func() { stopAfter = "" }()
+
+	s, err := Open(ctx, url)
+	if err != nil {
+		t.Fatalf("open at 0018: %v", err)
+	}
+	defer s.Close()
+
+	// A populated 0018 world: an apply already on record must survive the migration.
+	prior := &ManifestApply{Name: "my-app", DocHash: "sha256:abc",
+		Document: "version: 1\n", Report: "{}", AppliedBy: "admin"}
+	if err := s.CreateManifestApply(ctx, prior); err != nil {
+		t.Fatal(err)
+	}
+
+	stopAfter = ""
+	if err := s.migrate(ctx); err != nil {
+		t.Fatalf("migrating to 0019: %v", err)
+	}
+
+	v := &SecretValue{Name: "db-password", ValueEnc: "sealed", Format: "alphanumeric", Length: 32, CreatedBy: "admin"}
+	if err := s.CreateSecretValue(ctx, v); err != nil {
+		t.Fatalf("creating a secret value on the migrated schema: %v", err)
+	}
+	got, err := s.SecretValueByName(ctx, "db-password")
+	if err != nil || got.ID != v.ID || got.Length != 32 {
+		t.Fatalf("SecretValueByName: %+v, %v", got, err)
+	}
+	if _, err := s.SecretValueByName(ctx, "ghost"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing name: %v, want ErrNotFound", err)
+	}
+	// Names are the identity: a second row under the same name must be refused.
+	if err := s.CreateSecretValue(ctx, &SecretValue{Name: "db-password", ValueEnc: "x", Format: "hex", Length: 16}); !IsDuplicate(err) {
+		t.Fatalf("duplicate name: %v, want a duplicate error", err)
+	}
+	if list, err := s.ListManifestApplies(ctx); err != nil || len(list) != 1 {
+		t.Fatalf("pre-migration applies after 0019: %d, %v", len(list), err)
+	}
+}

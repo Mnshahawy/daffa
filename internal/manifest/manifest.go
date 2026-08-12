@@ -30,6 +30,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
 
 	"go.yaml.in/yaml/v3"
 )
@@ -58,8 +59,28 @@ type Manifest struct {
 	Keyrings          []Keyring         `yaml:"keyrings"`
 	CertDeliveries    []CertDelivery    `yaml:"cert_deliveries"`
 	KeyringDeliveries []KeyringDelivery `yaml:"keyring_deliveries"`
+	GeneratedSecrets  []GeneratedSecret `yaml:"generated_secrets"`
 	Stacks            []Stack           `yaml:"stacks"`
 	VolumeSources     []VolumeSource    `yaml:"volume_sources"`
+}
+
+// GeneratedSecret declares a value Daffa GENERATES at first apply, seals under the
+// master key, and injects into every slot that references it — one value reaching N
+// stacks without a human typing it identically N times. Two rules are load-bearing:
+//
+//   - Generated ONCE, never again. A re-apply reads the stored value back; silently
+//     regenerating would take every consumer down in undefined order. Rotation is a
+//     deliberate future verb, not an apply side effect.
+//   - A declared secret nobody references is a validation error. Every generated
+//     secret has owners — the stacks whose slots consume it — and its creation is
+//     authorized by exactly their stacks.edit capabilities.
+//
+// Names are GLOBAL, like every credential store in Daffa: a generator emitting
+// per-cluster manifests namespaces them itself (amany-<cluster>-db-password).
+type GeneratedSecret struct {
+	Name   string `yaml:"name"`
+	Format string `yaml:"format"` // alphanumeric (default) | hex | base64
+	Length int    `yaml:"length"` // characters; 0 = 32
 }
 
 // SecretRef is a slot for a secret value. The document can say where the value comes
@@ -192,20 +213,29 @@ type StackSource struct {
 	Compose string     `yaml:"compose"`
 }
 
-// EnvVar declares one stack environment variable. Three legal shapes:
+// EnvVar declares one stack environment variable. The legal shapes:
 //
 //	{key: LOG_LEVEL, value: info}                     plaintext, inline
 //	{key: DB_PASSWORD, secret: true}                  slot: created empty, reported unfilled
 //	{key: DB_PASSWORD, secret: true,
 //	 value_from_env: DB_PASSWORD}                     slot the submitter fills
+//	{key: DB_PASSWORD, secret: true,
+//	 from_generated: db-password}                     injected from a generated secret
+//	{key: DSN, secret: true, value:
+//	 "postgres://app:${generated:db-password}@db/x"}  composed: the structure stays
+//	                                                  reviewable, only the reference
+//	                                                  is secret
 //
-// A secret with a literal value is a validation error — that is the doctrine, not a
-// style preference.
+// A secret with a literal value that references NO generated secret is a validation
+// error — that is the doctrine, not a style preference. Generated-backed slots are
+// OWNED by the manifest: apply converges them to the stored value, unlike plain
+// slots, which are never overwritten once a human fills them.
 type EnvVar struct {
-	Key          string `yaml:"key"`
-	Value        string `yaml:"value"`
-	Secret       bool   `yaml:"secret"`
-	ValueFromEnv string `yaml:"value_from_env"`
+	Key           string `yaml:"key"`
+	Value         string `yaml:"value"`
+	Secret        bool   `yaml:"secret"`
+	ValueFromEnv  string `yaml:"value_from_env"`
+	FromGenerated string `yaml:"from_generated"`
 }
 
 // Stack declares a stack REGISTRATION: source, watch paths, env and secret slots.
@@ -219,9 +249,48 @@ type Stack struct {
 	WatchPaths []string    `yaml:"watch_paths"`
 	AutoDeploy bool        `yaml:"auto_deploy"`
 	Env        []EnvVar    `yaml:"env"`
-	// SecretFiles are file-shaped secret slots (compose `secrets:` files), declared
-	// by name only and filled through the UI or API after apply.
-	SecretFiles []string `yaml:"secret_files"`
+	// SecretFiles are file-shaped secrets (compose `secrets:` files). A bare name is
+	// a slot, filled through the UI or API after apply; from_generated and composed
+	// value forms are owned and injected, like the EnvVar shapes.
+	SecretFiles []SecretFile `yaml:"secret_files"`
+}
+
+// SecretFile is one stack secret file. Three shapes, mirroring EnvVar:
+//
+//	db_password                                        slot (bare string)
+//	{name: db_password, from_generated: db-password}   injected
+//	{name: database_url, value:
+//	 "postgres://app:${generated:db-password}@db/x"}   composed
+//
+// A value that references no generated secret is refused — it would put a literal
+// secret in the document.
+type SecretFile struct {
+	Name          string `yaml:"name"`
+	FromGenerated string `yaml:"from_generated"`
+	Value         string `yaml:"value"`
+}
+
+// UnmarshalYAML accepts the bare-string slot form alongside the mapping forms, and
+// keeps the mapping strict by hand — yaml.Node.Decode has no KnownFields, and losing
+// typo detection on exactly the secret-bearing type would be the wrong place to relax.
+func (s *SecretFile) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind == yaml.ScalarNode {
+		s.Name = node.Value
+		return nil
+	}
+	var raw map[string]string
+	if err := node.Decode(&raw); err != nil {
+		return err
+	}
+	for k := range raw {
+		switch k {
+		case "name", "from_generated", "value":
+		default:
+			return fmt.Errorf("secret file: unknown field %q", k)
+		}
+	}
+	s.Name, s.FromGenerated, s.Value = raw["name"], raw["from_generated"], raw["value"]
+	return nil
 }
 
 // File is one inline volume-source file.
@@ -278,4 +347,36 @@ func Parse(doc []byte) (*Manifest, error) {
 func Hash(doc []byte) string {
 	sum := sha256.Sum256(doc)
 	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+// generatedRef matches ${generated:<name>} — the ONE substitution form the manifest
+// allows, legal only inside secret values. It exists because the alternative is worse:
+// either a composed value like a DSN becomes an opaque human-typed secret (structure
+// unreviewable, typos invisible until a deploy fails), or composition happens outside
+// Daffa and the secret leaks into a committed file.
+var generatedRef = regexp.MustCompile(`\$\{generated:([A-Za-z0-9][A-Za-z0-9_-]*)\}`)
+
+// GeneratedRefs returns the generated-secret names a value references, in order.
+func GeneratedRefs(s string) []string {
+	var out []string
+	for _, m := range generatedRef.FindAllStringSubmatch(s, -1) {
+		out = append(out, m[1])
+	}
+	return out
+}
+
+// ExpandGenerated substitutes every ${generated:name} via resolve. ok is false when
+// any reference could not be resolved — the caller must not use a half-expanded value.
+func ExpandGenerated(s string, resolve func(name string) (string, bool)) (string, bool) {
+	ok := true
+	out := generatedRef.ReplaceAllStringFunc(s, func(ref string) string {
+		name := generatedRef.FindStringSubmatch(ref)[1]
+		v, found := resolve(name)
+		if !found {
+			ok = false
+			return ref
+		}
+		return v
+	})
+	return out, ok
 }

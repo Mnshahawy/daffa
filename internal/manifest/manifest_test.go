@@ -64,6 +64,9 @@ cert_deliveries:
 keyring_deliveries:
   - { keyring: app-secrets, volume: app-keyring, uid: 100, gid: 100 }
 
+generated_secrets:
+  - { name: db-password, format: alphanumeric, length: 32 }
+
 stacks:
   - name: api
     engine: swarm
@@ -75,7 +78,10 @@ stacks:
       - { key: LOG_LEVEL, value: info }
       - { key: DB_PASSWORD, secret: true }
       - { key: SMTP_PASSWORD, secret: true, value_from_env: SMTP_PASSWORD }
-    secret_files: [db_client_key]
+      - { key: PG_PASSWORD, secret: true, from_generated: db-password }
+    secret_files:
+      - db_client_key
+      - { name: database_url, value: "postgres://app:${generated:db-password}@db:5432/app" }
   - name: edge
     engine: compose
     source:
@@ -123,8 +129,38 @@ func TestParseFullDocument(t *testing.T) {
 	if !env[1].Secret || env[1].Value != "" || env[2].ValueFromEnv != "SMTP_PASSWORD" {
 		t.Errorf("env slots: %+v", env)
 	}
+	if env[3].FromGenerated != "db-password" {
+		t.Errorf("from_generated lost: %+v", env[3])
+	}
+	// Both secret-file forms survive: the bare-string slot and the composed mapping.
+	files := m.Stacks[0].SecretFiles
+	if len(files) != 2 || files[0].Name != "db_client_key" || files[0].Value != "" ||
+		files[1].Name != "database_url" || len(GeneratedRefs(files[1].Value)) != 1 {
+		t.Errorf("secret files: %+v", files)
+	}
 	if m.Stacks[1].Source.Compose == "" || m.Stacks[1].Source.Git != nil {
 		t.Errorf("inline stack source: %+v", m.Stacks[1].Source)
+	}
+}
+
+func TestExpandGenerated(t *testing.T) {
+	resolve := func(name string) (string, bool) {
+		if name == "db-password" {
+			return "s3cret", true
+		}
+		return "", false
+	}
+	got, ok := ExpandGenerated("postgres://app:${generated:db-password}@db/app", resolve)
+	if !ok || got != "postgres://app:s3cret@db/app" {
+		t.Fatalf("expand: %q ok=%t", got, ok)
+	}
+	// An unresolvable reference must not half-expand: the caller gets ok=false and
+	// must not use the value.
+	if _, ok := ExpandGenerated("${generated:missing}", resolve); ok {
+		t.Fatal("unresolvable reference reported ok")
+	}
+	if refs := GeneratedRefs("a ${generated:x} b ${generated:y-2}"); len(refs) != 2 || refs[0] != "x" || refs[1] != "y-2" {
+		t.Fatalf("refs: %v", refs)
 	}
 }
 
@@ -199,7 +235,7 @@ func TestValidateRejects(t *testing.T) {
 			"cannot carry a literal value"},
 		{"value_from_env without secret",
 			"version: 1\ncluster: p\nstacks:\n  - name: api\n    engine: compose\n    source: {compose: 'x: y'}\n    env: [{key: DB_PASSWORD, value_from_env: DB_PASSWORD}]\n",
-			"implies secret"},
+			"imply secret"},
 		{"bad env key",
 			"version: 1\ncluster: p\nstacks:\n  - name: api\n    engine: compose\n    source: {compose: 'x: y'}\n    env: [{key: 9BAD, value: v}]\n",
 			"not a valid environment variable name"},
@@ -263,6 +299,33 @@ func TestValidateRejects(t *testing.T) {
 		{"bad secret file name",
 			"version: 1\ncluster: p\nstacks:\n  - {name: api, engine: compose, source: {compose: 'x: y'}, secret_files: ['a/b']}\n",
 			"becomes a file name"},
+		{"unreferenced generated secret",
+			"version: 1\ngenerated_secrets:\n  - {name: unused}\n",
+			"must have owners"},
+		{"undeclared generated reference",
+			"version: 1\ncluster: p\nstacks:\n  - name: api\n    engine: swarm\n    source: {compose: 'x: y'}\n    env: [{key: X, secret: true, from_generated: ghost}]\n",
+			"never declared"},
+		{"secret file with a literal value",
+			"version: 1\ncluster: p\nstacks:\n  - name: api\n    engine: swarm\n    source: {compose: 'x: y'}\n    secret_files: [{name: f, value: hunter2}]\n",
+			"would put a secret in the document"},
+		{"secret file with both sources",
+			"version: 1\ngenerated_secrets: [{name: g}]\ncluster: p\nstacks:\n  - name: api\n    engine: swarm\n    source: {compose: 'x: y'}\n    secret_files: [{name: f, from_generated: g, value: '${generated:g}'}]\n",
+			"mutually exclusive"},
+		{"env with two secret sources",
+			"version: 1\ngenerated_secrets: [{name: g}]\ncluster: p\nstacks:\n  - name: api\n    engine: swarm\n    source: {compose: 'x: y'}\n    env: [{key: X, secret: true, from_generated: g, value_from_env: X}]\n",
+			"mutually exclusive"},
+		{"from_generated without secret",
+			"version: 1\ngenerated_secrets: [{name: g}]\ncluster: p\nstacks:\n  - name: api\n    engine: swarm\n    source: {compose: 'x: y'}\n    env: [{key: X, from_generated: g}]\n",
+			"imply secret"},
+		{"composed secret env is legal",
+			"version: 1\ngenerated_secrets: [{name: g}]\ncluster: p\nstacks:\n  - name: api\n    engine: swarm\n    source: {compose: 'x: y'}\n    env: [{key: DSN, secret: true, value: 'postgres://a:${generated:g}@db/x'}]\n",
+			""},
+		{"bad generated format",
+			"version: 1\ngenerated_secrets: [{name: g, format: rot13}]\ncluster: p\nstacks:\n  - name: api\n    engine: swarm\n    source: {compose: 'x: y'}\n    env: [{key: X, secret: true, from_generated: g}]\n",
+			"format must be"},
+		{"generated length out of bounds",
+			"version: 1\ngenerated_secrets: [{name: g, length: 8}]\ncluster: p\nstacks:\n  - name: api\n    engine: swarm\n    source: {compose: 'x: y'}\n    env: [{key: X, secret: true, from_generated: g}]\n",
+			"between 16 and 128"},
 		{"bad network name",
 			"version: 1\ncluster: p\nnetworks:\n  - {name: '-bad'}\n",
 			"invalid name"},

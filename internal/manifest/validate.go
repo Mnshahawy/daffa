@@ -21,6 +21,9 @@ var (
 	certLikeName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$`)
 	dockerName   = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`)
 	envVarName   = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+	// genSecretName mirrors the ${generated:…} reference regex in manifest.go — a name
+	// the reference syntax cannot express is a name nothing could ever consume.
+	genSecretName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`)
 )
 
 func validProjectName(n string) bool {
@@ -194,6 +197,29 @@ func (m *Manifest) Validate() error {
 		}
 	}
 
+	// Generated secrets are declared here and referenced from stack slots; the stack
+	// loop below collects references through this closure, and the cross-check after
+	// it enforces both directions — an undeclared reference could never be filled,
+	// and an unreferenced declaration is a secret with no owner to authorize it.
+	genDeclared := map[string]bool{}
+	genReferenced := map[string]bool{}
+	reference := func(name string) { genReferenced[name] = true }
+	for _, g := range m.GeneratedSecrets {
+		if !genSecretName.MatchString(g.Name) {
+			fail("%s %q: invalid name — letters, digits, - and _ (it rides inside ${generated:…} references)", KindGeneratedSecret, g.Name)
+		}
+		dup(KindGeneratedSecret, "", g.Name)
+		genDeclared[g.Name] = true
+		switch g.Format {
+		case "", "alphanumeric", "hex", "base64":
+		default:
+			fail("%s %q: format must be alphanumeric, hex or base64 (got %q)", KindGeneratedSecret, g.Name, g.Format)
+		}
+		if g.Length != 0 && (g.Length < 16 || g.Length > 128) {
+			fail("%s %q: length must be between 16 and 128 characters (0 = 32)", KindGeneratedSecret, g.Name)
+		}
+	}
+
 	for _, d := range m.CertDeliveries {
 		if !dockerName.MatchString(d.Volume) {
 			fail("%s %q: invalid volume name", KindCertDelivery, d.Volume)
@@ -251,14 +277,34 @@ func (m *Manifest) Validate() error {
 				fail("%s %q: env key %q declared twice", KindStack, st.Name, e.Key)
 			}
 			envSeen[e.Key] = true
-			if e.Secret && e.Value != "" {
-				fail("%s %q: env %q: a secret cannot carry a literal value — leave it a slot, or use value_from_env", KindStack, st.Name, e.Key)
+
+			// A secret env var has at most ONE source: a slot (nothing), the
+			// submitter's environment, a generated secret, or a composed value whose
+			// only secret parts are generated references.
+			sources := 0
+			for _, set := range []bool{e.Value != "", e.ValueFromEnv != "", e.FromGenerated != ""} {
+				if set {
+					sources++
+				}
 			}
-			if !e.Secret && e.ValueFromEnv != "" {
-				fail("%s %q: env %q: value_from_env implies secret: true", KindStack, st.Name, e.Key)
+			if sources > 1 {
+				fail("%s %q: env %q: value, value_from_env and from_generated are mutually exclusive", KindStack, st.Name, e.Key)
+			}
+			refs := GeneratedRefs(e.Value)
+			if e.Secret && e.Value != "" && len(refs) == 0 {
+				fail("%s %q: env %q: a secret cannot carry a literal value — leave it a slot, use value_from_env, or compose it from ${generated:…} references", KindStack, st.Name, e.Key)
+			}
+			if !e.Secret && (e.ValueFromEnv != "" || e.FromGenerated != "" || len(refs) > 0) {
+				fail("%s %q: env %q: value_from_env, from_generated and ${generated:…} references imply secret: true", KindStack, st.Name, e.Key)
 			}
 			if e.ValueFromEnv != "" && !envVarName.MatchString(e.ValueFromEnv) {
 				fail("%s %q: env %q: value_from_env %q is not a valid environment variable name", KindStack, st.Name, e.Key, e.ValueFromEnv)
+			}
+			if e.FromGenerated != "" {
+				reference(e.FromGenerated)
+			}
+			for _, ref := range refs {
+				reference(ref)
 			}
 		}
 		// File-shaped secrets become Swarm raft secrets; on a compose stack the file
@@ -268,14 +314,28 @@ func (m *Manifest) Validate() error {
 			fail("%s %q: secret_files are a Swarm feature — on a compose stack use secret env vars instead", KindStack, st.Name)
 		}
 		fileSeen := map[string]bool{}
-		for _, name := range st.SecretFiles {
-			if !certLikeName.MatchString(name) {
-				fail("%s %q: secret file %q: invalid name — it becomes a file name", KindStack, st.Name, name)
+		for _, sf := range st.SecretFiles {
+			if !certLikeName.MatchString(sf.Name) {
+				fail("%s %q: secret file %q: invalid name — it becomes a file name", KindStack, st.Name, sf.Name)
 			}
-			if fileSeen[name] {
-				fail("%s %q: secret file %q declared twice", KindStack, st.Name, name)
+			if fileSeen[sf.Name] {
+				fail("%s %q: secret file %q declared twice", KindStack, st.Name, sf.Name)
 			}
-			fileSeen[name] = true
+			fileSeen[sf.Name] = true
+			if sf.FromGenerated != "" && sf.Value != "" {
+				fail("%s %q: secret file %q: from_generated and value are mutually exclusive", KindStack, st.Name, sf.Name)
+			}
+			refs := GeneratedRefs(sf.Value)
+			if sf.Value != "" && len(refs) == 0 {
+				// The one way a literal secret could sneak into the document, closed.
+				fail("%s %q: secret file %q: a value must compose at least one ${generated:…} reference — a literal would put a secret in the document", KindStack, st.Name, sf.Name)
+			}
+			if sf.FromGenerated != "" {
+				reference(sf.FromGenerated)
+			}
+			for _, ref := range refs {
+				reference(ref)
+			}
 		}
 	}
 
@@ -307,6 +367,17 @@ func (m *Manifest) Validate() error {
 				}
 				pathSeen[clean] = true
 			}
+		}
+	}
+
+	for name := range genReferenced {
+		if !genDeclared[name] {
+			fail("generated secret %q is referenced but never declared under generated_secrets", name)
+		}
+	}
+	for _, g := range m.GeneratedSecrets {
+		if genDeclared[g.Name] && !genReferenced[g.Name] {
+			fail("%s %q: declared but nothing references it — a generated secret must have owners", KindGeneratedSecret, g.Name)
 		}
 	}
 

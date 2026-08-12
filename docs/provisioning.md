@@ -171,6 +171,57 @@ Secret-bearing resources split by what the API can actually do:
   `blocked` and names what is needed. Creating a husk with an empty password would move
   the failure to deploy time, where it is unrecognizable.
 
+## Generated secrets
+
+Some secrets have no external source — a database password, a shared internal token —
+and typing them is pure ceremony, made worse when the same value must land in several
+stacks identically. A manifest can declare these as **generated**:
+
+```yaml
+generated_secrets:
+  - { name: db-password, format: alphanumeric, length: 32 }
+
+stacks:
+  - name: db
+    secret_files:
+      - { name: db_password, from_generated: db-password }
+  - name: app
+    env:
+      - { key: PG_PASSWORD, secret: true, from_generated: db-password }
+    secret_files:
+      - name: database_url
+        value: "postgres://app:${generated:db-password}@db:5432/app"
+```
+
+Daffa mints the value at first apply, seals it under the master key — the same at-rest
+posture as everything else — and injects it into every slot that references it. Three
+rules carry the design:
+
+- **Generated once, never again.** A re-apply reads the stored value back; parameter
+  changes read as `drifted`, untouched. A silently re-minted password would take every
+  consumer down in undefined order, so rotation is a deliberate future verb, not an
+  apply side effect. (For Swarm secret files, rotation also means renaming — a raft
+  secret is immutable — which is exactly why it cannot be a side effect.)
+- **Generated-backed slots are owned.** Unlike plain slots — never overwritten once a
+  human fills them — apply converges these to the stored value. That is what makes one
+  value reach N stacks without "enter it identically in both places", and what will
+  make a rotation propagate.
+- **Every generated secret has owners.** A declared secret nothing references is a
+  validation error, and its creation is authorized by exactly the referencing stacks'
+  `stacks.edit` — no new capability.
+
+The composed form (`${generated:name}` inside a secret value) is the one substitution
+the format allows, and it is legal only there. It exists because the alternative is
+worse: either a DSN becomes an opaque human-typed secret whose typos surface at deploy
+time, or composition happens outside Daffa and the secret lands in a committed file.
+A composed value that references no generated secret is refused outright — that would
+be a literal secret in the document.
+
+One caveat stated here so nobody mistakes generated for better-protected: a sealed
+*env* var — generated or typed — is interpolated into the Swarm service spec and
+readable by anyone who can `docker service inspect` on that cluster. Prefer secret
+files where the consumer supports them; that is unchanged.
+
 ## Authorization
 
 There is no manifest capability that grants anything. Every resource in a document is
