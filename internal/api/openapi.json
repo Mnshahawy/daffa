@@ -79,6 +79,9 @@
     },
     {
       "name": "audit"
+    },
+    {
+      "name": "manifests"
     }
   ],
   "security": [
@@ -13388,6 +13391,254 @@
           }
         }
       }
+    },
+    "/api/manifest/plan": {
+      "post": {
+        "operationId": "planManifest",
+        "tags": [
+          "manifests"
+        ],
+        "summary": "Plan a manifest: report what apply would change, touching nothing",
+        "description": "Declarative provisioning (docs/provisioning.md). Plan and apply are open at the route table because no single capability CAN stand here: a manifest spans namespaces, and the honest rule is the one the handlers enforce — a whole-document preflight checking every declared resource against the same capability its imperative route requires, refusing everything before any mutation. TestManifestPreflightCoversEveryKind pins that mapping.",
+        "x-daffa-open": "authorization is per-resource: the handler preflights every declared resource against its own capability before reporting anything",
+        "requestBody": {
+          "description": "Request bodies are capped at 1 MiB; unknown fields are refused.",
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManifestRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManifestReport"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is wrong, and the message says how to fix it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No live session or valid token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something went wrong on the server; the audit log has the details.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/manifest/apply": {
+      "post": {
+        "operationId": "applyManifest",
+        "tags": [
+          "manifests"
+        ],
+        "summary": "Apply a manifest: ensure every declared resource exists, never deleting or rotating trust",
+        "x-daffa-open": "authorization is per-resource: the handler preflights every declared resource against its own capability before any mutation",
+        "requestBody": {
+          "description": "Request bodies are capped at 1 MiB; unknown fields are refused.",
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManifestRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManifestReport"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is wrong, and the message says how to fix it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No live session or valid token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something went wrong on the server; the audit log has the details.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/manifest/applies": {
+      "get": {
+        "operationId": "listManifestApplies",
+        "tags": [
+          "manifests"
+        ],
+        "summary": "List manifest applies, newest first — metadata only, no documents",
+        "description": "Requires the capability granted globally — a cluster-scoped grant does not satisfy it.",
+        "x-daffa-capability": "manifests.view",
+        "x-daffa-scope": "global",
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ManifestApplyView"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No live session or valid token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but the capability is not held at the required scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something went wrong on the server; the audit log has the details.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/manifest/applies/{id}": {
+      "get": {
+        "operationId": "getManifestApply",
+        "tags": [
+          "manifests"
+        ],
+        "summary": "Read one manifest apply: its document, verbatim, and its full report",
+        "description": "Requires the capability granted globally — a cluster-scoped grant does not satisfy it.",
+        "x-daffa-capability": "manifests.view",
+        "x-daffa-scope": "global",
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManifestApplyView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No live session or valid token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but the capability is not held at the required scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Nothing lives at that id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something went wrong on the server; the audit log has the details.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -18102,6 +18353,179 @@
           "target",
           "outcome",
           "detail"
+        ]
+      },
+      "ManifestRequest": {
+        "type": "object",
+        "properties": {
+          "document": {
+            "type": "string"
+          },
+          "values": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "ManifestReport": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "doc_hash": {
+            "type": "string"
+          },
+          "resources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ManifestResourceView"
+            }
+          },
+          "unfilled": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ManifestUnfilledView"
+            }
+          },
+          "summary": {
+            "$ref": "#/components/schemas/ManifestSummaryView"
+          }
+        },
+        "required": [
+          "name",
+          "doc_hash",
+          "resources",
+          "unfilled",
+          "summary"
+        ]
+      },
+      "ManifestResourceView": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "cluster": {
+            "type": "string"
+          },
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "in-sync",
+              "create",
+              "update",
+              "unfilled",
+              "blocked",
+              "drifted"
+            ]
+          },
+          "detail": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "name",
+          "verdict"
+        ]
+      },
+      "ManifestUnfilledView": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "stack": {
+            "type": "string"
+          },
+          "cluster": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "name"
+        ]
+      },
+      "ManifestSummaryView": {
+        "type": "object",
+        "properties": {
+          "create": {
+            "type": "integer"
+          },
+          "update": {
+            "type": "integer"
+          },
+          "in_sync": {
+            "type": "integer"
+          },
+          "drifted": {
+            "type": "integer"
+          },
+          "blocked": {
+            "type": "integer"
+          },
+          "unfilled": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "create",
+          "update",
+          "in_sync",
+          "drifted",
+          "blocked",
+          "unfilled"
+        ]
+      },
+      "ManifestApplyView": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "doc_hash": {
+            "type": "string"
+          },
+          "applied_by": {
+            "type": "string"
+          },
+          "applied_at": {
+            "type": "string"
+          },
+          "dry_run": {
+            "type": "boolean"
+          },
+          "document": {
+            "type": "string"
+          },
+          "report": {
+            "$ref": "#/components/schemas/ManifestReport"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "doc_hash",
+          "applied_by",
+          "applied_at",
+          "dry_run"
         ]
       }
     }

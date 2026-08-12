@@ -51,6 +51,11 @@ const (
 	NSCerts    Namespace = "certs"    // certificate authorities, certificates, encryption keys
 	NSKeyrings Namespace = "keyrings" // rotatable application encryption keys and their deliveries
 	NSSSHKeys  Namespace = "sshkeys"  // SSH keys Daffa dials out to clusters and nodes with
+
+	// NSManifests holds no power over resources. Applying a manifest is authorized
+	// per-resource against the capabilities above (see the manifest routes); this
+	// namespace only covers reading the apply history.
+	NSManifests Namespace = "manifests"
 )
 
 // Area is a namespace as a person reads it. The role editor's section headers.
@@ -70,6 +75,7 @@ var Namespaces = []Area{
 	{NSCerts, "Certificates", "Certificate authorities, the certificates they sign, and backup encryption keys."},
 	{NSKeyrings, "Keyrings", "Rotatable application encryption keys, versioned so old data stays readable, delivered to hosts in volumes."},
 	{NSSSHKeys, "SSH keys", "Keys Daffa uses to reach clusters and nodes over SSH."},
+	{NSManifests, "Manifests", "Declarative provisioning documents and their apply history."},
 	{NSAdmin, "Administration", "Users, roles, clusters and Daffa's own settings."},
 }
 
@@ -174,6 +180,12 @@ var (
 	// ── sshkeys ──────────────────────────────────────────────────────────────────
 	SSHKeysView = Cap{NSSSHKeys, 1 << 0}
 	SSHKeysEdit = Cap{NSSSHKeys, 1 << 1}
+
+	// ── manifests ────────────────────────────────────────────────────────────────
+	// View-only on purpose. There is no manifests.apply: applying is authorized
+	// per-resource, so a "manifest capability" would either duplicate those checks or
+	// quietly bypass them.
+	ManifestsView = Cap{NSManifests, 1 << 0}
 
 	// ── admin ───────────────────────────────────────────────────────────────────
 	UsersView    = Cap{NSAdmin, 1 << 0}
@@ -393,6 +405,9 @@ var All = []Def{
 	// and holding the sealed private half, is a fleet-wide power.
 	{SSHKeysView, "sshkeys.view", "sshkeys", ModeView, ScopeEnv, "See SSH keys by name and fingerprint, and copy their PUBLIC half. Never the private key."},
 	{SSHKeysEdit, "sshkeys.edit", "sshkeys", ModeEdit, ScopeGlobal, "Generate, import and remove SSH keys. The private half is sealed and used to dial out to clusters and nodes — so this is fleet-wide."},
+
+	// ── manifests ────────────────────────────────────────────────────────────────
+	{ManifestsView, "manifests.view", "manifests", ModeView, ScopeGlobal, "See manifest apply history and plan reports. Applying a manifest needs no capability of its own — every resource in the document is checked against the capability its normal route requires."},
 
 	// ── admin ───────────────────────────────────────────────────────────────────
 	{UsersView, "users.view", "users", ModeView, ScopeGlobal, "See the list of users and the roles they hold."},

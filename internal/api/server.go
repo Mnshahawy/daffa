@@ -1531,6 +1531,29 @@ func (s *Server) apiRoutes() []route {
 		//oapi:enum AuditEntry.outcome ok|error|denied
 		{pattern: "GET /api/audit", cap: caps.AuditView, scope: scopeAny, h: s.handleAudit,
 			resp: []auditEntryView(nil), ts: "audit"},
+
+		// ── manifests ──────────────────────────────────────────────────────────────
+		// Declarative provisioning (docs/provisioning.md). Plan and apply are open at
+		// the route table because no single capability CAN stand here: a manifest
+		// spans namespaces, and the honest rule is the one the handlers enforce — a
+		// whole-document preflight checking every declared resource against the same
+		// capability its imperative route requires, refusing everything before any
+		// mutation. TestManifestPreflightCoversEveryKind pins that mapping.
+		//oapi:summary Plan a manifest: report what apply would change, touching nothing
+		//oapi:enum ManifestResourceView.verdict in-sync|create|update|unfilled|blocked|drifted
+		{pattern: "POST /api/manifest/plan", scope: scopeNone,
+			open: "authorization is per-resource: the handler preflights every declared resource against its own capability before reporting anything",
+			h:    s.handleManifestPlan, req: manifestRequest{}, resp: manifestReport{}, ts: "planManifest"},
+		//oapi:summary Apply a manifest: ensure every declared resource exists, never deleting or rotating trust
+		{pattern: "POST /api/manifest/apply", scope: scopeNone,
+			open: "authorization is per-resource: the handler preflights every declared resource against its own capability before any mutation",
+			h:    s.handleManifestApply, req: manifestRequest{}, resp: manifestReport{}, ts: "applyManifest"},
+		//oapi:summary List manifest applies, newest first — metadata only, no documents
+		{pattern: "GET /api/manifest/applies", cap: caps.ManifestsView, scope: scopeGlobal, h: s.handleListManifestApplies,
+			resp: []manifestApplyView(nil), ts: "listManifestApplies"},
+		//oapi:summary Read one manifest apply: its document, verbatim, and its full report
+		{pattern: "GET /api/manifest/applies/{id}", cap: caps.ManifestsView, scope: scopeGlobal, h: s.handleGetManifestApply,
+			resp: manifestApplyView{}, ts: "getManifestApply"},
 	}
 }
 

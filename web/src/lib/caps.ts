@@ -26,6 +26,8 @@ export const Ns = {
   Keyrings: 'keyrings',
   /** Keys Daffa uses to reach clusters and nodes over SSH. */
   Sshkeys: 'sshkeys',
+  /** Declarative provisioning documents and their apply history. */
+  Manifests: 'manifests',
   /** Users, roles, clusters and Daffa's own settings. */
   Admin: 'admin',
 } as const
@@ -125,6 +127,8 @@ export const Cap = {
   SshkeysView: { ns: Ns.Sshkeys, bit: 1 },
   /** Generate, import and remove SSH keys. The private half is sealed and used to dial out to clusters and nodes — so this is fleet-wide. */
   SshkeysEdit: { ns: Ns.Sshkeys, bit: 2 },
+  /** See manifest apply history and plan reports. Applying a manifest needs no capability of its own — every resource in the document is checked against the capability its normal route requires. */
+  ManifestsView: { ns: Ns.Manifests, bit: 1 },
   /** See the list of users and the roles they hold. */
   UsersView: { ns: Ns.Admin, bit: 1 },
   /** Create, disable and delete users, reset passwords, and grant roles. */

@@ -114,12 +114,14 @@ type Network struct {
 // CA declares a certificate authority. Trust material is never rotated by apply: an
 // existing CA whose parameters differ is reported as drift, untouched.
 type CA struct {
-	Name          string `yaml:"name"`
-	CommonName    string `yaml:"common_name"`
-	Org           string `yaml:"org"`
-	KeyAlgo       string `yaml:"key_algo"` // empty = server default
-	Days          int    `yaml:"days"`     // 0 = server default
-	OutboundTrust bool   `yaml:"outbound_trust"`
+	Name       string `yaml:"name"`
+	CommonName string `yaml:"common_name"`
+	Org        string `yaml:"org"`
+	KeyAlgo    string `yaml:"key_algo"` // empty = server default
+	Days       int    `yaml:"days"`     // 0 = server default
+	// OutboundTrust is a pointer because absent must mean the API's default (true —
+	// Daffa's own outbound TLS trusts the CA), and a plain bool cannot say "absent".
+	OutboundTrust *bool `yaml:"outbound_trust"`
 }
 
 // Certificate declares a leaf certificate issued by a named CA. Like CAs, an

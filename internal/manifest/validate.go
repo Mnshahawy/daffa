@@ -144,6 +144,9 @@ func (m *Manifest) Validate() error {
 			fail("%s %q: invalid name", KindCA, ca.Name)
 		}
 		dup(KindCA, "", ca.Name)
+		if strings.TrimSpace(ca.CommonName) == "" {
+			fail("%s %q: common_name is required — it is what the CA calls itself in every chain it signs", KindCA, ca.Name)
+		}
 		if ca.Days < 0 {
 			fail("%s %q: days cannot be negative", KindCA, ca.Name)
 		}
@@ -257,6 +260,12 @@ func (m *Manifest) Validate() error {
 			if e.ValueFromEnv != "" && !envVarName.MatchString(e.ValueFromEnv) {
 				fail("%s %q: env %q: value_from_env %q is not a valid environment variable name", KindStack, st.Name, e.Key, e.ValueFromEnv)
 			}
+		}
+		// File-shaped secrets become Swarm raft secrets; on a compose stack the file
+		// could never mount (the bundle exists only inside the runner container), so
+		// the API refuses them there — catch it here, where the fix is one line away.
+		if len(st.SecretFiles) > 0 && st.Engine != "swarm" {
+			fail("%s %q: secret_files are a Swarm feature — on a compose stack use secret env vars instead", KindStack, st.Name)
 		}
 		fileSeen := map[string]bool{}
 		for _, name := range st.SecretFiles {

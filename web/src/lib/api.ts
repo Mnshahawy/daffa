@@ -1437,6 +1437,55 @@ export interface AuditEntry {
   detail: string
 }
 
+export interface ManifestRequest {
+  document?: string
+  values?: Record<string, string>
+}
+
+export interface ManifestReport {
+  name: string
+  doc_hash: string
+  resources: ManifestResourceView[]
+  unfilled: ManifestUnfilledView[]
+  summary: ManifestSummaryView
+}
+
+export interface ManifestResourceView {
+  kind: string
+  name: string
+  cluster?: string
+  verdict: 'in-sync' | 'create' | 'update' | 'unfilled' | 'blocked' | 'drifted'
+  detail?: string
+  id?: string
+}
+
+export interface ManifestUnfilledView {
+  kind: string
+  stack?: string
+  cluster?: string
+  name: string
+}
+
+export interface ManifestSummaryView {
+  create: number
+  update: number
+  in_sync: number
+  drifted: number
+  blocked: number
+  unfilled: number
+}
+
+export interface ManifestApplyView {
+  id: string
+  name: string
+  doc_hash: string
+  applied_by: string
+  applied_at: string
+  dry_run: boolean
+  document?: string
+  report?: ManifestReport
+}
+
 // ── generated client ─────────────────────────────────────────────────────────
 // Methods migrate here from api-manual.ts as routes declare `ts:` in the route
 // table. The spread order means a name collision would silently shadow the manual
@@ -1651,4 +1700,8 @@ export const daffa = {
   testNotifyChannel: (id: string) => api.post<TestResult>(`/api/notifications/channels/${id}/test`),
   deleteNotifyChannel: (id: string) => api.del<StatusResponse>(`/api/notifications/channels/${id}`),
   audit: () => api.get<AuditEntry[]>('/api/audit'),
+  planManifest: (body: ManifestRequest) => api.post<ManifestReport>('/api/manifest/plan', body),
+  applyManifest: (body: ManifestRequest) => api.post<ManifestReport>('/api/manifest/apply', body),
+  listManifestApplies: () => api.get<ManifestApplyView[]>('/api/manifest/applies'),
+  getManifestApply: (id: string) => api.get<ManifestApplyView>(`/api/manifest/applies/${id}`),
 } as const

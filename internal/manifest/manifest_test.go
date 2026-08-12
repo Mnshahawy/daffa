@@ -175,7 +175,7 @@ func TestValidateRejects(t *testing.T) {
 			"version: 1\ncluster: p\n" +
 				"stacks:\n  - {name: api, engine: compose, source: {compose: 'x: y'}}\n" +
 				"  - {name: api, cluster: q, engine: compose, source: {compose: 'x: y'}}\n" +
-				"cas: [{name: ca1}]\n" +
+				"cas: [{name: ca1, common_name: CA One}]\n" +
 				"certificates:\n  - {name: api, ca: ca1, sans: [a]}\n" +
 				"  - {name: api, shared: true, ca: ca1, sans: [a]}\n",
 			""},
