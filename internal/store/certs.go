@@ -101,6 +101,12 @@ func (s *Store) CertAuthorityByID(ctx context.Context, id string) (*CertAuthorit
 	return scanCA(s.queryRow(ctx, `SELECT `+caCols+` FROM cert_authorities WHERE id = ?`, id))
 }
 
+// CertAuthorityByName resolves the name a manifest declares; cert_authorities.name is
+// UNIQUE (a staged NEXT CA is a new row under a new name, so this never sees two).
+func (s *Store) CertAuthorityByName(ctx context.Context, name string) (*CertAuthority, error) {
+	return scanCA(s.queryRow(ctx, `SELECT `+caCols+` FROM cert_authorities WHERE name = ?`, name))
+}
+
 func (s *Store) ListCertAuthorities(ctx context.Context) ([]*CertAuthority, error) {
 	rows, err := s.query(ctx, `SELECT `+caCols+` FROM cert_authorities ORDER BY name`)
 	if err != nil {
@@ -247,6 +253,15 @@ func (s *Store) CreateCertificate(ctx context.Context, c *Certificate) error {
 
 func (s *Store) CertificateByID(ctx context.Context, id string) (*Certificate, error) {
 	return scanCert(s.queryRow(ctx, `SELECT `+certCols+` FROM certificates WHERE id = ?`, id))
+}
+
+// CertificateByName resolves the identity a manifest declares. The key mirrors the
+// certificates_env_name unique index — (COALESCE(env_id,”), name) — so envID "" finds
+// the SHARED certificate of that name, exactly as the index treats it.
+func (s *Store) CertificateByName(ctx context.Context, envID, name string) (*Certificate, error) {
+	return scanCert(s.queryRow(ctx,
+		`SELECT `+certCols+` FROM certificates WHERE COALESCE(env_id,'') = ? AND name = ?`,
+		envID, name))
 }
 
 // ListCertificates returns the certificates the caller may see: SHARED ones (no env)

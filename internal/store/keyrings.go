@@ -77,6 +77,11 @@ func (s *Store) KeyringByID(ctx context.Context, id string) (*Keyring, error) {
 	return scanKeyring(s.queryRow(ctx, `SELECT `+keyringCols+` FROM keyrings WHERE id = ?`, id))
 }
 
+// KeyringByName resolves the name a manifest declares; keyrings.name is UNIQUE.
+func (s *Store) KeyringByName(ctx context.Context, name string) (*Keyring, error) {
+	return scanKeyring(s.queryRow(ctx, `SELECT `+keyringCols+` FROM keyrings WHERE name = ?`, name))
+}
+
 func (s *Store) ListKeyrings(ctx context.Context) ([]*Keyring, error) {
 	rows, err := s.query(ctx, `SELECT `+keyringCols+` FROM keyrings ORDER BY name`)
 	if err != nil {
@@ -274,6 +279,16 @@ func (s *Store) CreateKeyringDelivery(ctx context.Context, d *KeyringDelivery) e
 func (s *Store) KeyringDeliveryByID(ctx context.Context, id string) (*KeyringDelivery, error) {
 	return scanKeyringDelivery(s.queryRow(ctx,
 		`SELECT `+keyringDeliveryCols+` FROM keyring_deliveries WHERE id = ?`, id))
+}
+
+// KeyringDeliveryForVolume finds one keyring's delivery into one volume on one host —
+// the identity a manifest declares. Keyed on all three because several keyrings
+// legitimately deliver into a shared volume (the name is the filename prefix), so
+// (env, volume) alone would be ambiguous.
+func (s *Store) KeyringDeliveryForVolume(ctx context.Context, keyringID, envID, volume string) (*KeyringDelivery, error) {
+	return scanKeyringDelivery(s.queryRow(ctx,
+		`SELECT `+keyringDeliveryCols+` FROM keyring_deliveries
+        WHERE keyring_id = ? AND env_id = ? AND volume = ?`, keyringID, envID, volume))
 }
 
 // ListKeyringDeliveries returns the deliveries on hosts the caller may see.

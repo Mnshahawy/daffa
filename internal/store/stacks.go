@@ -71,6 +71,23 @@ func (s *Store) RegistryByID(ctx context.Context, id string) (*Registry, error) 
 	return &r, nil
 }
 
+// RegistryByName resolves the name a manifest declares; registries.name is UNIQUE.
+func (s *Store) RegistryByName(ctx context.Context, name string) (*Registry, error) {
+	var r Registry
+	var createdAt string
+	err := s.queryRow(ctx, `SELECT id, name, url, username, password_enc, created_at
+        FROM registries WHERE name = ?`, name).
+		Scan(&r.ID, &r.Name, &r.URL, &r.Username, &r.PasswordEnc, &createdAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	r.CreatedAt = parseTS(createdAt)
+	return &r, nil
+}
+
 func (s *Store) DeleteRegistry(ctx context.Context, id string) error {
 	_, err := s.exec(ctx, `DELETE FROM registries WHERE id = ?`, id)
 	return err
@@ -203,6 +220,17 @@ func (s *Store) UpdateStackSource(ctx context.Context, st *Stack) error {
 
 func (s *Store) StackByID(ctx context.Context, id string) (*Stack, error) {
 	st, err := scanStack(s.queryRow(ctx, `SELECT `+stackReadCols+` FROM stacks WHERE id = ?`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return st, err
+}
+
+// StackByName resolves the identity a manifest declares: names are unique per host
+// (stacks_env_name_uq), so one (env, name) pair is one stack.
+func (s *Store) StackByName(ctx context.Context, envID, name string) (*Stack, error) {
+	st, err := scanStack(s.queryRow(ctx,
+		`SELECT `+stackReadCols+` FROM stacks WHERE env_id = ? AND name = ?`, envID, name))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}

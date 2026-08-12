@@ -1211,6 +1211,26 @@ CREATE TABLE env_cleanup_runs (
 -- Nothing to do on SQLite: INTEGER is already 64-bit there, so the column and every row
 -- in it are correct. The widening is Postgres-only, below.
 `, pg: `ALTER TABLE backup_runs ALTER COLUMN bytes TYPE BIGINT;`},
+
+	// Applied manifests, for history and drift-diffing (docs/provisioning.md). The document
+	// is stored VERBATIM: the format cannot carry a secret by construction — a secret field
+	// only decodes as a value_from_env mapping (internal/manifest.SecretRef), and resolved
+	// values travel beside the document, never inside it — so what was submitted is safe to
+	// keep and byte-identical to what the operator wrote. Plans are recorded too (dry_run),
+	// because "what drifted, when" is worth as much as "what was applied, when".
+	{name: "0018_manifest_applies", sql: `
+CREATE TABLE manifest_applies (
+    id         TEXT PRIMARY KEY,
+    name       TEXT NOT NULL,               -- the document's name: label, not an identity
+    doc_hash   TEXT NOT NULL,               -- sha256 of the submitted bytes
+    document   TEXT NOT NULL,               -- verbatim; carries no secrets by construction
+    report     TEXT NOT NULL,               -- the per-resource verdict report, JSON
+    applied_by TEXT NOT NULL,
+    applied_at TEXT NOT NULL,
+    dry_run    INTEGER NOT NULL DEFAULT 0   -- 1 = a plan; nothing was executed
+);
+CREATE INDEX manifest_applies_name_idx ON manifest_applies (name, applied_at);
+`},
 }
 
 // migrateCertEnvScope is 0009: certificates gain a nullable env_id and lose global name

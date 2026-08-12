@@ -72,6 +72,11 @@ func (s *Store) SSHKeyByID(ctx context.Context, id string) (*SSHKey, error) {
 	return scanSSHKey(s.queryRow(ctx, `SELECT `+sshKeyCols+` FROM ssh_keys WHERE id = ?`, id))
 }
 
+// SSHKeyByName resolves the name a manifest declares; ssh_keys.name is UNIQUE.
+func (s *Store) SSHKeyByName(ctx context.Context, name string) (*SSHKey, error) {
+	return scanSSHKey(s.queryRow(ctx, `SELECT `+sshKeyCols+` FROM ssh_keys WHERE name = ?`, name))
+}
+
 func (s *Store) ListSSHKeys(ctx context.Context) ([]*SSHKey, error) {
 	rows, err := s.query(ctx, `SELECT `+sshKeyCols+` FROM ssh_keys ORDER BY name`)
 	if err != nil {

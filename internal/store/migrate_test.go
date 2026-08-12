@@ -803,3 +803,54 @@ func TestMigrate0015FleetDeliveries(t *testing.T) {
 		t.Errorf("groups after consumer-env deletion = %d, %v; want 0", orphans, err)
 	}
 }
+
+func TestMigrate0018ManifestApplies(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	url := "sqlite://" + filepath.Join(dir, "test.db")
+
+	stopAfter = "0017_backup_run_bytes_bigint"
+	defer func() { stopAfter = "" }()
+
+	s, err := Open(ctx, url)
+	if err != nil {
+		t.Fatalf("open at 0017: %v", err)
+	}
+	defer s.Close()
+
+	// A populated 0017 world — the rows a manifest would later resolve by name.
+	env := &Environment{Name: "prod"}
+	if err := s.CreateEnvironment(ctx, env); err != nil {
+		t.Fatal(err)
+	}
+	st := &Stack{EnvID: env.ID, Name: "api", Engine: "compose", SourceKind: "inline", InlineYAML: "services: {}"}
+	if err := s.CreateStack(ctx, st); err != nil {
+		t.Fatal(err)
+	}
+	reg := &Registry{Name: "ghcr", URL: "ghcr.io", Username: "ci", PasswordEnc: "sealed"}
+	if err := s.CreateRegistry(ctx, reg); err != nil {
+		t.Fatal(err)
+	}
+
+	stopAfter = ""
+	if err := s.migrate(ctx); err != nil {
+		t.Fatalf("migrating to 0018: %v", err)
+	}
+
+	// The new table works, and the old world is untouched.
+	m := &ManifestApply{Name: "my-app", DocHash: "sha256:abc",
+		Document: "version: 1\n", Report: "{}", AppliedBy: "admin"}
+	if err := s.CreateManifestApply(ctx, m); err != nil {
+		t.Fatalf("recording an apply on the migrated schema: %v", err)
+	}
+	list, err := s.ListManifestApplies(ctx)
+	if err != nil || len(list) != 1 {
+		t.Fatalf("ListManifestApplies = %d, %v; want 1", len(list), err)
+	}
+	if got, err := s.StackByName(ctx, env.ID, "api"); err != nil || got.ID != st.ID {
+		t.Fatalf("pre-migration stack after 0018: %v, %v", got, err)
+	}
+	if got, err := s.RegistryByName(ctx, "ghcr"); err != nil || got.ID != reg.ID {
+		t.Fatalf("pre-migration registry after 0018: %v, %v", got, err)
+	}
+}

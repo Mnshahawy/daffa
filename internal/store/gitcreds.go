@@ -70,6 +70,11 @@ func (s *Store) GitCredentialByID(ctx context.Context, id string) (*GitCredentia
 	return scanGitCred(s.queryRow(ctx, `SELECT `+gitCredCols+` FROM git_credentials WHERE id = ?`, id))
 }
 
+// GitCredentialByName resolves the name a manifest declares; git_credentials.name is UNIQUE.
+func (s *Store) GitCredentialByName(ctx context.Context, name string) (*GitCredential, error) {
+	return scanGitCred(s.queryRow(ctx, `SELECT `+gitCredCols+` FROM git_credentials WHERE name = ?`, name))
+}
+
 func (s *Store) ListGitCredentials(ctx context.Context) ([]*GitCredential, error) {
 	rows, err := s.query(ctx, `SELECT `+gitCredCols+` FROM git_credentials ORDER BY name`)
 	if err != nil {
