@@ -20,6 +20,8 @@ import (
 	"fmt"
 	"math/big"
 	"net"
+	"net/url"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -127,6 +129,146 @@ func ekusFor(usages string) []x509.ExtKeyUsage {
 	return out
 }
 
+// ── subject alternative names ───────────────────────────────────────────────────
+//
+// A certificate can be addressed three ways and Daffa keeps all three in ONE flat
+// list, because that is how an operator thinks about it ("what does this cert cover?")
+// and because the store holds a single space-separated column. The kind is derived
+// from the value rather than declared: an IP parses as one, a scheme prefix makes a
+// URI, everything else is a DNS name. Nothing is ambiguous — a DNS label cannot
+// contain a colon, and a URI cannot start with a digit — so the derivation is total,
+// and neither the API nor the UI has to make the operator classify by hand.
+//
+// URI SANs exist for workload identity: a mesh or a broker authorizes on the URI in
+// the peer's client certificate (`spiffe://trust-domain/…`), which is how one cell's
+// leaf is kept from speaking for another. Without them an mTLS identity can only be
+// a hostname, and hostnames are not per-tenant.
+
+// SANKind names which SAN extension entry a list element becomes.
+type SANKind string
+
+const (
+	SANDNS SANKind = "dns"
+	SANIP  SANKind = "ip"
+	SANURI SANKind = "uri"
+)
+
+var (
+	// The RFC 3986 scheme prefix. It must start with a LETTER, which is what keeps
+	// "2001:db8::1" (an IPv6 address) and "::1" out of the URI branch.
+	uriScheme = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9+.\-]*:`)
+	// Hostname labels, with an optional wildcard first label. Underscores are allowed
+	// because internal names use them and a certificate is not a DNS zone file; the
+	// point of the check is to catch a mistyped URI or a pasted path, not to police
+	// hostname purity.
+	dnsSAN = regexp.MustCompile(`^(\*\.)?[A-Za-z0-9_]([A-Za-z0-9_-]*[A-Za-z0-9_])?(\.[A-Za-z0-9_]([A-Za-z0-9_-]*[A-Za-z0-9_])?)*$`)
+)
+
+// ClassifySAN decides what one SAN entry is, and refuses what is none of the three.
+// The error names the entry and what was wrong with it: a SAN typo becomes a cert
+// that silently does not authenticate, which is the worst kind of outage to debug.
+func ClassifySAN(san string) (SANKind, error) {
+	if san == "" {
+		return "", fmt.Errorf("certs: empty SAN")
+	}
+	if net.ParseIP(san) != nil {
+		return SANIP, nil
+	}
+	if uriScheme.MatchString(san) {
+		u, err := url.Parse(san)
+		if err != nil {
+			return "", fmt.Errorf("certs: %q is not a valid URI SAN: %w", san, err)
+		}
+		// A scheme and nothing else ("https:/svc") is a typo, not an identity —
+		// either an authority ("spiffe://td/path") or an opaque part ("urn:uuid:…").
+		if u.Host == "" && u.Opaque == "" {
+			return "", fmt.Errorf("certs: URI SAN %q names nothing after its scheme (did you mean %s//…?)", san, u.Scheme+":")
+		}
+		return SANURI, nil
+	}
+	// A fully-qualified name may arrive rooted ("api.example.com."). It is the same
+	// name, and nothing matches a certificate on the trailing dot, so it canonicalizes
+	// rather than failing — a stored value must never become un-editable.
+	if !dnsSAN.MatchString(strings.TrimSuffix(san, ".")) {
+		if strings.ContainsAny(san, ":/@") {
+			return "", fmt.Errorf("certs: %q is neither a host name, an IP address, nor a URI — a URI SAN needs a scheme, like spiffe://example/workload", san)
+		}
+		return "", fmt.Errorf("certs: %q is not a valid host name", san)
+	}
+	return SANDNS, nil
+}
+
+// NormalizeSANs turns whatever a caller sent into the canonical list the store keeps
+// and the signer consumes: validated, deduplicated, order preserved.
+//
+// The API and the manifest both take a LIST — the space-separated column is a storage
+// detail, not a wire format — but one element may still carry several SANs, because
+// something was pasted or a manifest was written as a single string. That split lives
+// HERE rather than in the browser, so every entrance (console, manifest, provisioner)
+// gets the same answer.
+func NormalizeSANs(in []string) ([]string, error) {
+	var out []string
+	seen := map[string]bool{}
+	for _, entry := range in {
+		for _, san := range splitSANEntry(entry) {
+			kind, err := ClassifySAN(san)
+			if err != nil {
+				return nil, err
+			}
+			switch kind {
+			case SANIP:
+				// Canonical text, so "::0001" and "::1" are one SAN, not two.
+				san = net.ParseIP(san).String()
+			case SANDNS:
+				san = strings.ToLower(strings.TrimSuffix(san, "."))
+			case SANURI:
+				// Verbatim. Everything after the authority is case-sensitive
+				// (RFC 3986 §6.2.2.1) and a workload ID is compared byte for byte —
+				// lower-casing one would authorize the wrong service, or nothing.
+			}
+			if seen[san] {
+				continue
+			}
+			seen[san] = true
+			out = append(out, san)
+		}
+	}
+	return out, nil
+}
+
+// splitSANEntry rescues a list pasted into one element. Commas separate only inside a
+// NON-URI entry: a URI may legally contain one, and splitting an identity in half
+// would produce two SANs that each authorize nothing.
+func splitSANEntry(entry string) []string {
+	var out []string
+	for _, field := range strings.Fields(entry) {
+		if uriScheme.MatchString(field) {
+			out = append(out, strings.TrimSuffix(field, ","))
+			continue
+		}
+		for _, part := range strings.Split(field, ",") {
+			if part != "" {
+				out = append(out, part)
+			}
+		}
+	}
+	return out
+}
+
+// commonName picks the CN for a leaf: the first entry that is a name or an address.
+// A URI SAN never becomes the CN — `CN=spiffe://…` reads as garbage everywhere a
+// certificate is printed, and the CN is legacy display text that no modern verifier
+// consults. A URI-only certificate therefore has an empty CN, which is legal and
+// correct: its identity lives in the SAN extension, where the peer actually looks.
+func commonName(sans []string) string {
+	for _, s := range sans {
+		if kind, err := ClassifySAN(s); err == nil && kind != SANURI {
+			return s
+		}
+	}
+	return ""
+}
+
 // GenerateKey makes a fresh private key of the given shape.
 func GenerateKey(algo KeyAlgo) (crypto.Signer, error) {
 	switch algo {
@@ -186,8 +328,8 @@ func CreateCA(commonName, org string, algo KeyAlgo, days int) (certPEM, keyPEM s
 	return encodeCert(der), keyPEM, nil
 }
 
-// Issue signs a fresh leaf for the given SANs. The first SAN is the CN. The
-// usages string decides the EKUs — "server" is what the Traefik leaf carries,
+// Issue signs a fresh leaf for the given SANs. The first name-or-address SAN is the
+// CN. The usages string decides the EKUs — "server" is what the Traefik leaf carries,
 // "server client" (or "client") is an mTLS identity.
 func Issue(caCertPEM, caKeyPEM string, sans []string, algo KeyAlgo, days int, usages string) (certPEM, keyPEM string, err error) {
 	key, err := GenerateKey(algo)
@@ -197,7 +339,7 @@ func Issue(caCertPEM, caKeyPEM string, sans []string, algo KeyAlgo, days int, us
 	if len(sans) == 0 {
 		return "", "", fmt.Errorf("certs: a certificate needs at least one SAN")
 	}
-	certPEM, err = sign(caCertPEM, caKeyPEM, key.Public(), sans[0], sans, days, usages)
+	certPEM, err = sign(caCertPEM, caKeyPEM, key.Public(), commonName(sans), sans, days, usages)
 	if err != nil {
 		return "", "", err
 	}
@@ -237,7 +379,7 @@ func Reissue(caCertPEM, caKeyPEM, keyPEM string, sans []string, days int, usages
 	if len(sans) == 0 {
 		return "", fmt.Errorf("certs: a certificate needs at least one SAN")
 	}
-	return sign(caCertPEM, caKeyPEM, key.Public(), sans[0], sans, days, usages)
+	return sign(caCertPEM, caKeyPEM, key.Public(), commonName(sans), sans, days, usages)
 }
 
 func sign(caCertPEM, caKeyPEM string, pub crypto.PublicKey, cn string, sans []string, days int, usages string) (string, error) {
@@ -255,8 +397,8 @@ func sign(caCertPEM, caKeyPEM string, pub crypto.PublicKey, cn string, sans []st
 	if err := pairMatches(ca.PublicKey, caKey); err != nil {
 		return "", fmt.Errorf("certs: the CA key does not belong to the CA certificate")
 	}
-	dns, ips := splitSANs(sans)
-	if len(dns) == 0 && len(ips) == 0 {
+	dns, ips, uris := splitSANs(sans)
+	if len(dns) == 0 && len(ips) == 0 && len(uris) == 0 {
 		return "", fmt.Errorf("certs: a certificate needs at least one SAN")
 	}
 	sn, err := serial()
@@ -273,6 +415,7 @@ func sign(caCertPEM, caKeyPEM string, pub crypto.PublicKey, cn string, sans []st
 		ExtKeyUsage:  ekusFor(usages),
 		DNSNames:     dns,
 		IPAddresses:  ips,
+		URIs:         uris,
 	}
 	// Never outlive the signer: a leaf that expires after its CA verifies as
 	// broken the day the CA lapses, and nothing would say why.
@@ -447,12 +590,16 @@ func ValidateLeafUpload(certPEM, chainPEM, keyPEM string) error {
 	return CheckPair(certPEM, keyPEM)
 }
 
-// SANList flattens a certificate's DNS and IP SANs back into the one list the
-// store keeps and the UI edits.
+// SANList flattens a certificate's DNS, IP and URI SANs back into the one list the
+// store keeps and the UI edits — the inverse of splitSANs, and the reason an
+// uploaded certificate reads back the same shape as an issued one.
 func SANList(cert *x509.Certificate) []string {
 	out := append([]string{}, cert.DNSNames...)
 	for _, ip := range cert.IPAddresses {
 		out = append(out, ip.String())
+	}
+	for _, u := range cert.URIs {
+		out = append(out, u.String())
 	}
 	return out
 }
@@ -492,19 +639,30 @@ func Bundle(caPEMs ...string) (string, error) {
 	return b.String(), nil
 }
 
-func splitSANs(sans []string) (dns []string, ips []net.IP) {
+// splitSANs fans the flat list back out into the three extension slots. It is
+// deliberately forgiving: the list it receives has already been through
+// NormalizeSANs at every entrance, and a stored row must still sign on renewal even
+// if it predates a validation rule. A URI that will not parse is dropped rather than
+// smuggled in as a DNS name, which would produce a certificate that matches a host
+// nobody meant to name.
+func splitSANs(sans []string) (dns []string, ips []net.IP, uris []*url.URL) {
 	for _, s := range sans {
 		s = strings.TrimSpace(s)
 		if s == "" {
 			continue
 		}
-		if ip := net.ParseIP(s); ip != nil {
-			ips = append(ips, ip)
-		} else {
+		switch {
+		case net.ParseIP(s) != nil:
+			ips = append(ips, net.ParseIP(s))
+		case uriScheme.MatchString(s):
+			if u, err := url.Parse(s); err == nil {
+				uris = append(uris, u)
+			}
+		default:
 			dns = append(dns, s)
 		}
 	}
-	return dns, ips
+	return dns, ips, uris
 }
 
 func serial() (*big.Int, error) {

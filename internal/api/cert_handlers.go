@@ -719,9 +719,13 @@ func (s *Server) handleCreateCertificate(w http.ResponseWriter, r *http.Request)
 				"That CA was uploaded without its private key, so Daffa cannot sign with it. Upload the key, or issue from a CA Daffa created.")
 			return
 		}
-		sans := cleanSANs(req.SANs)
+		sans, err := certs.NormalizeSANs(req.SANs)
+		if err != nil {
+			httpx.Fail(w, r, http.StatusBadRequest, "bad_san", err.Error())
+			return
+		}
 		if len(sans) == 0 {
-			httpx.BadRequest(w, r, "At least one SAN is required — the hostnames (or IPs) this certificate will serve.")
+			httpx.BadRequest(w, r, "At least one SAN is required — the host names, IPs or URIs this certificate answers to.")
 			return
 		}
 		usages, err := certs.NormalizeUsages(req.Usages)
@@ -858,7 +862,11 @@ func (s *Server) handleUpdateCertificate(w http.ResponseWriter, r *http.Request)
 
 	// SANs and usages edit the same way: on an issued cert either re-issues immediately
 	// with the same key; on an uploaded one both are facts about the PEM, not settings.
-	sans := cleanSANs(req.SANs)
+	sans, err := certs.NormalizeSANs(req.SANs)
+	if err != nil {
+		httpx.Fail(w, r, http.StatusBadRequest, "bad_san", err.Error())
+		return
+	}
 	if len(sans) == 0 || strings.Join(sans, " ") == c.SANs {
 		sans = nil
 	}
@@ -1043,16 +1051,6 @@ func (s *Server) signingCA(ctx context.Context, caID string) (*store.CertAuthori
 		return nil, "", errors.New("could not decrypt the CA key (was the master key replaced?)")
 	}
 	return ca, key, nil
-}
-
-func cleanSANs(in []string) []string {
-	var out []string
-	for _, s := range in {
-		for _, f := range strings.Fields(strings.ReplaceAll(s, ",", " ")) {
-			out = append(out, strings.ToLower(f))
-		}
-	}
-	return out
 }
 
 // ── encryption keys ─────────────────────────────────────────────────────────────

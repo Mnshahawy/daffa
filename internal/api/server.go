@@ -1083,8 +1083,13 @@ func (s *Server) apiRoutes() []route {
 		// Issue from a signing CA (ca_id + sans), or upload a cert_pem/chain_pem/key_pem
 		// set. An uploaded pair is tracked, delivered and alerted on — but only its owner
 		// can renew it. Private keys are sealed at rest and never served back.
+		//
+		// sans is a LIST, and each entry may be a host name, an IP address, or a URI —
+		// a URI SAN (spiffe://trust-domain/workload) is the identity a mesh or a broker
+		// authorizes an mTLS peer on. The kind is derived from the value, so nothing has
+		// to be declared; the first name-or-address entry becomes the common name.
 		//oapi:summary Create a certificate — issue from a CA, or upload an existing pair
-		//oapi:example req {"name": "web", "ca_id": "ca_1", "sans": ["web.internal", "10.0.0.5"]}
+		//oapi:example req {"name": "master-data", "ca_id": "ca_1", "sans": ["master-data", "10.0.0.5", "spiffe://example.internal/region/eu-01/svc/orders"], "usages": ["server", "client"]}
 		{pattern: "POST /api/certs", cap: caps.CertsEdit, scope: scopeGlobal, h: s.handleCreateCertificate,
 			req: certRequest{}, resp: certView{}, ts: "createCert"},
 		// Edits what is editable. For an ISSUED certificate that includes its SANs — the

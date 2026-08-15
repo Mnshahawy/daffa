@@ -149,7 +149,11 @@ certificates:
     cluster: prod          # optional override; OR `shared: true` for an env-less
                            # cert usable on every cluster (mutually exclusive)
     ca: app-ca             # REQUIRED (by name; declared here or pre-existing)
-    sans: [api.internal, api]   # REQUIRED, at least one; first SAN becomes the CN
+    sans: [api.internal, api]   # REQUIRED, at least one. Each entry is a host name,
+                                # an IP, or a URI (spiffe://trust-domain/workload) —
+                                # the kind is derived from the value, never declared.
+                                # The first name-or-address entry becomes the CN;
+                                # a URI never does.
     usages: [server, client]    # values: server, client; empty = server default
     key_algo: ecdsa-p256        # optional
     validity_days: 398          # optional; 0 = 398
@@ -159,6 +163,21 @@ certificates:
 Never re-issued by apply: differing SANs/usages/key_algo/CA are `drifted`. The name
 becomes the delivered filename (`<name>.crt` / `<name>.key`), and mTLS peers usually
 attribute callers by CN — so the name is identity, choose it deliberately.
+
+A **URI SAN** is the other way to be attributed, and the one to reach for when the
+caller's identity is finer-grained than a host name — a per-tenant or per-region
+workload, where the peer authorizes on the identity rather than on where it dialled
+from. It rides in the same list:
+
+```yaml
+certificates:
+  - name: orders
+    ca: app-ca
+    usages: [server, client]        # a client EKU, or the peer cannot PRESENT this
+    sans:
+      - orders                      # dns
+      - spiffe://example.internal/region/eu-01/svc/orders   # uri
+```
 
 ### keyrings — versioned application encryption keys (global)
 

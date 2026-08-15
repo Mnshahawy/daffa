@@ -147,7 +147,10 @@ func (s *Server) ensureEdgeCert(ctx context.Context, ca *store.CertAuthority, do
 		}
 	}
 
-	sans := cleanSANs(append([]string{domain}, opts.SANs...))
+	sans, err := certs.NormalizeSANs(append([]string{domain}, opts.SANs...))
+	if err != nil {
+		return nil, fmt.Errorf("edge: %w", err)
+	}
 	days := opts.CertDays
 	if days <= 0 {
 		days = 397

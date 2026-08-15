@@ -95,7 +95,10 @@ cas:
 certificates:
   - name: api
     ca: app-ca
-    sans: [api.internal]
+    # Each SAN is a host name, an IP, or a URI — a URI SAN
+    # (spiffe://trust-domain/workload) is the identity an mTLS
+    # peer authorizes on when a host name is not specific enough.
+    sans: [api.internal, spiffe://example.internal/svc/api]
     usages: [server, client]
 
 cert_deliveries:

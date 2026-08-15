@@ -136,6 +136,109 @@ func TestUsagesBecomeEKUs(t *testing.T) {
 	}
 }
 
+// A URI SAN is what a mesh or a broker authorizes on: the identity travels in the
+// peer's client certificate, so it has to survive issue → parse → renew unchanged,
+// and it must land in the URI extension rather than being smuggled in as a hostname.
+func TestURISANsRideAlongsideNames(t *testing.T) {
+	caCert, caKey, _ := CreateCA("Workload CA", "", ECDSAP256, 3650)
+	const id = "spiffe://example.internal/region/eu-01/svc/orders"
+
+	certPEM, keyPEM, err := Issue(caCert, caKey,
+		[]string{"master-data", "10.0.0.7", id}, ECDSAP256, 398, "server client")
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	cert := mustParse(t, certPEM)
+	if len(cert.URIs) != 1 || cert.URIs[0].String() != id {
+		t.Fatalf("URIs = %v, want [%s]", cert.URIs, id)
+	}
+	if len(cert.DNSNames) != 1 || cert.DNSNames[0] != "master-data" {
+		t.Errorf("the URI leaked into DNSNames: %v", cert.DNSNames)
+	}
+	// The CN is display text; a URI in it reads as garbage, so the first real name wins.
+	if cert.Subject.CommonName != "master-data" {
+		t.Errorf("CN = %q, want the first name-or-address SAN", cert.Subject.CommonName)
+	}
+	if got := SANList(cert); strings.Join(got, " ") != "master-data 10.0.0.7 "+id {
+		t.Errorf("SANList = %v", got)
+	}
+
+	// Renewal re-signs from the old certificate's SANs: losing the URI there would
+	// silently de-authorize the workload the day the cert rolls.
+	renewed, err := Renew(caCert, caKey, certPEM, keyPEM, 398, "server client")
+	if err != nil {
+		t.Fatalf("Renew: %v", err)
+	}
+	if got := mustParse(t, renewed).URIs; len(got) != 1 || got[0].String() != id {
+		t.Errorf("renewal dropped the URI SAN: %v", got)
+	}
+}
+
+// A URI-only leaf is legal and has no CN — the identity lives in the SAN extension.
+func TestURIOnlyLeafHasNoCommonName(t *testing.T) {
+	caCert, caKey, _ := CreateCA("Workload CA", "", ECDSAP256, 3650)
+	certPEM, _, err := Issue(caCert, caKey, []string{"spiffe://example.internal/svc/gateway"}, ECDSAP256, 30, UsageClient)
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	cert := mustParse(t, certPEM)
+	if cert.Subject.CommonName != "" {
+		t.Errorf("CN = %q, want empty for a URI-only certificate", cert.Subject.CommonName)
+	}
+	if len(cert.URIs) != 1 {
+		t.Errorf("URIs = %v", cert.URIs)
+	}
+}
+
+func TestClassifySAN(t *testing.T) {
+	ok := map[string]SANKind{
+		"app.example.com": SANDNS,
+		"master-data":     SANDNS,
+		"*.example.com":   SANDNS,
+		"10.0.0.5":        SANIP,
+		"2001:db8::1":     SANIP, // must not read as a "2001:" scheme
+		"::1":             SANIP,
+		"spiffe://example.internal/region/eu-01/svc/orders": SANURI,
+		"https://gate.internal/callback":                    SANURI,
+		"urn:uuid:0d8c0f4e":                                 SANURI, // opaque, no authority
+	}
+	for san, want := range ok {
+		got, err := ClassifySAN(san)
+		if err != nil {
+			t.Errorf("ClassifySAN(%q): %v", san, err)
+		} else if got != want {
+			t.Errorf("ClassifySAN(%q) = %q, want %q", san, got, want)
+		}
+	}
+	for _, bad := range []string{"", "spiffe:/example.internal/svc", "app.example.com/path", "user@example.com", "a..b"} {
+		if kind, err := ClassifySAN(bad); err == nil {
+			t.Errorf("ClassifySAN(%q) = %q, want an error", bad, kind)
+		}
+	}
+}
+
+func TestNormalizeSANs(t *testing.T) {
+	got, err := NormalizeSANs([]string{
+		"App.Example.com, www.example.com",       // pasted list, mixed case
+		" 10.0.0.5 ",                             // padding
+		"spiffe://example.internal/Region/EU-01", // case must survive: an ID is compared byte for byte
+		"app.example.com",                        // duplicate
+		"spiffe://example.internal/Region/EU-01 spiffe://example.internal/x", // two identities in one element
+		"Rooted.example.com.", // a rooted FQDN is the same name, not an error
+	})
+	if err != nil {
+		t.Fatalf("NormalizeSANs: %v", err)
+	}
+	want := []string{"app.example.com", "www.example.com", "10.0.0.5",
+		"spiffe://example.internal/Region/EU-01", "spiffe://example.internal/x", "rooted.example.com"}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Errorf("NormalizeSANs = %v, want %v", got, want)
+	}
+	if _, err := NormalizeSANs([]string{"good.example", "app.example.com/health"}); err == nil {
+		t.Error("NormalizeSANs must refuse an entry that is none of the three kinds")
+	}
+}
+
 func mustParse(t *testing.T, pemText string) *x509.Certificate {
 	t.Helper()
 	c, err := ParseCert(pemText)

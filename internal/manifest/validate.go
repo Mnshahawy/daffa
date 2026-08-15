@@ -6,6 +6,8 @@ import (
 	"path"
 	"regexp"
 	"strings"
+
+	"github.com/Mnshahawy/daffa/internal/certs"
 )
 
 // The name rules mirror the imperative API's, so a manifest never passes validation
@@ -176,6 +178,11 @@ func (m *Manifest) Validate() error {
 		}
 		if len(c.SANs) == 0 {
 			fail("%s %q: at least one SAN is required", KindCertificate, c.Name)
+		}
+		// The same normalizer apply will run, so a mistyped SAN is a validation error
+		// on the whole document rather than one blocked resource halfway through.
+		if _, err := certs.NormalizeSANs(c.SANs); err != nil {
+			fail("%s %q: %s", KindCertificate, c.Name, strings.TrimPrefix(err.Error(), "certs: "))
 		}
 		for _, u := range c.Usages {
 			if u != "server" && u != "client" {

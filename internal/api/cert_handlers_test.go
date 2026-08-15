@@ -390,6 +390,51 @@ func TestSANEditReissuesWithTheSameKey(t *testing.T) {
 	}
 }
 
+// The mTLS workload-identity path end to end: a leaf carrying a URI SAN is issued,
+// read back as a list, extended by an edit, and refuses a SAN that is none of the
+// three kinds. The URI's case must survive the round trip — a workload ID is compared
+// byte for byte, so lower-casing it would authorize nothing.
+func TestURISANsThroughTheAPI(t *testing.T) {
+	s, ctx := certServer(t)
+	const id = "spiffe://example.internal/region/EU-01/svc/orders"
+
+	ca := postJSON[caView](t, s.handleCreateCA, "POST", "/api/certs/cas", nil,
+		`{"name":"mesh-ca","common_name":"Mesh CA"}`, http.StatusOK)
+	leaf := postJSON[certView](t, s.handleCreateCertificate, "POST", "/api/certs", nil,
+		`{"name":"master-data","ca_id":"`+ca.ID+`","sans":["master-data","`+id+`"],"usages":["server","client"]}`,
+		http.StatusOK)
+	if strings.Join(leaf.SANs, " ") != "master-data "+id {
+		t.Fatalf("issued SANs = %v", leaf.SANs)
+	}
+
+	stored, err := s.store.CertificateByID(ctx, leaf.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := certs.ParseCert(stored.CertPEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parsed.URIs) != 1 || parsed.URIs[0].String() != id {
+		t.Fatalf("URI SANs in the signed PEM = %v", parsed.URIs)
+	}
+
+	// A second cell's identity is added by editing — the same re-issue path a hostname takes.
+	const other = "spiffe://example.internal/region/EU-02/svc/orders"
+	updated := postJSON[certView](t, s.handleUpdateCertificate, "PUT", "/api/certs/"+leaf.ID,
+		map[string]string{"id": leaf.ID},
+		`{"sans":["master-data","`+id+`","`+other+`"]}`, http.StatusOK)
+	if len(updated.SANs) != 3 || updated.SANs[2] != other {
+		t.Fatalf("updated SANs = %v", updated.SANs)
+	}
+
+	rec := call(s.handleCreateCertificate, "POST", "/api/certs", nil,
+		`{"name":"typo","ca_id":"`+ca.ID+`","sans":["spiffe:/example.internal/svc/gateway"]}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("a malformed URI SAN returned %d; it must be refused at the door", rec.Code)
+	}
+}
+
 func TestOutboundTrustGatesManagedCAs(t *testing.T) {
 	s, ctx := certServer(t)
 

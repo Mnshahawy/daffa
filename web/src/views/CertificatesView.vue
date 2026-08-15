@@ -10,6 +10,7 @@ import { daysLeft, expiry } from '@/lib/certdates'
 import type { Status } from '@/lib/status'
 import { AppIcon } from '@mnshahawy/daffa-console-ui'
 import { BaseButton } from '@mnshahawy/daffa-console-ui'
+import { ListInput } from '@mnshahawy/daffa-console-ui'
 import { Select } from '@mnshahawy/daffa-console-ui'
 import { StatusPill } from '@mnshahawy/daffa-console-ui'
 
@@ -57,7 +58,7 @@ const certBlank = () => ({
   name: '',
   shared: false,
   ca_id: '',
-  sans: '',
+  sans: [] as string[],
   server: true,
   client: false,
   cert_pem: '',
@@ -66,6 +67,16 @@ const certBlank = () => ({
 })
 const certForm = ref(certBlank())
 const signingCAs = computed(() => (cas.value ?? []).filter((c) => c.can_sign && c.status === 'active'))
+
+// What the server will make of one SAN, shown on its chip. A mirror of certs.ClassifySAN,
+// not a second copy of it: the server still decides and still refuses, this only lets the
+// operator SEE that `spiffe://…` was read as an identity rather than as a hostname —
+// before a handshake somewhere else fails and says nothing about why.
+function sanKind(san: string): string {
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(san)) return 'uri'
+  if (/^[0-9.]+$/.test(san) || san.includes(':')) return 'ip'
+  return 'dns'
+}
 
 function startEditCert(c: Certificate) {
   editingCert.value = c
@@ -76,7 +87,7 @@ function startEditCert(c: Certificate) {
     name: c.name,
     shared: !c.env_id,
     ca_id: c.ca_id ?? '',
-    sans: c.sans.join(' '),
+    sans: [...c.sans],
     server: c.usages?.includes('server') ?? true,
     client: c.usages?.includes('client') ?? false,
   }
@@ -93,17 +104,14 @@ const saveCert = useMutation({
     const f = certForm.value
     const usages = [...(f.server ? ['server'] : []), ...(f.client ? ['client'] : [])]
     if (editingCert.value)
-      return daffa.updateCert(editingCert.value.id, {
-        sans: f.sans.split(/[\s,]+/).filter(Boolean),
-        usages,
-      })
+      return daffa.updateCert(editingCert.value.id, { sans: f.sans, usages })
     // Created from a cluster's page, the cert belongs to that cluster unless
     // explicitly shared — the narrow default; other clusters never see it.
     const env_id = f.shared ? '' : session.envId
     return daffa.createCert(
       certUpload.value
         ? { name: f.name, env_id, cert_pem: f.cert_pem, chain_pem: f.chain_pem, key_pem: f.key_pem }
-        : { name: f.name, env_id, ca_id: f.ca_id, sans: f.sans.split(/[\s,]+/).filter(Boolean), usages },
+        : { name: f.name, env_id, ca_id: f.ca_id, sans: f.sans, usages },
     )
   },
   onSuccess: () => {
@@ -348,11 +356,18 @@ async function onRemoveDelivery(d: CertDelivery) {
                 <option v-for="ca in signingCAs" :key="ca.id" :value="ca.id">{{ ca.name }}</option>
               </Select>
             </div>
-            <div>
+            <!-- Two columns: the chips wrap, and a workload URI is long enough that a
+                 third of a row would put every one of them on its own line. -->
+            <div class="sm:col-span-2">
               <label for="crt-sans" class="mb-1.5 block text-sm font-medium">SANs</label>
-              <input id="crt-sans" v-model="certForm.sans" required placeholder="app.example.com www.example.com" class="field font-mono text-xs" data-cursor="text" />
-              <p v-if="editingCert" class="subtle mt-1 text-xs">Space-separated. The first one is the common name. Saving re-issues immediately with the same key.</p>
-              <p v-else class="subtle mt-1 text-xs">Space-separated. The first one is the common name. Editable later — editing re-issues.</p>
+              <ListInput id="crt-sans" v-model="certForm.sans" required :describe="sanKind" placeholder="app.example.com — Enter to add" input-class="font-mono text-xs" />
+              <p class="subtle mt-1 text-xs">
+                A host name, an IP, or a URI like <span class="font-mono">spiffe://…</span> — the
+                identity an mTLS peer authorizes on. The first name or address becomes the common
+                name.
+                <template v-if="editingCert">Saving re-issues immediately with the same key.</template>
+                <template v-else>Editable later — editing re-issues.</template>
+              </p>
             </div>
             <div>
               <span class="mb-1.5 block text-sm font-medium">Used as</span>

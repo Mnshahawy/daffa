@@ -18,7 +18,9 @@ the copies drifting.
   `card` / `eyebrow` / `field` / `pulse-ring` / `appear` utilities, and the `.btn` action
   grammar (primary / secondary / ghost / caution / danger / danger-solid × xs / sm / md).
 - **Components** — `BaseButton`, `Select`, `ComboBox`, `SearchInput`, `SecretInput`,
-  `Modal`, `DropdownMenu`, `PageHeader`, `StatusPill`, `EmptyState`, `AppIcon` (+
+  `ListInput` (a `string[]` edited as removable chips, instead of a text field with a
+  separator rule in the hint underneath), `Modal`, `DropdownMenu`, `PageHeader`,
+  `StatusPill`, `EmptyState`, `AppIcon` (+
   `iconPaths`), `CopyButton`, `Spinner`, `RailItem`, `ThemeToggle`, and the singleton
   hosts `ToastHost` / `ConfirmHost`.
 - **Channels** — `toast` (transient feedback, errors linger), `confirm` (typed/checkbox

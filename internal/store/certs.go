@@ -170,9 +170,13 @@ type Certificate struct {
 	// deliverable everywhere. Immutable after create, like Name and for the same
 	// reason: deliveries have already written this cert's files into volumes chosen
 	// under its visibility.
-	EnvID    string
-	CAID     string
-	SANs     string // space-separated; first entry is the CN
+	EnvID string
+	CAID  string
+	// SANs is the flat list — host names, IP addresses and URIs (workload identities
+	// like spiffe://…) — space-separated because no SAN of any of the three kinds may
+	// contain whitespace. The API speaks a list; this column is the storage form.
+	// The first name-or-address entry becomes the CN; a URI never does.
+	SANs     string
 	KeyAlgo  string
 	CertPEM  string
 	ChainPEM string

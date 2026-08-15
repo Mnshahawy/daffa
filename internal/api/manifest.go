@@ -854,7 +854,12 @@ func (r *manifestRun) ensureCertificate(ctx context.Context, c manifest.Certific
 		}
 	}
 
-	sans := cleanSANs(c.SANs)
+	sans, err := certs.NormalizeSANs(c.SANs)
+	if err != nil {
+		res.Verdict, res.Detail = verdictBlocked, err.Error()
+		r.push(res)
+		return nil
+	}
 	usages, err := certs.NormalizeUsages(c.Usages)
 	if err != nil {
 		res.Verdict, res.Detail = verdictBlocked, err.Error()
