@@ -60,7 +60,9 @@ function onKey(e: KeyboardEvent) {
             </button>
           </header>
 
-          <div class="min-h-0 flex-1 overflow-y-auto px-5 pb-1">
+          <!-- data-modal-body: the scroll container, so a child that has to scroll the
+               dialog back to the top (WizardModal, on a step change) can find it. -->
+          <div data-modal-body class="min-h-0 flex-1 overflow-y-auto px-5 pb-1">
             <slot />
           </div>
 

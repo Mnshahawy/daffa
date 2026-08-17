@@ -15,6 +15,7 @@ import { EmptyState } from '@mnshahawy/daffa-console-ui'
 import { PageHeader } from '@mnshahawy/daffa-console-ui'
 import { Select } from '@mnshahawy/daffa-console-ui'
 import { StatusPill } from '@mnshahawy/daffa-console-ui'
+import { WizardModal, type WizardStep } from '@mnshahawy/daffa-console-ui'
 
 const session = useSession()
 const qc = useQueryClient()
@@ -149,6 +150,31 @@ watch(
   },
 )
 
+/**
+ * Three questions, and they only make sense in this order: which volume, then where its
+ * contents come from, then how they land. The middle one changes shape completely — a repo
+ * URL or a file editor — which is most of why this was too tall to read as one form.
+ */
+const steps = computed<WizardStep[]>(() => [
+  {
+    id: 'target',
+    title: 'Volume',
+    description: editing.value
+      ? 'What this source fills. Both halves are fixed once created.'
+      : 'The volume this source fills, on the host it lives on.',
+  },
+  {
+    id: 'source',
+    title: 'Contents',
+    description: 'Where the files come from — a repository Daffa tracks, or files authored here.',
+  },
+  {
+    id: 'delivery',
+    title: 'Delivery',
+    description: 'How the files land in the volume, and what happens after they change.',
+  },
+])
+
 async function save(rotate = false) {
   // Switching an inline source to git throws away the files stored in Daffa. It is one-way and the
   // server refuses the reverse, so it earns a confirm — the same caution the stack switch shows.
@@ -277,13 +303,9 @@ function webhookUrl(id: string): string {
       description="A source declares that a named volume's contents come from a git subtree — Daffa creates the volume, fills it, and keeps it current. For config that belongs in a repo; a volume holding precious data wants a backup job instead."
     >
       <template #actions>
-        <BaseButton
-          v-if="canEditAnywhere"
-          :intent="open ? 'secondary' : 'primary'"
-          @click="open ? close() : startAdd()"
-        >
-          <AppIcon v-if="!open" name="plus" class="size-4" />
-          {{ open ? 'Cancel' : 'New source' }}
+        <BaseButton v-if="canEditAnywhere" intent="primary" @click="startAdd()">
+          <AppIcon name="plus" class="size-4" />
+          New source
         </BaseButton>
       </template>
     </PageHeader>
@@ -333,52 +355,55 @@ function webhookUrl(id: string): string {
     </div>
 
     <!-- ── New / edit ─────────────────────────────────────────────────────────── -->
-    <form
+    <WizardModal
       v-if="open"
-      class="surface mb-6 space-y-4 rounded-[var(--radius-card)] p-5"
-      @submit.prevent="save()"
+      :title="editing ? `Edit the source for ${editing.volume}` : 'New volume source'"
+      :steps="steps"
+      :submit-label="editing ? 'Save' : 'Create source'"
+      :submitting="busy"
+      :unlocked="!!editing"
+      @close="close()"
+      @submit="save()"
     >
-      <h3 class="text-sm font-semibold">
-        {{ editing ? `Edit the source for ${editing.volume}` : 'New volume source' }}
-      </h3>
+      <template #target>
+        <div class="grid gap-4 sm:grid-cols-2">
+          <div>
+            <label for="vs-env" class="mb-1.5 block text-sm font-medium">Host</label>
+            <!-- Host and volume are what a source IS — retargeting one would strand the old
+                 volume with a manifest nothing owns. The server ignores them on update, so
+                 the form says so up front instead of silently dropping an edit. -->
+            <Select id="vs-env" v-model="form.env_id" required :disabled="!!editing">
+              <option value="" disabled>Choose a cluster…</option>
+              <option
+                v-for="e in editing ? (environments ?? []) : editableEnvs"
+                :key="e.id"
+                :value="e.id"
+              >
+                {{ e.name }}
+              </option>
+            </Select>
+            <p v-if="editing" class="subtle mt-1 text-xs">
+              Fixed. To move a source, delete it and create another — both halves explicit.
+            </p>
+          </div>
+          <div>
+            <label for="vs-volume" class="mb-1.5 block text-sm font-medium">Volume</label>
+            <input
+              id="vs-volume"
+              v-model="form.volume"
+              required
+              :disabled="!!editing"
+              placeholder="traefik-dynamic"
+              class="field font-mono text-xs"
+              data-cursor="text"
+            />
+            <p class="subtle mt-1 text-xs">
+              Created if it does not exist — a fresh node deploys clean. Mount it
+              <code class="font-mono">:ro</code> in the consumer.
+            </p>
+          </div>
+        </div>
 
-      <div class="grid gap-4 sm:grid-cols-3">
-        <div>
-          <label for="vs-env" class="mb-1.5 block text-sm font-medium">Host</label>
-          <!-- Host and volume are what a source IS — retargeting one would strand the old
-               volume with a manifest nothing owns. The server ignores them on update, so
-               the form says so up front instead of silently dropping an edit. -->
-          <Select
-            id="vs-env"
-            v-model="form.env_id"
-            required
-            :disabled="!!editing"
-          >
-            <option value="" disabled>Choose a cluster…</option>
-            <option v-for="e in editing ? (environments ?? []) : editableEnvs" :key="e.id" :value="e.id">
-              {{ e.name }}
-            </option>
-          </Select>
-          <p v-if="editing" class="subtle mt-1 text-xs">
-            Fixed. To move a source, delete it and create another — both halves explicit.
-          </p>
-        </div>
-        <div>
-          <label for="vs-volume" class="mb-1.5 block text-sm font-medium">Volume</label>
-          <input
-            id="vs-volume"
-            v-model="form.volume"
-            required
-            :disabled="!!editing"
-            placeholder="traefik-dynamic"
-            class="field font-mono text-xs"
-            data-cursor="text"
-          />
-          <p class="subtle mt-1 text-xs">
-            Created if it does not exist — a fresh node deploys clean. Mount it
-            <code class="font-mono">:ro</code> in the consumer.
-          </p>
-        </div>
         <div>
           <label for="vs-stack" class="mb-1.5 block text-sm font-medium">
             Linked stack <span class="subtle font-normal">(optional)</span>
@@ -392,148 +417,168 @@ function webhookUrl(id: string): string {
             so a stack never comes up against config Daffa knows is stale.
           </p>
         </div>
-      </div>
+      </template>
 
-      <div>
-        <label class="mb-1.5 block text-sm font-medium">Source</label>
-        <!-- Locked only for a source that is ALREADY git: the server refuses git → inline (the
-             files live in the repo, so there is nothing to convert back). An inline source can be
-             pointed at a repo, which is the switch below. -->
-        <Select v-model="form.source_kind" :disabled="!!editing && editing.source_kind !== 'inline'">
-          <option value="git">Git repository — synced from a repo</option>
-          <option value="inline">Inline — files authored here</option>
-        </Select>
-        <p class="subtle mt-1 text-xs">
-          Inline is for a volume with no repo behind it — Traefik's static config and dynamic
-          middlewares, edited here and delivered on deploy.
-          <template v-if="!editing">
-            An inline source can later be switched to git; the reverse is not offered.
-          </template>
-          <template v-else-if="editing.source_kind === 'git'">
-            A git source cannot be converted back to inline — its files live in the repo.
-          </template>
-        </p>
-        <p
-          v-if="editing?.source_kind === 'inline' && form.source_kind === 'git'"
-          class="mt-1 text-xs"
-          :style="{ color: 'var(--warn)' }"
-        >
-          Switching to git discards the inline files stored here; the repository becomes the source
-          of truth and the volume is refilled from it on the next sync.
-        </p>
-      </div>
-
-      <template v-if="form.source_kind === 'git'">
-        <div class="grid gap-4 sm:grid-cols-3">
-          <div class="sm:col-span-2">
-            <label for="vs-url" class="mb-1.5 block text-sm font-medium">Repository URL</label>
-            <input
-              id="vs-url"
-              v-model="form.git_url"
-              :required="form.source_kind === 'git'"
-              placeholder="https://git.example.com/team/infra.git"
-              class="field font-mono text-xs"
-              data-cursor="text"
-            />
-          </div>
-          <div>
-            <label for="vs-ref" class="mb-1.5 block text-sm font-medium">Branch or tag</label>
-            <input id="vs-ref" v-model="form.git_ref" class="field font-mono text-xs" data-cursor="text" />
-          </div>
+      <template #source>
+        <div>
+          <label for="vs-kind" class="mb-1.5 block text-sm font-medium">Where the files come from</label>
+          <!-- Locked only for a source that is ALREADY git: the server refuses git → inline (the
+               files live in the repo, so there is nothing to convert back). An inline source can be
+               pointed at a repo, which is the switch below. -->
+          <Select
+            id="vs-kind"
+            v-model="form.source_kind"
+            :disabled="!!editing && editing.source_kind !== 'inline'"
+          >
+            <option value="git">Git repository — synced from a repo</option>
+            <option value="inline">Inline — files authored here</option>
+          </Select>
+          <p class="subtle mt-1 text-xs">
+            Inline is for a volume with no repo behind it — Traefik's static config and dynamic
+            middlewares, edited here and delivered on deploy.
+            <template v-if="!editing">
+              An inline source can later be switched to git; the reverse is not offered.
+            </template>
+            <template v-else-if="editing.source_kind === 'git'">
+              A git source cannot be converted back to inline — its files live in the repo.
+            </template>
+          </p>
+          <p
+            v-if="editing?.source_kind === 'inline' && form.source_kind === 'git'"
+            class="mt-1 text-xs"
+            :style="{ color: 'var(--warn)' }"
+          >
+            Switching to git discards the inline files stored here; the repository becomes the source
+            of truth and the volume is refilled from it on the next sync.
+          </p>
         </div>
 
-        <div class="grid gap-4 sm:grid-cols-2">
-          <div>
-            <label for="vs-path" class="mb-1.5 block text-sm font-medium">Directory in the repo</label>
-            <input
-              id="vs-path"
-              v-model="form.git_path"
-              placeholder="traefik/dynamic"
-              class="field font-mono text-xs"
+        <template v-if="form.source_kind === 'git'">
+          <div class="grid gap-4 sm:grid-cols-3">
+            <div class="sm:col-span-2">
+              <label for="vs-url" class="mb-1.5 block text-sm font-medium">Repository URL</label>
+              <input
+                id="vs-url"
+                v-model="form.git_url"
+                :required="form.source_kind === 'git'"
+                placeholder="https://git.example.com/team/infra.git"
+                class="field font-mono text-xs"
+                data-cursor="text"
+              />
+            </div>
+            <div>
+              <label for="vs-ref" class="mb-1.5 block text-sm font-medium">Branch or tag</label>
+              <input
+                id="vs-ref"
+                v-model="form.git_ref"
+                class="field font-mono text-xs"
+                data-cursor="text"
+              />
+            </div>
+          </div>
+
+          <div class="grid gap-4 sm:grid-cols-2">
+            <div>
+              <label for="vs-path" class="mb-1.5 block text-sm font-medium">
+                Directory in the repo
+              </label>
+              <input
+                id="vs-path"
+                v-model="form.git_path"
+                placeholder="traefik/dynamic"
+                class="field font-mono text-xs"
+                data-cursor="text"
+              />
+              <p class="subtle mt-1 text-xs">
+                The subtree delivered into the volume. Empty means the whole repository.
+              </p>
+            </div>
+            <div>
+              <label for="vs-cred" class="mb-1.5 block text-sm font-medium">Credential</label>
+              <Select id="vs-cred" v-model="form.git_credential_id">
+                <option value="">None — public repository</option>
+                <option v-for="c in gitCreds" :key="c.id" :value="c.id">
+                  {{ c.name }} ({{ c.kind === 'ssh' ? 'SSH' : 'token' }})
+                </option>
+              </Select>
+              <p class="subtle mt-1 text-xs">
+                <RouterLink
+                  v-if="session.can(Cap.GitCredsView)"
+                  :to="{ name: 'settings-git' }"
+                  class="transition hover:text-[var(--accent-text)]"
+                >
+                  Manage credentials in Settings → Git
+                </RouterLink>
+                <span v-else>Ask an admin to add one under Settings → Git.</span>
+              </p>
+            </div>
+          </div>
+        </template>
+
+        <div v-else class="space-y-3">
+          <div class="flex items-center justify-between">
+            <label class="block text-sm font-medium">Files</label>
+            <BaseButton intent="ghost" size="xs" @click="addFile">Add file</BaseButton>
+          </div>
+          <p v-if="form.files.length === 0" class="subtle text-xs">
+            No files yet. Add one — e.g. <code class="font-mono">traefik.yml</code>, or
+            <code class="font-mono">dynamic/middlewares.yml</code>. Paths are relative; use
+            <code class="font-mono">/</code> for subdirectories.
+          </p>
+          <div
+            v-for="(f, i) in form.files"
+            :key="i"
+            class="rounded-md border border-[var(--border)] p-3"
+          >
+            <div class="mb-2 flex items-center gap-2">
+              <input
+                v-model="f.path"
+                placeholder="dynamic/middlewares.yml"
+                class="field flex-1 font-mono text-xs"
+                data-cursor="text"
+              />
+              <BaseButton intent="ghost" size="xs" @click="removeFile(i)">Remove</BaseButton>
+            </div>
+            <textarea
+              v-model="f.content"
+              rows="6"
+              spellcheck="false"
+              class="field w-full font-mono text-xs"
               data-cursor="text"
             />
-            <p class="subtle mt-1 text-xs">
-              The subtree delivered into the volume. Empty means the whole repository.
-            </p>
-          </div>
-          <div>
-            <label for="vs-cred" class="mb-1.5 block text-sm font-medium">Credential</label>
-            <Select id="vs-cred" v-model="form.git_credential_id">
-              <option value="">None — public repository</option>
-              <option v-for="c in gitCreds" :key="c.id" :value="c.id">
-                {{ c.name }} ({{ c.kind === 'ssh' ? 'SSH' : 'token' }})
-              </option>
-            </Select>
-            <p class="subtle mt-1 text-xs">
-              <RouterLink
-                v-if="session.can(Cap.GitCredsView)"
-                :to="{ name: 'settings-git' }"
-                class="transition hover:text-[var(--accent-text)]"
-              >
-                Manage credentials in Settings → Git
-              </RouterLink>
-              <span v-else>Ask an admin to add one under Settings → Git.</span>
-            </p>
           </div>
         </div>
       </template>
 
-      <div v-else class="space-y-3">
-        <div class="flex items-center justify-between">
-          <label class="block text-sm font-medium">Files</label>
-          <BaseButton intent="ghost" size="xs" @click="addFile">Add file</BaseButton>
-        </div>
-        <p v-if="form.files.length === 0" class="subtle text-xs">
-          No files yet. Add one — e.g. <code class="font-mono">traefik.yml</code>, or
-          <code class="font-mono">dynamic/middlewares.yml</code>. Paths are relative; use
-          <code class="font-mono">/</code> for subdirectories.
-        </p>
-        <div v-for="(f, i) in form.files" :key="i" class="rounded-md border border-[var(--border)] p-3">
-          <div class="mb-2 flex items-center gap-2">
+      <template #delivery>
+        <div class="grid gap-4 sm:grid-cols-2">
+          <div>
+            <label for="vs-uid" class="mb-1.5 block text-sm font-medium">Owner uid</label>
             <input
-              v-model="f.path"
-              placeholder="dynamic/middlewares.yml"
-              class="field flex-1 font-mono text-xs"
-              data-cursor="text"
+              id="vs-uid"
+              v-model.number="form.uid"
+              type="number"
+              min="0"
+              class="field font-mono text-xs"
             />
-            <BaseButton intent="ghost" size="xs" @click="removeFile(i)">Remove</BaseButton>
           </div>
-          <textarea
-            v-model="f.content"
-            rows="6"
-            spellcheck="false"
-            class="field w-full font-mono text-xs"
-            data-cursor="text"
-          />
+          <div>
+            <label for="vs-gid" class="mb-1.5 block text-sm font-medium">Owner gid</label>
+            <input
+              id="vs-gid"
+              v-model.number="form.gid"
+              type="number"
+              min="0"
+              class="field font-mono text-xs"
+            />
+          </div>
         </div>
-      </div>
+        <p class="subtle -mt-1 text-xs">
+          Ownership of the written files — a consumer that drops privileges can still read its
+          config.
+        </p>
 
-      <div class="grid gap-4 sm:grid-cols-4">
         <div>
-          <label for="vs-uid" class="mb-1.5 block text-sm font-medium">Owner uid</label>
-          <input
-            id="vs-uid"
-            v-model.number="form.uid"
-            type="number"
-            min="0"
-            class="field font-mono text-xs"
-          />
-        </div>
-        <div>
-          <label for="vs-gid" class="mb-1.5 block text-sm font-medium">Owner gid</label>
-          <input
-            id="vs-gid"
-            v-model.number="form.gid"
-            type="number"
-            min="0"
-            class="field font-mono text-xs"
-          />
-          <p class="subtle mt-1 text-xs">
-            Ownership of the written files — a consumer that drops privileges can still read its
-            config.
-          </p>
-        </div>
-        <div class="sm:col-span-2">
           <label for="vs-restart" class="mb-1.5 block text-sm font-medium">
             Restart after a changed sync <span class="subtle font-normal">(optional)</span>
           </label>
@@ -549,47 +594,40 @@ function webhookUrl(id: string): string {
             consumers that cannot hot-reload. Leave empty for Traefik and friends.
           </p>
         </div>
-      </div>
 
-      <div v-if="form.source_kind === 'git'">
-        <label for="vs-autosync" class="flex items-center gap-2 text-sm">
-          <input
-            id="vs-autosync"
-            v-model="form.auto_sync"
-            type="checkbox"
-            class="accent-[var(--color-accent-500)]"
-          />
-          Sync on push — a webhook from your git server triggers the sync
-        </label>
-        <p class="subtle mt-1 text-xs">
-          Edit the config in the repo, merge, done — no redeploy. Saving with this on mints a
-          webhook secret, shown once.
-        </p>
+        <div v-if="form.source_kind === 'git'">
+          <label for="vs-autosync" class="flex items-center gap-2 text-sm">
+            <input
+              id="vs-autosync"
+              v-model="form.auto_sync"
+              type="checkbox"
+              class="accent-[var(--color-accent-500)]"
+            />
+            Sync on push — a webhook from your git server triggers the sync
+          </label>
+          <p class="subtle mt-1 text-xs">
+            Edit the config in the repo, merge, done — no redeploy. Saving with this on mints a
+            webhook secret, shown once.
+          </p>
 
-        <div
-          v-if="editing && form.auto_sync && editing.has_webhook_secret"
-          class="mt-2 flex items-center gap-3"
-        >
-          <span class="muted text-xs">A secret is configured.</span>
-          <!-- Recoverable, but it stops push-syncs until the git server is updated: caution. -->
-          <BaseButton intent="caution" size="xs" :loading="busy" @click="askRotate">
-            Rotate secret
-          </BaseButton>
+          <div
+            v-if="editing && form.auto_sync && editing.has_webhook_secret"
+            class="mt-2 flex items-center gap-3"
+          >
+            <span class="muted text-xs">A secret is configured.</span>
+            <!-- Recoverable, but it stops push-syncs until the git server is updated: caution. -->
+            <BaseButton intent="caution" size="xs" :loading="busy" @click="askRotate">
+              Rotate secret
+            </BaseButton>
+          </div>
         </div>
-      </div>
-
-      <div class="flex items-center gap-2">
-        <BaseButton type="submit" intent="primary" size="md" :loading="busy">
-          {{ editing ? 'Save' : 'Create source' }}
-        </BaseButton>
-        <BaseButton v-if="editing" intent="secondary" size="md" @click="close">Cancel</BaseButton>
-      </div>
-    </form>
+      </template>
+    </WizardModal>
 
     <p v-if="isLoading" class="muted text-sm">Loading…</p>
 
     <EmptyState
-      v-else-if="!mine.length && !open"
+      v-else-if="!mine.length"
       icon="file"
       title="No volume sources on this cluster yet"
       body="A volume source fills a named volume from a git subtree and keeps it current — Traefik dynamic config, init scripts, provisioning — so the repo stays the only source of truth. Secrets don't belong here: those ride sealed stack env vars or cert deliveries."

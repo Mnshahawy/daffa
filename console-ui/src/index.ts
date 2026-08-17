@@ -31,6 +31,8 @@ export { default as Spinner } from './components/Spinner.vue'
 export { default as StatusPill } from './components/StatusPill.vue'
 export { default as ThemeToggle } from './components/ThemeToggle.vue'
 export { default as ToastHost } from './components/ToastHost.vue'
+export { default as WizardModal } from './components/WizardModal.vue'
+export type { WizardStep, WizardAction } from './components/WizardModal.vue'
 
 // ── Channels / stores ────────────────────────────────────────────────────────
 export { toast, toasts, dismiss, errorMessage, type Toast } from './lib/toast'

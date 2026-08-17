@@ -85,6 +85,7 @@ export const iconPaths = {
     'm2 2 20 20',
   ],
   chevronDown: ['m6 9 6 6 6-6'],
+  chevronLeft: ['m15 6-6 6 6 6'],
   chevronRight: ['m9 6 6 6-6 6'],
   chevronsLeft: ['m11 17-5-5 5-5', 'm18 17-5-5 5-5'],
   plus: ['M12 5v14', 'M5 12h14'],

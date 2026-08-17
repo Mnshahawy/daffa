@@ -19,7 +19,10 @@ the copies drifting.
   grammar (primary / secondary / ghost / caution / danger / danger-solid × xs / sm / md).
 - **Components** — `BaseButton`, `Select`, `ComboBox`, `SearchInput`, `SecretInput`,
   `ListInput` (a `string[]` edited as removable chips, instead of a text field with a
-  separator rule in the hint underneath), `Modal`, `DropdownMenu`, `PageHeader`,
+  separator rule in the hint underneath), `Modal`, `WizardModal` (one long ordered form
+  split into steps, with a rail that says how many there are before you commit to the
+  first — for a dialog that has outgrown a screen, never for an unordered form),
+  `DropdownMenu`, `PageHeader`,
   `StatusPill`, `EmptyState`, `AppIcon` (+
   `iconPaths`), `CopyButton`, `Spinner`, `RailItem`, `ThemeToggle`, and the singleton
   hosts `ToastHost` / `ConfirmHost`.

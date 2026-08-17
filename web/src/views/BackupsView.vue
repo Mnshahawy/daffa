@@ -14,6 +14,7 @@ import { EmptyState } from '@mnshahawy/daffa-console-ui'
 import { PageHeader } from '@mnshahawy/daffa-console-ui'
 import { Select } from '@mnshahawy/daffa-console-ui'
 import { StatusPill } from '@mnshahawy/daffa-console-ui'
+import { WizardModal, type WizardStep } from '@mnshahawy/daffa-console-ui'
 
 const session = useSession()
 const qc = useQueryClient()
@@ -93,6 +94,47 @@ function toggleKey(id: string) {
   const ks = form.value.key_ids
   form.value.key_ids = ks.includes(id) ? ks.filter((k) => k !== id) : [...ks, id]
 }
+
+/**
+ * A backup job is four decisions and about thirty fields, and half of them only apply to
+ * one engine — as one screen it was the longest form in the console and most of it was
+ * irrelevant to whoever was reading it. The order is the sentence the job describes: back
+ * up THIS, including THAT, TO there, readable by THEM.
+ *
+ * Each `complete` here is a rule the server enforces anyway. Stating it as a gate means it
+ * is said while the reader is on the step that can fix it, rather than as a 400 after the
+ * other three steps have been filled in.
+ */
+const steps = computed<WizardStep[]>(() => [
+  {
+    id: 'subject',
+    title: 'What to back up',
+    description: 'The engine decides how the data comes out — a dump for a database, a tar for a volume.',
+    complete: !volumeIsSourced.value,
+  },
+  {
+    id: 'contents',
+    title: isVolume.value ? 'Files' : 'Databases',
+    description: isVolume.value
+      ? 'What the tar leaves out, and what has to stop while it is taken.'
+      : 'Which databases, and the credentials the dump runs as. Empty is usually right.',
+  },
+  {
+    id: 'destination',
+    title: 'Destination',
+    description: 'Where each snapshot lands, and how often one is taken.',
+    complete: !!targets.value?.length,
+  },
+  {
+    id: 'encryption',
+    title: 'Encryption',
+    description:
+      'Snapshots are encrypted on the way out, to public keys Daffa holds. The private halves are yours — this box cannot read its own backups.',
+    // The server refuses "encrypt to nobody" — and it is the last thing you want to
+    // discover after filling in a database password.
+    complete: form.value.encryption === 'none' || form.value.key_ids.length > 0,
+  },
+])
 
 // Preselect when there is only one — a required dropdown with a single option is a
 // question with one answer.
@@ -217,35 +259,51 @@ function runStatus(j: BackupJob): Status {
       description="Dumps a database out of a running container — or tars a named volume — and streams it straight to object storage. Nothing is written to the host's disk."
     >
       <template #actions>
-        <BaseButton
-          v-if="session.can(Cap.BackupsEdit)"
-          :intent="adding ? 'secondary' : 'primary'"
-          @click="adding = !adding"
-        >
-          <AppIcon v-if="!adding" name="plus" class="size-4" />
-          {{ adding ? 'Cancel' : 'New job' }}
+        <BaseButton v-if="session.can(Cap.BackupsEdit)" intent="primary" @click="adding = true">
+          <AppIcon name="plus" class="size-4" />
+          New job
         </BaseButton>
       </template>
     </PageHeader>
 
     <!-- New job -->
-    <form
+    <WizardModal
       v-if="adding"
-      class="surface mb-6 space-y-5 rounded-[var(--radius-card)] p-5"
-      @submit.prevent="create.mutate()"
+      title="New backup job"
+      :steps="steps"
+      submit-label="Create job"
+      :submitting="create.isPending.value"
+      @close="adding = false"
+      @submit="create.mutate()"
     >
-      <div class="grid gap-4 sm:grid-cols-3">
-        <div>
-          <label for="b-name" class="mb-1.5 block text-sm font-medium">Name</label>
-          <input
-            id="b-name"
-            v-model="form.name"
-            required
-            placeholder="prod-db"
-            class="field"
-            data-cursor="text"
-          />
+      <template #subject>
+        <div class="grid gap-4 sm:grid-cols-2">
+          <div>
+            <label for="b-name" class="mb-1.5 block text-sm font-medium">Name</label>
+            <input
+              id="b-name"
+              v-model="form.name"
+              required
+              placeholder="prod-db"
+              class="field"
+              data-cursor="text"
+            />
+          </div>
+          <div>
+            <label for="b-engine" class="mb-1.5 block text-sm font-medium">Engine</label>
+            <Select id="b-engine" v-model="form.engine">
+              <option value="postgres">PostgreSQL</option>
+              <option value="mysql">MySQL / MariaDB</option>
+              <option value="mongodb">MongoDB</option>
+              <option value="volume">Volume — tar of a named volume</option>
+            </Select>
+            <p v-if="isVolume" class="subtle mt-1 text-xs leading-relaxed">
+              For file-shaped data: repositories, uploads, provisioning state. A file-level
+              snapshot of a live database is torn — for databases use a database engine.
+            </p>
+          </div>
         </div>
+
         <div v-if="!isVolume">
           <label for="b-container" class="mb-1.5 block text-sm font-medium">Container</label>
           <input
@@ -256,9 +314,7 @@ function runStatus(j: BackupJob): Status {
             class="field font-mono text-xs"
             data-cursor="text"
           />
-          <p class="subtle mt-1 text-xs">
-            The database container itself — the dump runs inside it.
-          </p>
+          <p class="subtle mt-1 text-xs">The database container itself — the dump runs inside it.</p>
         </div>
         <div v-else>
           <label for="b-volume" class="mb-1.5 block text-sm font-medium">Volume</label>
@@ -275,7 +331,7 @@ function runStatus(j: BackupJob): Status {
           </p>
           <p
             v-else
-            class="mt-1.5 rounded-[var(--radius-control)] px-3 py-2 text-xs"
+            class="mt-1.5 rounded-[var(--radius-control)] px-3 py-2 text-xs leading-relaxed"
             :style="{
               background: 'var(--warn-soft)',
               border: '1px solid color-mix(in oklch, var(--warn) 30%, transparent)',
@@ -286,22 +342,9 @@ function runStatus(j: BackupJob): Status {
             the repository instead.
           </p>
         </div>
-        <div>
-          <label for="b-engine" class="mb-1.5 block text-sm font-medium">Engine</label>
-          <Select id="b-engine" v-model="form.engine">
-            <option value="postgres">PostgreSQL</option>
-            <option value="mysql">MySQL / MariaDB</option>
-            <option value="mongodb">MongoDB</option>
-            <option value="volume">Volume — tar of a named volume</option>
-          </Select>
-          <p v-if="isVolume" class="subtle mt-1 text-xs">
-            For file-shaped data: repositories, uploads, provisioning state. A file-level snapshot
-            of a live database is torn — for databases use a database engine.
-          </p>
-        </div>
-      </div>
+      </template>
 
-      <div class="grid gap-4 sm:grid-cols-4">
+      <template #contents>
         <template v-if="!isVolume">
           <div>
             <label for="b-databases" class="mb-1.5 block text-sm font-medium">Databases</label>
@@ -314,77 +357,68 @@ function runStatus(j: BackupJob): Status {
             />
             <p class="subtle mt-1 text-xs">Empty = everything, roles included.</p>
           </div>
-          <div>
-            <label for="b-user" class="mb-1.5 block text-sm font-medium">DB user</label>
-            <input
-              id="b-user"
-              v-model="form.db_user"
-              placeholder="postgres"
-              class="field"
-              data-cursor="text"
-            />
-          </div>
-          <div>
-            <label for="b-password" class="mb-1.5 block text-sm font-medium">DB password</label>
-            <input
-              id="b-password"
-              v-model="form.db_password"
-              type="password"
-              placeholder="often not needed"
-              class="field"
-            />
+          <div class="grid gap-4 sm:grid-cols-2">
+            <div>
+              <label for="b-user" class="mb-1.5 block text-sm font-medium">DB user</label>
+              <input
+                id="b-user"
+                v-model="form.db_user"
+                placeholder="postgres"
+                class="field"
+                data-cursor="text"
+              />
+            </div>
+            <div>
+              <label for="b-password" class="mb-1.5 block text-sm font-medium">DB password</label>
+              <input
+                id="b-password"
+                v-model="form.db_password"
+                type="password"
+                placeholder="often not needed"
+                class="field"
+              />
+            </div>
           </div>
         </template>
-        <div v-else class="sm:col-span-3">
-          <label for="b-stop" class="mb-1.5 block text-sm font-medium">
-            Stop during snapshot <span class="subtle font-normal">(optional)</span>
-          </label>
-          <input
-            id="b-stop"
-            v-model="form.stop_containers"
-            placeholder="forgejo"
-            class="field font-mono text-xs"
-            data-cursor="text"
-          />
-          <p class="subtle mt-1 text-xs">
-            Space-separated container names, stopped for the duration and restarted after — even
-            when the snapshot fails. Downtime traded for consistency, chosen per job, in writing.
-          </p>
-        </div>
-        <div>
-          <label for="b-schedule" class="mb-1.5 block text-sm font-medium">Schedule</label>
-          <input
-            id="b-schedule"
-            v-model="form.schedule"
-            placeholder="0 3 * * *"
-            class="field font-mono text-xs"
-            data-cursor="text"
-          />
-          <p class="subtle mt-1 text-xs">Cron, in UTC. Empty = manual only.</p>
-        </div>
-      </div>
 
-      <div v-if="isVolume">
-        <label for="b-exclude" class="mb-1.5 block text-sm font-medium">
-          Exclude paths <span class="subtle font-normal">(optional)</span>
-        </label>
-        <textarea
-          id="b-exclude"
-          v-model="form.exclude_paths"
-          rows="3"
-          placeholder="cache&#10;tmp/sessions&#10;logs"
-          class="field font-mono text-xs"
-          data-cursor="text"
-        />
-        <p class="subtle mt-1 text-xs">
-          One path per line, relative to the volume root — dropped from the snapshot. A directory
-          drops its whole subtree. For regenerable junk (caches, logs) that need not be backed up.
-        </p>
-      </div>
+        <template v-else>
+          <div>
+            <label for="b-stop" class="mb-1.5 block text-sm font-medium">
+              Stop during snapshot <span class="subtle font-normal">(optional)</span>
+            </label>
+            <input
+              id="b-stop"
+              v-model="form.stop_containers"
+              placeholder="forgejo"
+              class="field font-mono text-xs"
+              data-cursor="text"
+            />
+            <p class="subtle mt-1 text-xs leading-relaxed">
+              Space-separated container names, stopped for the duration and restarted after — even
+              when the snapshot fails. Downtime traded for consistency, chosen per job, in writing.
+            </p>
+          </div>
+          <div>
+            <label for="b-exclude" class="mb-1.5 block text-sm font-medium">
+              Exclude paths <span class="subtle font-normal">(optional)</span>
+            </label>
+            <textarea
+              id="b-exclude"
+              v-model="form.exclude_paths"
+              rows="3"
+              placeholder="cache&#10;tmp/sessions&#10;logs"
+              class="field font-mono text-xs"
+              data-cursor="text"
+            />
+            <p class="subtle mt-1 text-xs leading-relaxed">
+              One path per line, relative to the volume root — dropped from the snapshot. A directory
+              drops its whole subtree. For regenerable junk (caches, logs) that need not be backed up.
+            </p>
+          </div>
+        </template>
+      </template>
 
-      <div>
-        <div class="eyebrow mb-2">Destination</div>
-
+      <template #destination>
         <div
           v-if="!targets?.length"
           class="rounded-[var(--radius-control)] px-3 py-2 text-sm"
@@ -403,7 +437,7 @@ function runStatus(j: BackupJob): Status {
           first.
         </div>
 
-        <div v-else class="grid gap-4 sm:grid-cols-2">
+        <template v-else>
           <div>
             <label for="b-storage" class="mb-1.5 block text-sm font-medium">Storage target</label>
             <Select id="b-storage" v-model="form.storage_id" required>
@@ -413,66 +447,115 @@ function runStatus(j: BackupJob): Status {
               </option>
             </Select>
           </div>
-          <div>
-            <label for="b-prefix" class="mb-1.5 block text-sm font-medium">
-              Path within the bucket
-            </label>
-            <input
-              id="b-prefix"
-              v-model="form.prefix"
-              placeholder="e.g. prod/postgres (optional)"
-              class="field font-mono text-xs"
-              data-cursor="text"
-            />
-          </div>
-        </div>
-      </div>
-
-      <div>
-        <div class="eyebrow mb-2">Encryption</div>
-        <label for="b-enc-age" class="mb-2 flex items-center gap-2 text-sm">
-          <input
-            id="b-enc-age"
-            v-model="form.encryption"
-            type="radio"
-            value="age"
-            class="accent-[var(--color-accent-500)]"
-          />
-          Encrypt to an age public key <span class="muted">(recommended)</span>
-        </label>
-        <label for="b-enc-none" class="mb-3 flex items-center gap-2 text-sm">
-          <input
-            id="b-enc-none"
-            v-model="form.encryption"
-            type="radio"
-            value="none"
-            class="accent-[var(--color-accent-500)]"
-          />
-          None — store the dump as plain gzip
-        </label>
-
-        <template v-if="form.encryption === 'age'">
-          <div v-if="keys?.length" class="space-y-1.5">
-            <label
-              v-for="k in keys"
-              :key="k.id"
-              class="flex items-center gap-2 text-sm"
-              :for="'b-key-' + k.id"
-            >
+          <div class="grid gap-4 sm:grid-cols-2">
+            <div>
+              <label for="b-prefix" class="mb-1.5 block text-sm font-medium">
+                Path within the bucket
+              </label>
               <input
-                :id="'b-key-' + k.id"
-                type="checkbox"
-                :checked="form.key_ids.includes(k.id)"
-                class="accent-[var(--color-accent-500)]"
-                @change="toggleKey(k.id)"
+                id="b-prefix"
+                v-model="form.prefix"
+                placeholder="e.g. prod/postgres (optional)"
+                class="field font-mono text-xs"
+                data-cursor="text"
               />
-              <span class="font-medium">{{ k.name }}</span>
-              <span class="subtle min-w-0 truncate font-mono text-xs">{{ k.recipient }}</span>
-            </label>
+            </div>
+            <div>
+              <label for="b-schedule" class="mb-1.5 block text-sm font-medium">Schedule</label>
+              <input
+                id="b-schedule"
+                v-model="form.schedule"
+                placeholder="0 3 * * *"
+                class="field font-mono text-xs"
+                data-cursor="text"
+              />
+              <p class="subtle mt-1 text-xs">Cron, in UTC. Empty = manual only.</p>
+            </div>
           </div>
+        </template>
+      </template>
+
+      <template #encryption>
+        <!--
+          The recipient list is not a sibling of the choice above it — it IS that choice,
+          and floating it out at the same indent made the step read as three unrelated
+          groups. Nesting it inside the option's own panel is most of what fixes this step.
+        -->
+        <div class="space-y-2">
+          <label for="b-enc-age" class="flex items-center gap-2.5 text-sm">
+            <input
+              id="b-enc-age"
+              v-model="form.encryption"
+              type="radio"
+              value="age"
+              class="shrink-0 accent-[var(--color-accent-500)]"
+            />
+            Encrypt to an age public key <span class="muted">(recommended)</span>
+          </label>
+          <label for="b-enc-none" class="flex items-center gap-2.5 text-sm">
+            <input
+              id="b-enc-none"
+              v-model="form.encryption"
+              type="radio"
+              value="none"
+              class="shrink-0 accent-[var(--color-accent-500)]"
+            />
+            None — store the dump as plain gzip
+          </label>
+        </div>
+
+        <div
+          v-if="form.encryption === 'age'"
+          class="rounded-[var(--radius-control)] p-3"
+          :style="{ background: 'var(--surface-sunken)' }"
+        >
+          <template v-if="keys?.length">
+            <div class="eyebrow mb-2">Readable by</div>
+            <div class="space-y-1">
+              <!--
+                The name gets a fixed column so the recipients line up: ragged, the eye has
+                to re-find the start of every key, and these are forty characters of base32
+                that differ in the middle.
+              -->
+              <label
+                v-for="k in keys"
+                :key="k.id"
+                class="flex items-center gap-3 text-sm"
+                :for="'b-key-' + k.id"
+              >
+                <input
+                  :id="'b-key-' + k.id"
+                  type="checkbox"
+                  :checked="form.key_ids.includes(k.id)"
+                  class="shrink-0 accent-[var(--color-accent-500)]"
+                  @change="toggleKey(k.id)"
+                />
+                <span class="w-28 shrink-0 truncate font-medium">{{ k.name }}</span>
+                <span class="subtle min-w-0 flex-1 truncate font-mono text-xs">
+                  {{ k.recipient }}
+                </span>
+              </label>
+            </div>
+
+            <!-- Create job is disabled until one is ticked. A disabled button with no
+                 stated reason is a dead end, so the reason lives next to the fix. -->
+            <p
+              v-if="!form.key_ids.length"
+              class="mt-2.5 text-xs leading-relaxed"
+              :style="{ color: 'var(--warn)' }"
+            >
+              Pick at least one. A job encrypted to nobody is one Daffa will refuse to save.
+            </p>
+            <p v-else class="subtle mt-2.5 text-xs leading-relaxed">
+              Every snapshot is encrypted to <strong>all</strong> of these, and any one private
+              key restores it. Two is the number worth having — a personal key, and a
+              break-glass key kept somewhere independent.
+            </p>
+          </template>
+
           <div
             v-else
-            class="rounded-[var(--radius-control)] px-3 py-2 text-sm"
+            class="rounded-[var(--radius-control)] px-3 py-2 text-sm leading-relaxed"
             :style="{
               background: 'var(--warn-soft)',
               border: '1px solid color-mix(in oklch, var(--warn) 30%, transparent)',
@@ -487,33 +570,19 @@ function runStatus(j: BackupJob): Status {
             </RouterLink>
             first — the private half is yours to download, and Daffa never stores it.
           </div>
-          <p class="subtle mt-2 text-xs leading-relaxed">
-            Every snapshot is encrypted to <strong>all</strong> selected keys; any one private key
-            restores. Pick two — a personal key and a break-glass key held somewhere independent —
-            so losing one does not mean losing the backups.
-          </p>
-        </template>
+        </div>
+
         <p v-else class="subtle text-xs leading-relaxed">
           Anyone who can read the bucket can read your database. Only reasonable if the storage
           itself is private and you accept that.
         </p>
-      </div>
-
-      <BaseButton
-        type="submit"
-        intent="primary"
-        size="md"
-        :loading="create.isPending.value"
-        :disabled="!targets?.length || volumeIsSourced"
-      >
-        Create job
-      </BaseButton>
-    </form>
+      </template>
+    </WizardModal>
 
     <p v-if="isLoading" class="muted text-sm">Loading…</p>
 
     <EmptyState
-      v-else-if="!mine.length && !adding"
+      v-else-if="!mine.length"
       icon="archive"
       title="No backup jobs on this cluster yet"
       body="A backup job dumps a database out of its running container on a schedule and streams it straight to S3-compatible storage — encrypted to your public key, and never written to the host's disk. Without one, the only copy of that database is the container it lives in."
