@@ -15,11 +15,16 @@ import (
 // API tokens: automation without a browser. A token is a way to BE a user without a
 // session — same capability mask, resolved live, one kill switch (disable the user).
 // See docs/tokens.md.
+//
+// A person mints their own tokens and nobody else's. A BOT — an account that cannot sign
+// in — cannot mint its own, so a users.edit holder mints for it; that is the only case of
+// one account minting for another, because minting for a person would be impersonating them.
 
 type tokenView struct {
 	ID         string     `json:"id"`
 	UserID     string     `json:"user_id"`
-	UserLabel  string     `json:"user_label,omitempty"` // only on the oversight list
+	UserLabel  string     `json:"user_label,omitempty"` // oversight list and mint response
+	UserKind   string     `json:"user_kind,omitempty"`  // oversight list and mint response
 	Name       string     `json:"name"`
 	Prefix     string     `json:"prefix"`
 	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
@@ -82,7 +87,7 @@ func (s *Server) handleListAllTokens(w http.ResponseWriter, r *http.Request) {
 	for _, t := range list {
 		v := viewToken(t)
 		if owner, err := s.store.UserByID(r.Context(), t.UserID); err == nil {
-			v.UserLabel = owner.Label()
+			v.UserLabel, v.UserKind = owner.Label(), owner.Kind
 		}
 		out = append(out, v)
 	}
@@ -106,7 +111,30 @@ func (s *Server) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u, _ := auth.UserFrom(r.Context())
+	s.mintToken(w, r, u)
+}
 
+// handleCreateBotToken mints a token for a bot. users.edit at the route; the handler adds
+// the two refusals that make it safe: no token-authenticated caller (a bot's token must
+// not mint its own successor), and no minting for a person.
+func (s *Server) handleCreateBotToken(w http.ResponseWriter, r *http.Request) {
+	if refuseTokenCaller(w, r) {
+		return
+	}
+	u, _ := s.userOr404(w, r)
+	if u == nil {
+		return
+	}
+	if u.Kind != "bot" {
+		httpx.Fail(w, r, http.StatusConflict, "not_a_bot",
+			"Only a bot's tokens are minted by someone else. A person mints their own under API tokens — minting one for them would let you act as them.")
+		return
+	}
+	s.mintToken(w, r, u)
+}
+
+// mintToken creates a token owned by owner and answers with the secret, once.
+func (s *Server) mintToken(w http.ResponseWriter, r *http.Request, owner *store.User) {
 	var req createTokenRequest
 	if err := httpx.Decode(w, r, &req); err != nil {
 		httpx.BadRequest(w, r, err.Error())
@@ -128,7 +156,7 @@ func (s *Server) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tok := &store.APIToken{
-		UserID: u.ID, Name: req.Name,
+		UserID: owner.ID, Name: req.Name,
 		Prefix: secret[:len(auth.TokenPrefix)+6],
 		Hash:   auth.HashToken(secret),
 	}
@@ -137,7 +165,11 @@ func (s *Server) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.store.CreateAPIToken(r.Context(), tok); err != nil {
 		if store.IsDuplicate(err) {
-			httpx.Fail(w, r, http.StatusBadRequest, "name_taken", "You already have a token with that name.")
+			msg := "You already have a token with that name."
+			if actor, _ := auth.UserFrom(r.Context()); actor == nil || actor.ID != owner.ID {
+				msg = owner.Label() + " already has a token with that name."
+			}
+			httpx.Fail(w, r, http.StatusBadRequest, "name_taken", msg)
 			return
 		}
 		httpx.Error(w, r, err)
@@ -146,11 +178,13 @@ func (s *Server) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 
 	s.audit(r.Context(), store.AuditEntry{
 		Action: "token.create", Target: req.Name, Outcome: "ok",
-		Detail: store.AuditDetail(map[string]any{"expires_days": req.ExpiresDays}),
+		Detail: store.AuditDetail(map[string]any{"expires_days": req.ExpiresDays, "owner": owner.Label()}),
 	})
 
 	// The one response that ever carries the secret.
-	httpx.JSON(w, http.StatusOK, createdTokenResponse{viewToken(tok), secret})
+	v := viewToken(tok)
+	v.UserLabel, v.UserKind = owner.Label(), owner.Kind
+	httpx.JSON(w, http.StatusOK, createdTokenResponse{v, secret})
 }
 
 func (s *Server) handleDeleteToken(w http.ResponseWriter, r *http.Request) {

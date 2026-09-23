@@ -556,7 +556,7 @@ type meResponse struct {
 	ID      string   `json:"id"`
 	Label   string   `json:"label"`
 	Email   string   `json:"email"`
-	Kind    string   `json:"kind"` // local | oidc
+	Kind    string   `json:"kind"` // local | oidc | bot
 	Roles   []meRole `json:"roles"`
 	IsAdmin bool     `json:"is_admin"`
 

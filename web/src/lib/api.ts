@@ -91,7 +91,7 @@ export interface MeResponse {
   id: string
   label: string
   email: string
-  kind: 'local' | 'oidc'
+  kind: 'local' | 'oidc' | 'bot'
   roles: MeRole[]
   is_admin: boolean
   caps: Record<string, number>
@@ -113,6 +113,7 @@ export interface APIToken {
   id: string
   user_id: string
   user_label?: string
+  user_kind?: 'local' | 'oidc' | 'bot'
   name: string
   prefix: string
   expires_at?: string
@@ -130,6 +131,7 @@ export interface CreatedAPIToken {
   id: string
   user_id: string
   user_label?: string
+  user_kind?: 'local' | 'oidc' | 'bot'
   name: string
   prefix: string
   expires_at?: string
@@ -1207,7 +1209,7 @@ export interface User {
   label: string
   username: string
   email: string
-  kind: 'local' | 'oidc'
+  kind: 'local' | 'oidc' | 'bot'
   disabled: boolean
   roles: Membership[]
   created_at: string
@@ -1224,9 +1226,10 @@ export interface Membership {
 }
 
 export interface CreateUserRequest {
+  kind?: 'local' | 'bot'
   username: string
   email?: string
-  password: string
+  password?: string
   grants: GrantRequest[]
 }
 
@@ -1744,6 +1747,8 @@ export const daffa = {
   createUser: (body: CreateUserRequest) => api.post<User>('/api/users', body),
   updateUser: (id: string, body: UpdateUserRequest) => api.patch<User>(`/api/users/${id}`, body),
   deleteUser: (id: string) => api.del<StatusResponse>(`/api/users/${id}`),
+  createBotToken: (id: string, body: CreateTokenRequest) =>
+    api.post<CreatedAPIToken>(`/api/users/${id}/tokens`, body),
   roles: () => api.get<Role[]>('/api/roles'),
   createRole: (body: RoleRequest) => api.post<Role>('/api/roles', body),
   updateRole: (id: string, body: RoleRequest) => api.put<Role>(`/api/roles/${id}`, body),

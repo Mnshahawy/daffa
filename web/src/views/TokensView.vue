@@ -8,8 +8,8 @@ import { useSession } from '@/stores/session'
 import { confirm } from '@mnshahawy/daffa-console-ui'
 import { AppIcon } from '@mnshahawy/daffa-console-ui'
 import { BaseButton } from '@mnshahawy/daffa-console-ui'
-import { CopyButton } from '@mnshahawy/daffa-console-ui'
 import { EmptyState } from '@mnshahawy/daffa-console-ui'
+import TokenReveal from '@/components/TokenReveal.vue'
 
 const session = useSession()
 const qc = useQueryClient()
@@ -43,13 +43,11 @@ const form = ref({ name: '', expires_days: 0 })
 
 /** The freshly minted secret. Held only until the operator confirms they stored it. */
 const created = ref<{ name: string; token: string } | null>(null)
-const copied = ref(false)
 
 const create = useMutation({
   mutationFn: () => daffa.createToken({ ...form.value }),
   onSuccess: (res) => {
     created.value = { name: res.name, token: res.token }
-    copied.value = false
     form.value = { name: '', expires_days: 0 }
     adding.value = false
     refresh()
@@ -87,8 +85,9 @@ async function onRevoke(t: APIToken) {
             A token lets a script or CI job call the API as you — same permissions, no
             browser, sent as
             <code class="font-mono text-xs">Authorization: Bearer daffa_…</code>. For
-            automation that should not be you, create a dedicated user with a narrow role
-            and mint its token. Tokens cannot mint other tokens or change passwords.
+            automation that should not be you — and should keep working after you leave —
+            create a bot under Users, give it a narrow role and mint its token there. Tokens
+            cannot mint other tokens or change passwords.
           </p>
         </div>
         <div class="ml-auto">
@@ -99,26 +98,7 @@ async function onRevoke(t: APIToken) {
         </div>
       </div>
 
-      <!-- The one-time reveal. Modal-ish on purpose: only the hash is stored. -->
-      <div
-        v-if="created"
-        class="mb-5 rounded-[var(--radius-card)] p-5"
-        :style="{ background: 'var(--warn-soft)', border: '1px solid color-mix(in oklch, var(--warn) 40%, transparent)' }"
-      >
-        <p class="mb-1 text-sm font-semibold">Copy the token “{{ created.name }}” — now.</p>
-        <p class="mb-3 text-sm leading-relaxed">
-          This is the only time it will ever be shown. Daffa stores a hash, not the token
-          — close this without copying and the token is unusable by anyone, forever. Put
-          it straight into your CI's secret storage.
-        </p>
-        <code class="mb-3 block overflow-x-auto rounded-lg p-3 font-mono text-xs" :style="{ background: 'var(--surface-sunken)' }">{{ created.token }}</code>
-        <div class="flex flex-wrap items-center gap-3">
-          <CopyButton intent="primary" size="md" label="Copy token" :text="created.token" @copied="copied = true" />
-          <BaseButton intent="secondary" size="md" :disabled="!copied" :title="copied ? '' : 'Copy it first'" @click="created = null">
-            I have stored it safely
-          </BaseButton>
-        </div>
-      </div>
+      <TokenReveal v-if="created" :name="created.name" :token="created.token" class="mb-5" @done="created = null" />
 
       <form v-if="adding" class="surface mb-5 rounded-[var(--radius-card)] p-5" @submit.prevent="create.mutate()">
         <div class="grid gap-4 sm:grid-cols-3">
@@ -211,7 +191,14 @@ async function onRevoke(t: APIToken) {
                 <div class="font-medium">{{ t.name }}</div>
                 <div class="subtle mt-0.5 truncate font-mono text-xs">{{ t.prefix }}…</div>
               </td>
-              <td class="py-3 pr-3 text-xs">{{ t.user_label || t.user_id }}</td>
+              <td class="py-3 pr-3 text-xs">
+                {{ t.user_label || t.user_id }}
+                <span
+                  v-if="t.user_kind === 'bot'"
+                  class="subtle ml-1 rounded-md border px-1.5 py-0.5 font-mono text-[10px]"
+                  :style="{ borderColor: 'var(--border)' }"
+                >bot</span>
+              </td>
               <td class="py-3 pr-3 text-xs" :style="t.expired ? { color: 'var(--danger)' } : {}">
                 {{ t.expired ? 'EXPIRED' : t.expires_at ? new Date(t.expires_at).toLocaleDateString() : 'never' }}
               </td>

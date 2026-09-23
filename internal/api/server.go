@@ -296,7 +296,7 @@ func (s *Server) apiRoutes() []route {
 		// The masks in caps/caps_by_env are one number per functional area; the browser
 		// resolves a question as `global | byEnv[currentHost]` (see hasCap in caps.ts).
 		//oapi:summary Read your own identity, roles and capability masks
-		//oapi:enum MeResponse.kind local|oidc
+		//oapi:enum MeResponse.kind local|oidc|bot
 		//oapi:enum MeRole.scope global|env
 		{pattern: "GET /api/auth/me", scope: scopeNone, open: "a signed-in user may always read their own identity and permissions", h: s.handleMe,
 			resp: meResponse{}},
@@ -325,6 +325,7 @@ func (s *Server) apiRoutes() []route {
 		// The users.edit oversight list: every token, with owners. Oversight without
 		// impersonation — the secret is unrecoverable even here.
 		//oapi:summary List every user's API tokens
+		//oapi:enum APIToken.user_kind local|oidc|bot
 		{pattern: "GET /api/tokens/all", cap: caps.UsersEdit, scope: scopeGlobal, h: s.handleListAllTokens,
 			resp: []tokenView(nil), ts: "allTokens"},
 
@@ -1296,16 +1297,18 @@ func (s *Server) apiRoutes() []route {
 
 		// ── users ──────────────────────────────────────────────────────────────────
 		//oapi:summary List users, with the roles each one holds
-		//oapi:enum User.kind local|oidc
+		//oapi:enum User.kind local|oidc|bot
 		//oapi:enum Membership.source local|oidc
 		{pattern: "GET /api/users", cap: caps.UsersView, scope: scopeGlobal, h: s.handleListUsers,
 			resp: []userView(nil), ts: "users"},
-		// Creates a LOCAL user. OIDC users are not created here — they appear on first
-		// successful sign-in, with the roles their claims map to.
-		//oapi:summary Create a local user with at least one role
+		// Creates a LOCAL user, or a BOT (kind "bot", no password) — an account nobody signs
+		// in as, reached only through tokens minted for it below. OIDC users are not created
+		// here — they appear on first successful sign-in, with the roles their claims map to.
+		//oapi:summary Create a local user or a bot, with at least one role
 		//oapi:status 201
 		//oapi:example req {"username": "jamila", "email": "jamila@example.com", "password": "a-long-placeholder-passphrase", "grants": [{"role_id": "role_operator", "env_id": ""}]}
-		//oapi:required CreateUserRequest.username CreateUserRequest.password CreateUserRequest.grants
+		//oapi:enum CreateUserRequest.kind local|bot
+		//oapi:required CreateUserRequest.username CreateUserRequest.grants
 		{pattern: "POST /api/users", cap: caps.UsersEdit, scope: scopeGlobal, h: s.handleCreateUser,
 			req: createUserRequest{}, resp: userView{}, ts: "createUser"},
 		// Absent fields are left alone; disabling the last administrator is refused.
@@ -1328,6 +1331,15 @@ func (s *Server) apiRoutes() []route {
 		//oapi:summary Replace a user's locally granted roles
 		{pattern: "PUT /api/users/{id}/roles", cap: caps.UsersEdit, scope: scopeGlobal, h: s.handleSetUserRoles,
 			req: rolesRequest{}, resp: userView{}},
+		// A bot cannot sign in to mint its own tokens, so a users.edit holder mints them —
+		// for bots only (minting for a person would be impersonating them), and never from a
+		// token-authenticated caller (a bot's token must not mint its own successor). The
+		// response is the one time the secret is shown; revoke with DELETE /api/tokens/{id}.
+		//oapi:summary Mint an API token for a bot; the secret is returned once
+		//oapi:example req {"name": "forgejo-ci", "expires_days": 0}
+		//oapi:enum CreatedAPIToken.user_kind local|oidc|bot
+		{pattern: "POST /api/users/{id}/tokens", cap: caps.UsersEdit, scope: scopeGlobal, h: s.handleCreateBotToken,
+			req: createTokenRequest{}, resp: createdTokenResponse{}, ts: "createBotToken"},
 
 		// ── roles ──────────────────────────────────────────────────────────────────
 		// roles.edit is administrative in the fullest sense: anyone holding it can grant

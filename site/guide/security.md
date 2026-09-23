@@ -83,6 +83,30 @@ yours and survive that re-sync.
 Set `DAFFA_LOCAL_AUTH=false` to make SSO the only way in — but keep break-glass in mind,
 because it becomes your only way back.
 
+## API tokens and bots
+
+Scripts and CI call the API with a bearer token instead of a session:
+`Authorization: Bearer daffa_…`. A token **is** its owner — the same roles, resolved on every
+request, so revoking a role narrows every token the owner holds. Only a hash is stored; the
+token is shown once, when it is minted. A token can never mint another token or change a
+password, so a leaked one dies when it is revoked instead of outliving it.
+
+Mint your own from the account menu → **API tokens**. For automation that should not act as you, and
+should keep working after you leave, create a **bot** under **Settings → Users → New bot**:
+
+- a bot has **no password** and cannot sign in. It is reached only through its tokens;
+- it holds roles like anyone else, including roles limited to one cluster, so give it the
+  narrowest one that does the job;
+- someone with `users.edit` mints and revokes its tokens from its row. That is the only case
+  of one account minting for another. Minting for a person would be impersonating them, so
+  it is refused;
+- **disabling** the bot stops all its tokens at once, and enabling it brings them back.
+  Deleting the bot deletes them;
+- everything it does is audited as `bot-name (token: token-name)`.
+
+A bot never counts as an administrator for the lockout guards, because nobody can sign in
+as it. An Admin bot beside a single human admin does not let you remove that human.
+
 ## Break-glass
 
 If the identity provider is unreachable — quite possibly *because* the stack it runs in is

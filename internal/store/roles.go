@@ -291,13 +291,17 @@ func (s *Store) DeleteRole(ctx context.Context, id string) error {
 
 // countOtherAdmins counts enabled users holding an admin role OTHER than excludeRole.
 // It is the single question behind every lockout guard: "if I do this, is anybody left?"
+//
+// Bots are not counted, in this or any other guard. The guard exists so that somebody can
+// still sign in and fix things; a bot cannot sign in, and a fleet whose only administrator
+// is a CI token has been locked out by definition.
 func (s *Store) countOtherAdmins(ctx context.Context, excludeRole string) (int, error) {
 	var n int
 	err := s.queryRow(ctx, `SELECT COUNT(DISTINCT u.id)
         FROM users u
         JOIN role_members rm ON rm.user_id = u.id
         JOIN roles r ON r.id = rm.role_id
-        WHERE r.is_admin = 1 AND u.disabled = 0 AND r.id <> ?`, excludeRole).Scan(&n)
+        WHERE r.is_admin = 1 AND u.disabled = 0 AND u.kind <> 'bot' AND r.id <> ?`, excludeRole).Scan(&n)
 	if err != nil {
 		return 0, fmt.Errorf("store: counting administrators: %w", err)
 	}
@@ -311,19 +315,23 @@ func (s *Store) countAdminsExcludingUser(ctx context.Context, excludeUser string
         FROM users u
         JOIN role_members rm ON rm.user_id = u.id
         JOIN roles r ON r.id = rm.role_id
-        WHERE r.is_admin = 1 AND u.disabled = 0 AND u.id <> ?`, excludeUser).Scan(&n)
+        WHERE r.is_admin = 1 AND u.disabled = 0 AND u.kind <> 'bot' AND u.id <> ?`, excludeUser).Scan(&n)
 	if err != nil {
 		return 0, fmt.Errorf("store: counting administrators: %w", err)
 	}
 	return n, nil
 }
 
-// IsAdminUser reports whether the user holds any admin role.
-func (s *Store) IsAdminUser(ctx context.Context, userID string) (bool, error) {
+// signInAdmin reports whether the user holds any admin role AND is someone who could sign
+// in with it — which a bot never is, so removing a bot's admin role, disabling it or
+// deleting it is never the change that locks the fleet out.
+func (s *Store) signInAdmin(ctx context.Context, userID string) (bool, error) {
 	var n int
 	err := s.queryRow(ctx, `SELECT COUNT(*)
-        FROM role_members rm JOIN roles r ON r.id = rm.role_id
-        WHERE rm.user_id = ? AND r.is_admin = 1`, userID).Scan(&n)
+        FROM role_members rm
+        JOIN roles r ON r.id = rm.role_id
+        JOIN users u ON u.id = rm.user_id
+        WHERE rm.user_id = ? AND r.is_admin = 1 AND u.kind <> 'bot'`, userID).Scan(&n)
 	return n > 0, err
 }
 
@@ -526,19 +534,8 @@ func (s *Store) RevokeRole(ctx context.Context, userID, roleID string, sc Scope)
 	// (GrantRole refuses it), so there is no case where revoking a scoped grant strips the
 	// fleet's last administrator.
 	if r.IsAdmin && sc.IsGlobal() {
-		// Would this user still be an admin by some other role? Would anyone else?
-		n, err := s.countAdminsExcludingUser(ctx, userID)
-		if err != nil {
+		if err := s.refuseLastAdminRevoke(ctx, userID, roleID); err != nil {
 			return err
-		}
-		if n == 0 {
-			stillAdmin, err := s.hasOtherAdminRole(ctx, userID, roleID)
-			if err != nil {
-				return err
-			}
-			if !stillAdmin {
-				return ErrLastAdmin
-			}
 		}
 	}
 	_, err = s.exec(ctx, `DELETE FROM role_members
@@ -546,6 +543,28 @@ func (s *Store) RevokeRole(ctx context.Context, userID, roleID string, sc Scope)
 		userID, roleID, sc.Kind, sc.ID)
 	if err != nil {
 		return fmt.Errorf("store: revoking role: %w", err)
+	}
+	return nil
+}
+
+// refuseLastAdminRevoke answers "would taking this admin role away leave nobody who can
+// sign in as an administrator?" — never true of a bot, which could not sign in anyway.
+func (s *Store) refuseLastAdminRevoke(ctx context.Context, userID, roleID string) error {
+	guarded, err := s.signInAdmin(ctx, userID)
+	if err != nil || !guarded {
+		return err
+	}
+	// Would this user still be an admin by some other role? Would anyone else?
+	n, err := s.countAdminsExcludingUser(ctx, userID)
+	if err != nil || n > 0 {
+		return err
+	}
+	stillAdmin, err := s.hasOtherAdminRole(ctx, userID, roleID)
+	if err != nil {
+		return err
+	}
+	if !stillAdmin {
+		return ErrLastAdmin
 	}
 	return nil
 }
@@ -691,7 +710,7 @@ func (s *Store) DeleteUserGuarded(ctx context.Context, userID string) error {
 }
 
 func (s *Store) refuseIfLastAdmin(ctx context.Context, userID string) error {
-	isAdmin, err := s.IsAdminUser(ctx, userID)
+	isAdmin, err := s.signInAdmin(ctx, userID)
 	if err != nil {
 		return err
 	}

@@ -10630,8 +10630,8 @@
         "tags": [
           "users"
         ],
-        "summary": "Create a local user with at least one role",
-        "description": "Creates a LOCAL user. OIDC users are not created here — they appear on first successful sign-in, with the roles their claims map to.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
+        "summary": "Create a local user or a bot, with at least one role",
+        "description": "Creates a LOCAL user, or a BOT (kind \"bot\", no password) — an account nobody signs in as, reached only through tokens minted for it below. OIDC users are not created here — they appear on first successful sign-in, with the roles their claims map to.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
         "x-daffa-capability": "users.edit",
         "x-daffa-scope": "global",
         "requestBody": {
@@ -10970,6 +10970,95 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/User"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is wrong, and the message says how to fix it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No live session or valid token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but the capability is not held at the required scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Nothing lives at that id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something went wrong on the server; the audit log has the details.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/users/{id}/tokens": {
+      "post": {
+        "operationId": "createBotToken",
+        "tags": [
+          "users"
+        ],
+        "summary": "Mint an API token for a bot; the secret is returned once",
+        "description": "A bot cannot sign in to mint its own tokens, so a users.edit holder mints them — for bots only (minting for a person would be impersonating them), and never from a token-authenticated caller (a bot's token must not mint its own successor). The response is the one time the secret is shown; revoke with DELETE /api/tokens/{id}.\n\nRequires the capability granted globally — a cluster-scoped grant does not satisfy it.",
+        "x-daffa-capability": "users.edit",
+        "x-daffa-scope": "global",
+        "requestBody": {
+          "description": "Request bodies are capped at 1 MiB; unknown fields are refused.",
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTokenRequest"
+              },
+              "example": {
+                "name": "forgejo-ci",
+                "expires_days": 0
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreatedAPIToken"
                 }
               }
             }
@@ -14001,7 +14090,8 @@
             "type": "string",
             "enum": [
               "local",
-              "oidc"
+              "oidc",
+              "bot"
             ]
           },
           "roles": {
@@ -14092,6 +14182,14 @@
           "user_label": {
             "type": "string"
           },
+          "user_kind": {
+            "type": "string",
+            "enum": [
+              "local",
+              "oidc",
+              "bot"
+            ]
+          },
           "name": {
             "type": "string"
           },
@@ -14145,6 +14243,14 @@
           },
           "user_label": {
             "type": "string"
+          },
+          "user_kind": {
+            "type": "string",
+            "enum": [
+              "local",
+              "oidc",
+              "bot"
+            ]
           },
           "name": {
             "type": "string"
@@ -17837,7 +17943,8 @@
             "type": "string",
             "enum": [
               "local",
-              "oidc"
+              "oidc",
+              "bot"
             ]
           },
           "disabled": {
@@ -17903,6 +18010,13 @@
       "CreateUserRequest": {
         "type": "object",
         "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "local",
+              "bot"
+            ]
+          },
           "username": {
             "type": "string"
           },
@@ -17921,7 +18035,6 @@
         },
         "required": [
           "username",
-          "password",
           "grants"
         ],
         "additionalProperties": false

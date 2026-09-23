@@ -15,6 +15,8 @@ The CLI is the `daffa` binary itself — grab a prebuilt one for your platform f
 [releases page](https://github.com/Mnshahawy/daffa/releases) (Linux, macOS, and Windows,
 with a `SHA256SUMS` beside them), drop it on your `PATH`, and point it at your server
 with `--server`/`--token` or the `DAFFA_SERVER`/`DAFFA_TOKEN` environment variables.
+In CI, use a [bot](/guide/security#api-tokens-and-bots)'s token rather than a person's,
+so the pipeline doesn't depend on anyone's account.
 From then on it keeps itself current: `daffa upgrade` downloads the latest release for
 your platform, verifies its checksum, and swaps the binary in place
 (`daffa upgrade --check` only reports).

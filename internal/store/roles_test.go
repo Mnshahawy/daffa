@@ -277,6 +277,50 @@ func TestLockoutGuards(t *testing.T) {
 	})
 }
 
+// A bot holding Admin is not a way back in — nobody can sign in as it — so it neither
+// satisfies the lockout guards for a person nor is ever protected by them itself.
+func TestLockoutGuardsIgnoreBots(t *testing.T) {
+	eachDialect(t, func(t *testing.T, s *Store) {
+		ctx := context.Background()
+		admin, err := s.AdminRole(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		root := &User{Kind: "local", Username: "root"}
+		bot := &User{Kind: "bot", Username: "ci"}
+		for _, u := range []*User{root, bot} {
+			if err := s.CreateUser(ctx, u); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.GrantRole(ctx, u.ID, admin.ID, SourceLocal, Global()); err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		// The admin bot does not count as a second administrator.
+		if err := s.RevokeRole(ctx, root.ID, admin.ID, Global()); !errors.Is(err, ErrLastAdmin) {
+			t.Errorf("revoking the only person's admin role beside an admin bot = %v; want ErrLastAdmin", err)
+		}
+		if err := s.SetUserDisabledGuarded(ctx, root.ID, true); !errors.Is(err, ErrLastAdmin) {
+			t.Errorf("disabling the only person admin beside an admin bot = %v; want ErrLastAdmin", err)
+		}
+		if err := s.DeleteUserGuarded(ctx, root.ID); !errors.Is(err, ErrLastAdmin) {
+			t.Errorf("deleting the only person admin beside an admin bot = %v; want ErrLastAdmin", err)
+		}
+
+		// And the bot itself is never protected as the last administrator.
+		if err := s.SetUserDisabledGuarded(ctx, bot.ID, true); err != nil {
+			t.Errorf("disabling an admin bot was refused: %v", err)
+		}
+		if err := s.RevokeRole(ctx, bot.ID, admin.ID, Global()); err != nil {
+			t.Errorf("revoking an admin bot's role was refused: %v", err)
+		}
+		if err := s.DeleteUserGuarded(ctx, bot.ID); err != nil {
+			t.Errorf("deleting an admin bot was refused: %v", err)
+		}
+	})
+}
+
 // The IdP owns the roles it grants; Daffa owns the ones granted here. A re-sync must not
 // silently delete an administrator's hand-granted role.
 func TestSyncOIDCRolesLeavesLocalGrantsAlone(t *testing.T) {

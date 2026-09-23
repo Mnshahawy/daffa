@@ -29,9 +29,12 @@ func NewID() string {
 
 // ── users ───────────────────────────────────────────────────────────────────────
 
+// User is an account. Kind "bot" is one nobody signs in as — no password, no provider —
+// reachable only through API tokens a users.edit holder minted for it, so automation
+// outlives the person who set it up. Lockout guards never count a bot as an administrator.
 type User struct {
 	ID           string
-	Kind         string // local | oidc
+	Kind         string // local | oidc | bot
 	Username     string
 	PasswordHash string
 	Sub          string // oidc: the subject, unique only WITHIN its provider

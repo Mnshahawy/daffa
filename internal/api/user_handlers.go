@@ -21,7 +21,7 @@ type userView struct {
 	Label       string           `json:"label"`
 	Username    string           `json:"username"`
 	Email       string           `json:"email"`
-	Kind        string           `json:"kind"` // local | oidc
+	Kind        string           `json:"kind"` // local | oidc | bot
 	Disabled    bool             `json:"disabled"`
 	Roles       []membershipView `json:"roles"`
 	CreatedAt   string           `json:"created_at"`
@@ -84,14 +84,17 @@ func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 }
 
 type createUserRequest struct {
+	// Kind is "local" (the default) or "bot". A bot has no password: it cannot sign in, and
+	// is reached only through tokens minted for it under POST /api/users/{id}/tokens.
+	Kind     string         `json:"kind,omitempty"`
 	Username string         `json:"username"`
 	Email    string         `json:"email"`
-	Password string         `json:"password"`
+	Password string         `json:"password,omitempty"`
 	Grants   []grantRequest `json:"grants"`
 }
 
-// handleCreateUser creates a LOCAL user. OIDC users are not created here — they appear on
-// first successful sign-in, with the roles their claims map to.
+// handleCreateUser creates a LOCAL user or a BOT. OIDC users are not created here — they
+// appear on first successful sign-in, with the roles their claims map to.
 func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	var req createUserRequest
 	if err := httpx.Decode(w, r, &req); err != nil {
@@ -99,17 +102,32 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.Username = strings.TrimSpace(req.Username)
+	bot := req.Kind == "bot"
 
+	if req.Kind != "" && req.Kind != "local" && !bot {
+		httpx.BadRequest(w, r, `A user is "local" (signs in with a password) or a "bot" (API tokens only). Identity-provider accounts appear on first sign-in.`)
+		return
+	}
 	if req.Username == "" {
 		httpx.BadRequest(w, r, "A username is required.")
 		return
 	}
-	if len(req.Password) < MinPasswordLength {
+	switch {
+	case bot && req.Password != "":
+		// Refused rather than ignored: somebody who typed one believes the bot can sign in
+		// with it, and it cannot.
+		httpx.BadRequest(w, r, "A bot cannot sign in, so it has no password. Create it, then mint it a token.")
+		return
+	case !bot && len(req.Password) < MinPasswordLength:
 		httpx.BadRequest(w, r, "The password must be at least 12 characters.")
 		return
 	}
 	if len(req.Grants) == 0 {
-		httpx.BadRequest(w, r, "Give the user at least one role, or they will be able to sign in and see nothing.")
+		if bot {
+			httpx.BadRequest(w, r, "Give the bot at least one role, or its tokens will be able to do nothing.")
+		} else {
+			httpx.BadRequest(w, r, "Give the user at least one role, or they will be able to sign in and see nothing.")
+		}
 		return
 	}
 	email, err := normalizeEmail(req.Email)
@@ -118,13 +136,13 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	hash, err := auth.HashPassword(req.Password)
-	if err != nil {
+	u := &store.User{Kind: "local", Username: req.Username, Email: email}
+	if bot {
+		u.Kind = "bot"
+	} else if u.PasswordHash, err = auth.HashPassword(req.Password); err != nil {
 		httpx.Error(w, r, err)
 		return
 	}
-
-	u := &store.User{Kind: "local", Username: req.Username, Email: email, PasswordHash: hash}
 	if err := s.store.CreateUser(r.Context(), u); err != nil {
 		if store.IsDuplicate(err) {
 			httpx.Fail(w, r, http.StatusConflict, "duplicate_username", "That username is already taken.")
@@ -261,7 +279,13 @@ func (s *Server) handleSetUserPassword(w http.ResponseWriter, r *http.Request) {
 	if u == nil {
 		return
 	}
-	if u.Kind != "local" {
+	switch u.Kind {
+	case "local":
+	case "bot":
+		httpx.Fail(w, r, http.StatusConflict, "not_local",
+			"A bot cannot sign in, so it has no password. Mint it a token instead.")
+		return
+	default:
 		httpx.Fail(w, r, http.StatusConflict, "not_local",
 			"This account signs in through an identity provider. Its password is set there, not here.")
 		return
@@ -423,6 +447,10 @@ func (s *Server) auditUser(r *http.Request, action string, target *store.User, r
 	detail := map[string]any{}
 	if roles != nil {
 		detail["roles"] = roles
+	}
+	// A bot's name reads like anyone's in the log; what it is changes how the entry reads.
+	if target.Kind == "bot" {
+		detail["kind"] = "bot"
 	}
 	e := store.AuditEntry{
 		Action: action, Target: target.Label(), Outcome: "ok",

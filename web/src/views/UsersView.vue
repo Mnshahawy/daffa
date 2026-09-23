@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useQuery, useQueryClient } from '@tanstack/vue-query'
-import { daffa, type Grant, type User } from '@/lib/api'
+import { daffa, type APIToken, type Grant, type User } from '@/lib/api'
 import { Cap } from '@/lib/caps'
 import { confirm } from '@mnshahawy/daffa-console-ui'
 import { useSession } from '@/stores/session'
 import { toast } from '@mnshahawy/daffa-console-ui'
 import GrantPicker from '@/components/GrantPicker.vue'
+import TokenReveal from '@/components/TokenReveal.vue'
 import { AppIcon } from '@mnshahawy/daffa-console-ui'
 import { BaseButton } from '@mnshahawy/daffa-console-ui'
 import { EmptyState } from '@mnshahawy/daffa-console-ui'
@@ -29,6 +30,12 @@ const { data: roles } = useQuery({
 // The hosts a role can be limited to. Only the ones this admin can see — you cannot grant
 // access to a host you cannot see yourself.
 const { data: envs } = useQuery({ queryKey: ['environments'], queryFn: daffa.environments })
+// A bot's tokens live on the oversight list (users.edit, like everything a bot needs).
+const { data: allTokens } = useQuery({
+  queryKey: ['tokens-all'],
+  queryFn: daffa.allTokens,
+  enabled: canEdit,
+})
 
 const busy = ref(false)
 const adding = ref(false)
@@ -43,7 +50,14 @@ const newPassword = ref('')
 const editingEmail = ref<User | null>(null)
 const newEmail = ref('')
 
-const form = ref({ username: '', email: '', password: '', grants: [] as Grant[] })
+type Kind = 'local' | 'bot'
+const blankForm = (kind: Kind) => ({ kind, username: '', email: '', password: '', grants: [] as Grant[] })
+const form = ref(blankForm('local'))
+
+function startAdding(kind: Kind) {
+  form.value = blankForm(kind)
+  adding.value = true
+}
 
 async function afterChange() {
   await qc.invalidateQueries({ queryKey: ['users'] })
@@ -55,13 +69,20 @@ async function afterChange() {
 async function create() {
   busy.value = true
   try {
-    await daffa.createUser(form.value)
+    const { password, ...rest } = form.value
+    // A bot has no password, and the server refuses one rather than ignoring it.
+    const created = await daffa.createUser(rest.kind === 'bot' ? rest : { ...rest, password })
     await afterChange()
     adding.value = false
-    form.value = { username: '', email: '', password: '', grants: [] }
-    toast.ok('User created.')
+    form.value = blankForm('local')
+    if (created.kind === 'bot') {
+      toast.ok('Bot created. Mint it a token.')
+      startTokens(created)
+    } else {
+      toast.ok('User created.')
+    }
   } catch (e) {
-    toast.err(e, 'Could not create the user.')
+    toast.err(e, form.value.kind === 'bot' ? 'Could not create the bot.' : 'Could not create the user.')
   } finally {
     busy.value = false
   }
@@ -71,6 +92,7 @@ function startRoles(u: User) {
   editingRoles.value = editingRoles.value?.id === u.id ? null : u
   settingPassword.value = null
   editingEmail.value = null
+  managingTokens.value = null
   // Only the locally granted ones are ours to change. The provider's are re-synced from
   // its claims on every login.
   selectedGrants.value = u.roles
@@ -105,7 +127,10 @@ async function toggleDisabled(u: User) {
   if (!u.disabled) {
     const ok = await confirm({
       title: `Disable ${u.label}?`,
-      body: 'They can no longer sign in, and any session they have open stops working. Their roles and their audit history are kept, and you can enable the account again at any time.',
+      body:
+        u.kind === 'bot'
+          ? 'Every token this bot holds stops working on its next request. Its roles, tokens and audit history are kept, and enabling it again brings the same tokens back.'
+          : 'They can no longer sign in, and any session they have open stops working. Their roles and their audit history are kept, and you can enable the account again at any time.',
       confirmLabel: 'Disable',
       intent: 'caution',
     })
@@ -124,8 +149,11 @@ async function toggleDisabled(u: User) {
 async function remove(u: User) {
   const ok = await confirm({
     title: `Delete ${u.label}?`,
-    body: 'The account and every role granted to it go. Their entries in the audit log are kept — what they did is still on the record, it simply no longer has an account attached. If you only want to lock them out, disable the account instead.',
-    confirmLabel: 'Delete user',
+    body:
+      u.kind === 'bot'
+        ? 'The bot, its roles and every token it holds go — whatever authenticates with them stops working. Its audit entries are kept. To pause it instead, disable it.'
+        : 'The account and every role granted to it go. Their entries in the audit log are kept — what they did is still on the record, it simply no longer has an account attached. If you only want to lock them out, disable the account instead.',
+    confirmLabel: u.kind === 'bot' ? 'Delete bot' : 'Delete user',
     intent: 'danger',
   })
   if (!ok) return
@@ -143,6 +171,7 @@ function startPassword(u: User) {
   settingPassword.value = settingPassword.value?.id === u.id ? null : u
   editingRoles.value = null
   editingEmail.value = null
+  managingTokens.value = null
   newPassword.value = ''
 }
 
@@ -150,6 +179,7 @@ function startEmail(u: User) {
   editingEmail.value = editingEmail.value?.id === u.id ? null : u
   editingRoles.value = null
   settingPassword.value = null
+  managingTokens.value = null
   newEmail.value = u.email
 }
 
@@ -186,6 +216,67 @@ async function resetPassword() {
     busy.value = false
   }
 }
+
+// ── a bot's tokens ──────────────────────────────────────────────────────────────
+// A bot cannot sign in to mint its own, so they are minted here. The secret is shown once.
+
+const managingTokens = ref<User | null>(null)
+const tokenForm = ref({ name: '', expires_days: 0 })
+const minted = ref<{ name: string; token: string; owner: string } | null>(null)
+
+function startTokens(u: User) {
+  managingTokens.value = managingTokens.value?.id === u.id ? null : u
+  editingRoles.value = null
+  settingPassword.value = null
+  editingEmail.value = null
+  tokenForm.value = { name: '', expires_days: 0 }
+}
+
+function tokensOf(u: User): APIToken[] {
+  return (allTokens.value ?? []).filter((t) => t.user_id === u.id)
+}
+
+/** A bot never signs in; the nearest equivalent is the last time any of its tokens was used. */
+function lastTokenUse(u: User): string | undefined {
+  return tokensOf(u)
+    .map((t) => t.last_used_at)
+    .filter((t): t is string => !!t)
+    .sort()
+    .at(-1)
+}
+
+async function mintToken() {
+  const u = managingTokens.value
+  if (!u) return
+  busy.value = true
+  try {
+    const res = await daffa.createBotToken(u.id, { ...tokenForm.value })
+    minted.value = { name: res.name, token: res.token, owner: u.label }
+    tokenForm.value = { name: '', expires_days: 0 }
+    await qc.invalidateQueries({ queryKey: ['tokens-all'] })
+  } catch (e) {
+    toast.err(e, 'Could not mint the token.')
+  } finally {
+    busy.value = false
+  }
+}
+
+async function revokeToken(u: User, t: APIToken) {
+  const ok = await confirm({
+    title: `Revoke ${u.label}'s token ${t.name}?`,
+    body: 'Whatever authenticates with it stops working on its next request. This cannot be undone — a replacement is a new token.',
+    confirmLabel: 'Revoke',
+    intent: 'danger',
+  })
+  if (!ok) return
+  try {
+    await daffa.deleteToken(t.id)
+    await qc.invalidateQueries({ queryKey: ['tokens-all'] })
+    toast.ok('Token revoked.')
+  } catch (e) {
+    toast.err(e, 'Could not revoke the token.')
+  }
+}
 </script>
 
 <template>
@@ -197,19 +288,23 @@ async function resetPassword() {
         <h2 class="text-base font-semibold">Users</h2>
         <p class="muted mt-0.5 text-sm">
           Accounts that sign in through an identity provider appear here after their first
-          sign-in.
+          sign-in. Bots are for automation: they cannot sign in, and act only through the
+          API tokens minted for them here.
         </p>
       </div>
 
-      <div class="ml-auto shrink-0">
-        <BaseButton
-          v-if="canEdit"
-          :intent="adding ? 'secondary' : 'primary'"
-          @click="adding = !adding"
-        >
-          <AppIcon v-if="!adding" name="plus" class="size-4" />
-          {{ adding ? 'Cancel' : 'New user' }}
-        </BaseButton>
+      <div v-if="canEdit" class="ml-auto flex shrink-0 gap-2">
+        <BaseButton v-if="adding" intent="secondary" @click="adding = false">Cancel</BaseButton>
+        <template v-else>
+          <BaseButton intent="secondary" @click="startAdding('bot')">
+            <AppIcon name="plus" class="size-4" />
+            New bot
+          </BaseButton>
+          <BaseButton intent="primary" @click="startAdding('local')">
+            <AppIcon name="plus" class="size-4" />
+            New user
+          </BaseButton>
+        </template>
       </div>
     </div>
 
@@ -219,7 +314,13 @@ async function resetPassword() {
       class="surface mb-6 rounded-[var(--radius-card)] p-5"
       @submit.prevent="create"
     >
-      <p class="mb-4 text-sm font-medium">New user</p>
+      <p class="mb-1 text-sm font-medium">{{ form.kind === 'bot' ? 'New bot' : 'New user' }}</p>
+      <p v-if="form.kind === 'bot'" class="muted mb-4 max-w-2xl text-xs leading-relaxed">
+        An account for CI or a script, not a person: no password, no sign-in. It holds roles
+        like anyone else, so give it the narrowest one that does the job — then mint its token.
+        It keeps working when the person who set it up leaves.
+      </p>
+      <div v-else class="mb-4" />
 
       <div class="mb-5 grid gap-4 sm:grid-cols-3">
         <div>
@@ -233,7 +334,9 @@ async function resetPassword() {
           />
         </div>
         <div>
-          <label for="u-email" class="mb-1.5 block text-sm font-medium">Email</label>
+          <label for="u-email" class="mb-1.5 block text-sm font-medium">
+            {{ form.kind === 'bot' ? 'Contact email' : 'Email' }}
+          </label>
           <input
             id="u-email"
             v-model="form.email"
@@ -242,7 +345,7 @@ async function resetPassword() {
             data-cursor="text"
           />
         </div>
-        <div>
+        <div v-if="form.kind !== 'bot'">
           <label for="u-password" class="mb-1.5 block text-sm font-medium">Password</label>
           <input
             id="u-password"
@@ -269,13 +372,17 @@ async function resetPassword() {
         type="submit"
         intent="primary"
         size="md"
-        :disabled="!form.username || !form.password || !form.grants.length"
+        :disabled="!form.username || (form.kind !== 'bot' && !form.password) || !form.grants.length"
         :loading="busy"
       >
-        Create user
+        {{ form.kind === 'bot' ? 'Create bot' : 'Create user' }}
       </BaseButton>
       <p class="muted mt-2 text-xs">
-        A user with no role can sign in and see nothing, so at least one is required.
+        {{
+          form.kind === 'bot'
+            ? 'A bot with no role holds tokens that can do nothing, so at least one is required.'
+            : 'A user with no role can sign in and see nothing, so at least one is required.'
+        }}
       </p>
     </form>
 
@@ -287,7 +394,7 @@ async function resetPassword() {
       body="Users are the accounts that can reach Daffa at all. Create one with a password, or configure an identity provider under Authentication and people will appear here after their first sign-in."
     >
       <template #action>
-        <BaseButton v-if="canEdit" intent="primary" size="md" @click="adding = true">
+        <BaseButton v-if="canEdit" intent="primary" size="md" @click="startAdding('local')">
           <AppIcon name="plus" class="size-4" />
           New user
         </BaseButton>
@@ -323,11 +430,15 @@ async function resetPassword() {
                       class="subtle rounded-md border px-1.5 py-0.5 font-mono text-[10px]"
                       :style="{ borderColor: 'var(--border)' }"
                     >
-                      {{ u.kind === 'oidc' ? 'SSO' : 'password' }}
+                      {{ u.kind === 'oidc' ? 'SSO' : u.kind === 'bot' ? 'bot' : 'password' }}
                     </span>
                     <StatusPill
                       v-if="u.disabled"
-                      :status="{ tone: 'warn', label: 'Disabled', detail: 'cannot sign in' }"
+                      :status="{
+                        tone: 'warn',
+                        label: 'Disabled',
+                        detail: u.kind === 'bot' ? 'its tokens are refused' : 'cannot sign in',
+                      }"
                     />
                   </div>
                 </td>
@@ -351,13 +462,23 @@ async function resetPassword() {
                       </span>
                     </span>
                     <span v-if="!u.roles.length" class="text-xs" :style="{ color: 'var(--warn)' }">
-                      no roles — this account can sign in and see nothing
+                      {{
+                        u.kind === 'bot'
+                          ? 'no roles — its tokens can do nothing'
+                          : 'no roles — this account can sign in and see nothing'
+                      }}
                     </span>
                   </div>
                 </td>
 
                 <td class="subtle hidden py-3 pr-4 text-xs md:table-cell">
-                  <time v-if="u.last_login_at" :title="u.last_login_at">
+                  <template v-if="u.kind === 'bot'">
+                    <time v-if="lastTokenUse(u)" :title="lastTokenUse(u)">
+                      token used {{ new Date(lastTokenUse(u)!).toLocaleString() }}
+                    </time>
+                    <template v-else>never signs in</template>
+                  </template>
+                  <time v-else-if="u.last_login_at" :title="u.last_login_at">
                     {{ new Date(u.last_login_at).toLocaleString() }}
                   </time>
                   <template v-else>never</template>
@@ -366,6 +487,14 @@ async function resetPassword() {
                 <td v-if="canEdit" class="py-3 pr-4">
                   <div class="flex flex-wrap items-center justify-end gap-1">
                     <BaseButton intent="ghost" size="xs" @click="startRoles(u)">Roles</BaseButton>
+                    <BaseButton
+                      v-if="u.kind === 'bot'"
+                      intent="ghost"
+                      size="xs"
+                      @click="startTokens(u)"
+                    >
+                      Tokens ({{ tokensOf(u).length }})
+                    </BaseButton>
                     <!-- Email and password are for local accounts only. An SSO account's
                          email is the provider's and is re-synced on every sign-in. -->
                     <BaseButton
@@ -429,6 +558,97 @@ async function resetPassword() {
                       Cancel
                     </BaseButton>
                   </div>
+                </td>
+              </tr>
+
+              <!-- A bot's tokens: minted here, because a bot cannot sign in to mint its own -->
+              <tr
+                v-if="managingTokens?.id === u.id"
+                class="border-b last:border-0"
+                :style="{ borderColor: 'var(--border)', background: 'var(--surface-sunken)' }"
+              >
+                <td :colspan="canEdit ? 4 : 3" class="space-y-4 px-4 py-4">
+                  <TokenReveal
+                    v-if="minted"
+                    :name="minted.name"
+                    :token="minted.token"
+                    :owner="minted.owner"
+                    @done="minted = null"
+                  />
+
+                  <div v-if="tokensOf(u).length" class="overflow-x-auto">
+                    <table class="w-full text-sm">
+                      <tbody>
+                        <tr
+                          v-for="t in tokensOf(u)"
+                          :key="t.id"
+                          class="border-b last:border-0"
+                          :style="{ borderColor: 'var(--border)' }"
+                        >
+                          <td class="max-w-0 py-2 pr-3">
+                            <div class="font-medium">{{ t.name }}</div>
+                            <div class="subtle mt-0.5 truncate font-mono text-xs">{{ t.prefix }}…</div>
+                          </td>
+                          <td class="py-2 pr-3 text-xs" :style="t.expired ? { color: 'var(--danger)' } : {}">
+                            {{
+                              t.expired
+                                ? 'EXPIRED'
+                                : t.expires_at
+                                  ? `expires ${new Date(t.expires_at).toLocaleDateString()}`
+                                  : 'does not expire'
+                            }}
+                          </td>
+                          <td class="subtle hidden py-2 pr-3 text-right font-mono text-xs md:table-cell">
+                            {{ t.last_used_at ? `used ${new Date(t.last_used_at).toLocaleString()}` : 'never used' }}
+                          </td>
+                          <td class="py-2 text-right">
+                            <BaseButton intent="danger" size="xs" @click="revokeToken(u, t)">
+                              <AppIcon name="trash" class="size-3.5" />
+                            </BaseButton>
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                  <p v-else-if="!minted" class="muted text-xs">
+                    No tokens yet. Mint one and put it in your CI's secret storage as
+                    <code class="font-mono">DAFFA_TOKEN</code>.
+                  </p>
+
+                  <form class="flex flex-wrap items-end gap-3" @submit.prevent="mintToken">
+                    <div>
+                      <label :for="`tok-name-${u.id}`" class="mb-1.5 block text-sm font-medium">New token</label>
+                      <input
+                        :id="`tok-name-${u.id}`"
+                        v-model="tokenForm.name"
+                        required
+                        placeholder="forgejo-ci"
+                        class="field"
+                        data-cursor="text"
+                      />
+                    </div>
+                    <div>
+                      <label :for="`tok-exp-${u.id}`" class="mb-1.5 block text-sm font-medium">
+                        Expires after (days)
+                      </label>
+                      <input
+                        :id="`tok-exp-${u.id}`"
+                        v-model.number="tokenForm.expires_days"
+                        type="number"
+                        min="0"
+                        class="field w-32"
+                        data-cursor="text"
+                      />
+                    </div>
+                    <BaseButton type="submit" intent="primary" size="sm" :disabled="!tokenForm.name" :loading="busy">
+                      Mint token
+                    </BaseButton>
+                    <BaseButton intent="secondary" size="sm" @click="managingTokens = null">Close</BaseButton>
+                  </form>
+                  <p class="subtle text-xs">
+                    0 days = never expires. Actions taken with a token are audited as
+                    “{{ u.label }} (token: name)”.
+                  </p>
                 </td>
               </tr>
 

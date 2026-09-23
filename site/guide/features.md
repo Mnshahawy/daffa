@@ -70,7 +70,9 @@ when it should speak up.
 
 ### Access
 
-- **Users** — who can sign in.
+- **Users** — who can sign in, plus **bots**: accounts for CI and scripts that cannot sign
+  in and act only through API tokens minted for them. See
+  [API tokens and bots](/guide/security#api-tokens-and-bots).
 - **Roles** — what they are allowed to do, as sets of [capabilities](/guide/security#roles-and-capabilities).
 - **Authentication** — local passwords and identity providers (any standards-compliant
   OIDC provider; more than one is fine).
