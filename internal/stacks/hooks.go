@@ -114,12 +114,15 @@ type HookPlan struct {
 	//     create through the API before the first hook runs.
 	HooksYAML string
 
-	// Provision is what Daffa must create on the daemon before a FIRST deploy's hooks
-	// can run. Only ever set for swarm first deploys; nil otherwise.
+	// Provision is what must exist on the daemon before a swarm stack's hooks can run.
+	// Set on EVERY swarm deploy, not just the first: Daffa creates whatever is missing.
+	// A network only a hook uses has nothing attached between deploys, so it looks
+	// orphaned and gets removed by hand — and nothing else would ever recreate it,
+	// because `stack deploy` only creates networks its services use. Nil on compose.
 	Provision *HookProvision
 }
 
-// HookProvision is the swarm first-deploy resource list: the networks and named volumes
+// HookProvision is the swarm hook resource list: the networks and named volumes
 // the hook services reference, translated from the compose file, each labelled with
 // com.docker.stack.namespace so the engine adopts rather than collides. External
 // resources are never in here — those are the operator's to have created.
@@ -220,14 +223,14 @@ func PlanHooks(ctx context.Context, yamlText, projectName string, env []EnvVar, 
 		return nil, err
 	}
 	plan := &HookPlan{Hooks: hooks, DeployYAML: deployYAML, HooksYAML: hooksYAML}
-	if firstDeploy && swarm {
+	if swarm {
 		plan.Provision = provisionList(project, hooks)
 	}
 	return plan, nil
 }
 
 // provisionList translates the hook-referenced, stack-owned networks and volumes into
-// create calls for a swarm first deploy. The namespace label is the whole trick: with it,
+// create-if-missing calls for a swarm deploy. The namespace label is the whole trick: with it,
 // `docker stack deploy` treats the resource as its own and `stack rm` cleans it up;
 // without it, the engine collides and the first deploy fails.
 func provisionList(project *types.Project, hooks *Hooks) *HookProvision {

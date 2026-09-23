@@ -34,7 +34,7 @@ func (s *Server) runHookedDeployment(node *dockerx.Node, dep *store.Deployment, 
 	var log strings.Builder
 	log.WriteString(warnings)
 
-	// ── first deploy: provision what the hooks need ─────────────────────────────
+	// ── hook resources: provision what the hooks need ───────────────────────────
 	// The stack's networks and volumes do not exist before the first engine run, and a
 	// hook is a plain container that must attach to them. On swarm Daffa creates them
 	// here, namespace-labelled so `stack deploy` adopts them as its own; on compose the
@@ -42,17 +42,29 @@ func (s *Server) runHookedDeployment(node *dockerx.Node, dep *store.Deployment, 
 	// creates them natively. Either way the engine inherits, and the log says which —
 	// "my migration did not run" must keep a findable answer, and so must "where did
 	// this network come from".
-	if stack.DeployedHash == "" {
-		if plan.Provision != nil {
-			log.WriteString(phaseHeader("first deploy", "creating the networks and volumes the hooks need; the engine adopts them"))
-			if err := provisionHookResources(ctx, node, plan.Provision, &log); err != nil {
-				fmt.Fprintf(&log, "%v\nThe pipeline stops here — nothing running has been touched.\n", err)
-				s.finishDeploy(ctx, dep, stack, 1, log.String(), false)
-				return
+	//
+	// On swarm this runs on EVERY deploy and creates only what is missing: a network only
+	// a hook uses has nothing attached between deploys, so it looks orphaned in any
+	// console and gets removed — after which every deploy failed at "network … not found"
+	// and nothing would ever recreate it.
+	if plan.Provision != nil {
+		var plog strings.Builder
+		created, err := provisionHookResources(ctx, node, plan.Provision, &plog)
+		if created > 0 || err != nil {
+			what := "recreating what the hooks need that is missing; the engine adopts it"
+			if stack.DeployedHash == "" {
+				what = "creating the networks and volumes the hooks need; the engine adopts them"
 			}
-		} else if len(hooks.PreDeploy) > 0 {
-			log.WriteString(phaseHeader("first deploy", "the hooks create the stack's networks and volumes; the engine adopts them"))
+			log.WriteString(phaseHeader("hook resources", what))
+			log.WriteString(plog.String())
 		}
+		if err != nil {
+			fmt.Fprintf(&log, "%v\nThe pipeline stops here — nothing running has been touched.\n", err)
+			s.finishDeploy(ctx, dep, stack, 1, log.String(), false)
+			return
+		}
+	} else if stack.DeployedHash == "" && len(hooks.PreDeploy) > 0 {
+		log.WriteString(phaseHeader("first deploy", "the hooks create the stack's networks and volumes; the engine adopts them"))
 	}
 
 	// ── pre-deploy ──────────────────────────────────────────────────────────────
@@ -129,15 +141,16 @@ func (s *Server) runHookedDeployment(node *dockerx.Node, dep *store.Deployment, 
 	s.finishDeploy(ctx, dep, stack, 0, log.String(), false)
 }
 
-// provisionHookResources creates the swarm first-deploy resources from the plan. Create,
-// not converge: a resource that already exists is left exactly as found — it is either
-// the operator's (adopt it, the way the engine would) or debris from a failed earlier
-// first deploy (which, carrying the namespace label, is indistinguishable from ours and
-// equally usable). Each creation is logged, so the resources' origin stays findable.
-func provisionHookResources(ctx context.Context, node *dockerx.Node, prov *stacks.HookProvision, log *strings.Builder) error {
+// provisionHookResources creates whichever of the plan's swarm hook resources are missing,
+// and reports how many it created. Create, not converge: a resource that already exists is
+// left exactly as found — it is either the stack's own, the operator's (adopt it, the way
+// the engine would) or debris from a failed earlier first deploy (which, carrying the
+// namespace label, is indistinguishable from ours and equally usable). Each creation is
+// logged, so the resources' origin stays findable.
+func provisionHookResources(ctx context.Context, node *dockerx.Node, prov *stacks.HookProvision, log *strings.Builder) (int, error) {
+	created := 0
 	for _, n := range prov.Networks {
 		if _, err := node.Client.NetworkInspect(ctx, n.Name, network.InspectOptions{}); err == nil {
-			fmt.Fprintf(log, "network %s already exists — using it as is\n", n.Name)
 			continue
 		}
 		opts := network.CreateOptions{
@@ -160,21 +173,27 @@ func provisionHookResources(ctx context.Context, node *dockerx.Node, prov *stack
 			opts.IPAM = ipam
 		}
 		if _, err := node.Client.NetworkCreate(ctx, n.Name, opts); err != nil {
-			return fmt.Errorf("creating network %s for the pre-deploy hooks: %w", n.Name, err)
+			return created, fmt.Errorf("creating network %s for the pre-deploy hooks: %w", n.Name, err)
 		}
+		created++
 		fmt.Fprintf(log, "created network %s (%s, attachable)\n", n.Name, opts.Driver)
 	}
 
 	for _, v := range prov.Volumes {
-		// VolumeCreate is create-or-adopt by name; no inspect dance needed.
+		// Inspected first only so the log names real creations: VolumeCreate would adopt
+		// an existing volume by name anyway.
+		if _, err := node.Client.VolumeInspect(ctx, v.Name); err == nil {
+			continue
+		}
 		if _, err := node.Client.VolumeCreate(ctx, volume.CreateOptions{
 			Name: v.Name, Driver: v.Driver, DriverOpts: v.Options, Labels: v.Labels,
 		}); err != nil {
-			return fmt.Errorf("creating volume %s for the pre-deploy hooks: %w", v.Name, err)
+			return created, fmt.Errorf("creating volume %s for the pre-deploy hooks: %w", v.Name, err)
 		}
+		created++
 		fmt.Fprintf(log, "created volume %s\n", v.Name)
 	}
-	return nil
+	return created, nil
 }
 
 // runHookPhase runs ONE hook to its verdict and appends its log. Returns whether the

@@ -432,13 +432,16 @@ x-daffa:
 		t.Error("volume lacks the namespace label")
 	}
 
-	// A later deploy provisions nothing.
+	// A later deploy carries the same list: the deploy creates whatever has gone missing
+	// since. A hook-only network has nothing attached between deploys, looks orphaned,
+	// and gets removed by hand — and `stack deploy` never recreates a network no service
+	// uses, so without this every later deploy fails at "network not found".
 	later, err := PlanHooks(context.Background(), yaml, "shop", nil, true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if later.Provision != nil {
-		t.Error("a non-first deploy must not provision")
+	if later.Provision == nil || len(later.Provision.Networks) != len(prov.Networks) {
+		t.Errorf("a later swarm deploy must re-plan the hook resources; got %+v", later.Provision)
 	}
 }
 
