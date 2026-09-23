@@ -243,3 +243,64 @@ func TestLinkableWebhook(t *testing.T) {
 		t.Errorf("fleet-wide link refused: %v", err)
 	}
 }
+
+// Forgejo's "Test delivery" is a push of the head commit with before == after and no file
+// list. Taken literally it deployed every linked stack at once; it must read as a test.
+// And its repository.url is the API form, which must not become a repository identity.
+func TestForgejoTestDeliveryIsNotAPush(t *testing.T) {
+	sha := "e5fb555ca8acc3395c880f16407d391547513420"
+	body := `{"ref":"refs/heads/main","before":"` + sha + `","after":"` + sha + `",
+		"commits":[{"id":"` + sha + `","added":null,"modified":null,"removed":null}],
+		"repository":{"clone_url":"https://genie.amany.app/amany/infra.git",
+		"url":"https://genie.amany.app/api/v1/repos/amany/infra"}}`
+	p, err := parsePush([]byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !p.Test {
+		t.Error("a before == after push was not recognised as a test delivery")
+	}
+	if len(p.Repos) != 1 || p.Repos[0] != "genie.amany.app/amany/infra" {
+		t.Errorf("repos = %v; the API URL must not count as a repository", p.Repos)
+	}
+
+	real := strings.Replace(body, `"before":"`+sha, `"before":"ed3c9f833d85657d1119486bc33e817bb5350206`, 1)
+	if p, _ := parsePush([]byte(real)); p.Test {
+		t.Error("a real push was mistaken for a test delivery")
+	}
+}
+
+func TestTestDeliveryDeploysNothing(t *testing.T) {
+	s, st, mux := webhookServer(t)
+	ctx := t.Context()
+	env := &store.Environment{Name: "prod"}
+	if err := st.CreateEnvironment(ctx, env); err != nil {
+		t.Fatal(err)
+	}
+	sealed, _ := s.sealer.Seal("s3cret")
+	wh := &store.Webhook{Name: "infra", SecretEnc: sealed}
+	if err := st.CreateWebhook(ctx, wh); err != nil {
+		t.Fatal(err)
+	}
+	stack := &store.Stack{EnvID: env.ID, Name: "api", SourceKind: "git",
+		GitURL: "https://genie.amany.app/amany/infra.git", GitRef: "main", GitPath: "compose.yml"}
+	if err := st.CreateStack(ctx, stack); err != nil {
+		t.Fatal(err)
+	}
+	// ENABLED: if the test were taken as a push, this stack would deploy.
+	if err := st.SetStackAutoDeploy(ctx, stack.ID, true, wh.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	body := `{"ref":"refs/heads/main","before":"abc","after":"abc","commits":[{"id":"abc"}]}`
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, signed(t, "/webhooks/"+wh.ID, "s3cret", body))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "pong") {
+		t.Fatalf("test delivery answered %d: %s", rec.Code, rec.Body)
+	}
+	if deps, _ := st.ListDeployments(ctx, stack.ID, 10); len(deps) != 0 {
+		t.Errorf("a test delivery started %d deployment(s)", len(deps))
+	}
+	if got, _ := st.WebhookByID(ctx, wh.ID); !strings.Contains(got.LastDelivery, `"event":"test"`) {
+		t.Errorf("the test delivery was not recorded as one: %s", got.LastDelivery)
+	}
+}

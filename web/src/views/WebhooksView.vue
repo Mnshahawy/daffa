@@ -263,7 +263,13 @@ function tone(r: WebhookDeliveryResult): string {
             </p>
             <template v-else>
               <p class="text-xs" :title="absolute(w.last_delivery_at)">
-                {{ w.last_delivery?.event === 'ping' ? 'A ping' : 'A push' }}
+                {{
+                  w.last_delivery?.event === 'ping'
+                    ? 'A ping'
+                    : w.last_delivery?.event === 'test'
+                      ? 'A test delivery (nothing deployed)'
+                      : 'A push'
+                }}
                 <template v-if="w.last_delivery?.ref">
                   to <code class="font-mono">{{ w.last_delivery.ref.replace('refs/heads/', '') }}</code>
                 </template>

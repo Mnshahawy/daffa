@@ -108,7 +108,7 @@ type deliveryResult struct {
 
 // deliveryRecord is what last_delivery holds.
 type deliveryRecord struct {
-	Event   string           `json:"event"` // push | ping
+	Event   string           `json:"event"` // push | ping | test
 	Ref     string           `json:"ref,omitempty"`
 	Repos   []string         `json:"repos,omitempty"`
 	Results []deliveryResult `json:"results"`
@@ -147,6 +147,17 @@ func (s *Server) deliverWebhook(w http.ResponseWriter, r *http.Request, wh *stor
 	p, err := parsePush(body)
 	if err != nil {
 		httpx.BadRequest(w, r, "The payload is not a push event this understands.")
+		return
+	}
+
+	// Forgejo's and Gitea's "Test delivery" is not a ping: it is a synthetic PUSH of the
+	// head commit, with before == after and no file list. Taken at face value, "no file
+	// list" means deploy everything (the act-rather-than-miss rule below), so testing a
+	// hook redeployed every stack linked to it, all at once. A real push always moves the
+	// branch — before == after is never one — so it is answered like the ping it means.
+	if p.Test {
+		s.recordDelivery(context.WithoutCancel(r.Context()), wh.ID, deliveryRecord{Event: "test", Ref: p.Ref, Repos: p.Repos, Results: []deliveryResult{}})
+		httpx.JSON(w, http.StatusOK, map[string]string{"status": "pong", "reason": "a test delivery — nothing was deployed"})
 		return
 	}
 
@@ -398,7 +409,9 @@ func isPing(r *http.Request) bool {
 // ── payload ─────────────────────────────────────────────────────────────────────
 
 type push struct {
-	Ref   string
+	Ref string
+	// Test is a forge's "test delivery" dressed as a push (before == after).
+	Test  bool
 	Files []string
 	// Repos is every repository identity the payload names, as repoKey forms. A forge
 	// sends several URLs for one repository (clone, ssh, web); a target matches any.
@@ -440,6 +453,8 @@ func parsePush(body []byte) (*push, error) {
 	}
 	var payload struct {
 		Ref        string   `json:"ref"`
+		Before     string   `json:"before"`
+		After      string   `json:"after"`
 		Repository repoURLs `json:"repository"`
 		Project    repoURLs `json:"project"`
 		Commits    []struct {
@@ -452,7 +467,7 @@ func parsePush(body []byte) (*push, error) {
 		return nil, err
 	}
 
-	p := &push{Ref: payload.Ref}
+	p := &push{Ref: payload.Ref, Test: payload.Before != "" && payload.Before == payload.After}
 	seen := map[string]bool{}
 	for _, c := range payload.Commits {
 		for _, list := range [][]string{c.Added, c.Modified, c.Removed} {
@@ -468,16 +483,25 @@ func parsePush(body []byte) (*push, error) {
 	repos := map[string]bool{}
 	for _, r := range []repoURLs{payload.Repository, payload.Project} {
 		for _, u := range []string{r.CloneURL, r.SSHURL, r.GitURL, r.HTMLURL, r.URL, r.GitHTTPURL, r.GitSSHURL, r.WebURL, r.Homepage} {
-			// GitHub's repository.url is the web URL on push events but an API URL
-			// (api.github.com/repos/…) elsewhere; an API URL identifies nothing a stack
-			// would be configured with, so it is skipped rather than normalised wrongly.
-			if k := repoKey(u); k != "" && !strings.HasPrefix(k, "api.") && !repos[k] {
+			// An API URL identifies nothing a stack would be configured with, so it is
+			// skipped rather than normalised wrongly: GitHub's repository.url is
+			// api.github.com/repos/… outside push events, and Forgejo's and Gitea's is
+			// always <host>/api/v1/repos/….
+			if k := repoKey(u); k != "" && !isAPIRepoKey(k) && !repos[k] {
 				repos[k] = true
 				p.Repos = append(p.Repos, k)
 			}
 		}
 	}
 	return p, nil
+}
+
+func isAPIRepoKey(k string) bool {
+	if strings.HasPrefix(k, "api.") {
+		return true
+	}
+	_, path, _ := strings.Cut(k, "/")
+	return strings.HasPrefix(path, "api/v1/repos/") || strings.HasPrefix(path, "api/v4/projects/")
 }
 
 // repoKey reduces a repository URL to host/path — lowercase, without scheme, user, port,
