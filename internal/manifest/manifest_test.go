@@ -215,6 +215,20 @@ func TestValidateRejects(t *testing.T) {
 				"certificates:\n  - {name: api, ca: ca1, sans: [a]}\n" +
 				"  - {name: api, shared: true, ca: ca1, sans: [a]}\n",
 			""},
+		{"webhook shared and on a cluster",
+			"version: 1\ncluster: p\nwebhooks:\n  - {name: repo, shared: true, cluster: p}\n",
+			"mutually exclusive"},
+		{"webhook names are fleet-wide",
+			"version: 1\ncluster: p\nwebhooks:\n  - {name: repo}\n  - {name: repo, cluster: q}\n",
+			"declared twice"},
+		{"a webhook on an inline stack has nothing to push to",
+			"version: 1\ncluster: p\nstacks:\n  - {name: api, engine: compose, webhook: repo, source: {compose: 'x: y'}}\n",
+			"needs a git source"},
+		{"shared webhook linked from two stacks",
+			"version: 1\ncluster: p\nwebhooks:\n  - {name: repo, shared: true, secret: {value_from_env: HOOK_SECRET}}\n" +
+				"stacks:\n  - {name: api, engine: compose, webhook: repo, auto_deploy: true, source: {git: {url: 'https://x/r.git', path: api/compose.yml}}}\n" +
+				"  - {name: web, engine: compose, webhook: repo, auto_deploy: true, source: {git: {url: 'https://x/r.git', path: web/compose.yml}}}\n",
+			""},
 		{"uppercase stack name",
 			"version: 1\ncluster: p\nstacks:\n  - {name: API, engine: compose, source: {compose: 'x: y'}}\n",
 			"compose project name"},

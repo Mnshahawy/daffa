@@ -254,6 +254,10 @@ const (
 	// cluster it delivers to. Same resolve-check-stash as a stack.
 	scopeVolumeSource
 
+	// scopeWebhook: the {id} path value is a webhook. The monitor rule: a webhook on a cluster
+	// is checked there, and a FLEET-WIDE one takes the capability globally.
+	scopeWebhook
+
 	// scopeAny: satisfied by the capability held globally OR on any cluster. Only for the
 	// three fleet-wide read lists (git credentials, registries, storage) — they have no
 	// cluster, they carry no secrets, and an operator scoped to one cluster still has to
@@ -753,10 +757,11 @@ func (s *Server) apiRoutes() []route {
 		//oapi:summary Replace a stack's secrets
 		{pattern: "PUT /api/stacks/{id}/secrets", cap: caps.StacksEdit, scope: scopeStack, h: s.handleSetStackSecrets,
 			req: setSecretsRequest{}, resp: statusResponse{}},
-		// The webhook secret is in the response exactly once, when it is minted — on first
-		// enable, or when rotate asks for a fresh one.
-		//oapi:summary Turn auto-deploy on or off; the webhook secret is returned once
-		//oapi:example req {"enabled": true, "watch_paths": "apps/web/**", "rotate": false}
+		// Links the stack to a webhook (or unlinks it) and pauses or resumes it. With
+		// create_webhook the handler also makes one on the stack's cluster — which it checks
+		// webhooks.edit for itself — and that secret is in the response exactly once.
+		//oapi:summary Link a stack to a webhook and turn auto-deploy on or off
+		//oapi:example req {"enabled": true, "webhook_id": "whk_abc", "watch_paths": "apps/web/**"}
 		{pattern: "PUT /api/stacks/{id}/autodeploy", cap: caps.StacksEdit, scope: scopeStack, h: s.handleSetAutoDeploy,
 			req: autoDeployRequest{}, resp: autoDeployResponse{}, ts: "setAutoDeploy"},
 		// Which actions exist is the engine's business — the stack's `actions` list says
@@ -789,6 +794,31 @@ func (s *Server) apiRoutes() []route {
 		{pattern: "POST /api/compose/rewrite", cap: caps.StacksEdit, scope: scopeBody, h: s.handleRewriteComposeImages,
 			req: rewriteRequest{}, resp: rewriteResponse{}, ts: "rewriteComposeImages"},
 
+		// ── webhooks ───────────────────────────────────────────────────────────────
+		// The door a forge pushes through, linked to any number of stacks and volume
+		// sources. See .ai/webhooks.md. The list is scopeAny: fleet-wide webhooks show to
+		// every holder (they have to pick one to link), cluster ones where visible() says.
+		// Create is body-scoped — the cluster, or none for fleet-wide, is in the payload.
+		//oapi:summary List the webhooks the caller may view, with what each drives and its last delivery
+		{pattern: "GET /api/webhooks", cap: caps.WebhooksView, scope: scopeAny, h: s.handleListWebhooks,
+			resp: []webhookView(nil), ts: "webhooks"},
+		//oapi:summary Create a webhook; its secret is returned exactly once
+		//oapi:example req {"name": "platform-repo", "env_id": "env_prod"}
+		{pattern: "POST /api/webhooks", cap: caps.WebhooksEdit, scope: scopeBody, h: s.handleCreateWebhook,
+			req: webhookRequest{}, resp: webhookSecretResponse{}, ts: "createWebhook"},
+		//oapi:summary Rename a webhook (its cluster cannot change)
+		{pattern: "PUT /api/webhooks/{id}", cap: caps.WebhooksEdit, scope: scopeWebhook, h: s.handleUpdateWebhook,
+			req: webhookRequest{}, resp: webhookView{}, ts: "updateWebhook"},
+		// The old secret stops verifying immediately, for every linked target.
+		//oapi:summary Rotate a webhook's secret; the new one is returned exactly once
+		//oapi:noreq
+		{pattern: "POST /api/webhooks/{id}/rotate", cap: caps.WebhooksEdit, scope: scopeWebhook, h: s.handleRotateWebhook,
+			resp: webhookSecretResponse{}, ts: "rotateWebhook"},
+		// Refused while anything is linked: refuse, don't orphan.
+		//oapi:summary Delete a webhook nothing is linked to
+		{pattern: "DELETE /api/webhooks/{id}", cap: caps.WebhooksEdit, scope: scopeWebhook, h: s.handleDeleteWebhook,
+			resp: statusResponse{}, ts: "deleteWebhook"},
+
 		// ── volume sources ─────────────────────────────────────────────────────────
 		// Config from git into named volumes. See docs/volumes.md. The list is scopeAny
 		// with visible() filtering, the stacks precedent; create is body-scoped (the env
@@ -797,8 +827,8 @@ func (s *Server) apiRoutes() []route {
 		//oapi:enum VolumeSource.status pending|ok|error
 		{pattern: "GET /api/volume-sources", cap: caps.VolSourcesView, scope: scopeAny, h: s.handleListVolumeSources,
 			resp: []volumeSourceView(nil), ts: "volumeSources"},
-		// The first sync starts in the background; the source row records its outcome. The
-		// webhook secret (when auto_sync mints one) is in the response exactly once.
+		// The first sync starts in the background; the source row records its outcome.
+		// auto_sync needs a webhook_id — the webhook is the door the push comes through.
 		//oapi:summary Create a volume source; the first sync starts in the background
 		//oapi:example req {"env_id": "env_prod", "volume": "proxy-config", "git_url": "https://github.com/acme/config.git", "git_ref": "main", "git_path": "proxy", "auto_sync": true}
 		{pattern: "POST /api/volume-sources", cap: caps.VolSourcesEdit, scope: scopeBody, h: s.handleCreateVolumeSource,
@@ -1576,12 +1606,14 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /agents/connect", s.handleAgentConnect)
 
 	// The git webhook: called by a machine on the other side of a firewall, authenticated
-	// by a per-stack HMAC over the body. Also outside /api/ — a session cookie must never
+	// by the webhook's HMAC over the body. Also outside /api/ — a session cookie must never
 	// be able to reach a route that starts a deploy without one.
-	mux.HandleFunc("POST /webhooks/stacks/{id}", s.handleWebhook)
-	// The volume-source twin: same posture, same HMAC authentication, same "no session
-	// can reach it and no cookie helps" reasoning.
-	mux.HandleFunc("POST /webhooks/volume-sources/{id}", s.handleVolumeSourceWebhook)
+	mux.HandleFunc("POST /webhooks/{id}", s.handleWebhookDelivery)
+	// The per-target URLs from before webhooks were objects. Forges configured with them
+	// keep working: each resolves its target's webhook and delivers to it. See
+	// .ai/webhooks.md.
+	mux.HandleFunc("POST /webhooks/stacks/{id}", s.handleLegacyStackWebhook)
+	mux.HandleFunc("POST /webhooks/volume-sources/{id}", s.handleLegacyVolumeSourceWebhook)
 
 	// What the login page needs to render itself: which methods are enabled, and one
 	// button per identity provider.
@@ -1668,6 +1700,9 @@ func (s *Server) guard(rt route) http.Handler {
 
 	case scopeVolumeSource:
 		return s.requireOnVolumeSource(rt.cap)(rt.h)
+
+	case scopeWebhook:
+		return s.requireOnWebhook(rt.cap)(rt.h)
 
 	case scopeBody:
 		// The environment is in the request body, which no middleware can read. The
@@ -1923,6 +1958,7 @@ const (
 	jobKey
 	deploymentKey
 	volSourceKey
+	webhookKey
 )
 
 func withStack(ctx context.Context, st *store.Stack) context.Context {

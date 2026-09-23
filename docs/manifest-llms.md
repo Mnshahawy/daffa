@@ -241,6 +241,24 @@ Minted with crypto/rand at first apply, sealed, stored globally by name. Rules:
 - Names are global on the server: when generating manifests per cluster, prefix names
   with the cluster (`myapp-prod-db-password`) so clusters never share a value.
 
+### webhooks — where a git server pushes
+
+```yaml
+webhooks:
+  - name: app-repo              # global name, like the credential stores
+    cluster: prod               # optional override; OR shared: true (fleet-wide)
+    secret: { value_from_env: APP_REPO_WEBHOOK_SECRET }   # optional
+```
+
+- One webhook can drive many stacks and volume sources (link them with `webhook:`);
+  each target decides for itself by repository, branch and watched paths.
+- `shared: true` makes it fleet-wide (needs webhooks.edit fleet-wide); a shared
+  webhook can be linked from any cluster, a cluster one only from its own.
+- The secret is CREATE-ONLY. With `value_from_env` the submitter's value seeds it
+  (so other tooling can configure the forge with the same value); omitted, Daffa
+  generates one that is never shown — rotating it in the console is how to read it.
+- The scope is immutable: an existing webhook on another scope is `drifted`.
+
 ### stacks — stack registrations (source, watch paths, secret slots)
 
 ```yaml
@@ -258,6 +276,7 @@ stacks:
     #        services: …
     watch_paths: ["stacks/api.yml", "config/**"]  # globs that trigger auto-deploy
     auto_deploy: true
+    webhook: app-repo           # webhooks name; see below
     env:
       - { key: LOG_LEVEL, value: info }                  # plaintext, inline is fine
       - { key: API_TOKEN, secret: true }                 # slot: human fills in console
@@ -296,6 +315,11 @@ Constraints and semantics:
 - Env merge is additive: vars the manifest does not declare are left untouched.
 - A compose-engine stack on a multi-node cluster cannot be placed by manifest (it
   needs a node pinned in the console first) and reports `blocked`.
+- `webhook:` names the webhook whose pushes deploy the stack (git sources only).
+  `auto_deploy: true` with no `webhook:` creates and links a webhook named after the
+  stack (its secret is generated and never shown). A link made in the console is left
+  alone when the document names none. `auto_deploy: false` with a webhook linked
+  pauses the stack: pushes are acknowledged and ignored.
 
 ### volume_sources — managed volume content (git or inline)
 
@@ -311,9 +335,11 @@ volume_sources:
     restart_targets: ""
     uid: 0
     gid: 0
-    auto_sync: false            # true mints a push webhook for git sources; prefer
-                                # false + putting the path in the consuming stack's
-                                # watch_paths (one trigger per stack, no races)
+    auto_sync: false            # true syncs on push through `webhook:` (or a webhook
+                                # created for it, named volume-<volume>); prefer false +
+                                # the path in the consuming stack's watch_paths when a
+                                # stack is linked — its deploy syncs the volume first
+    webhook: app-repo           # optional, git sources only
 ```
 
 ## What apply reports (verdicts)

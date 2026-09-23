@@ -227,6 +227,21 @@ func (m *Manifest) Validate() error {
 		}
 	}
 
+	for _, wh := range m.Webhooks {
+		if !validLabel(wh.Name) {
+			fail("%s %q: invalid name", KindWebhook, wh.Name)
+		}
+		switch {
+		case wh.Shared && wh.Cluster != "":
+			fail("%s %q: shared and cluster are mutually exclusive", KindWebhook, wh.Name)
+		case !wh.Shared:
+			needsCluster(KindWebhook, wh.Name, wh.Cluster)
+		}
+		// Names are fleet-wide, like the credential stores: no scope in the key.
+		dup(KindWebhook, "", wh.Name)
+		secretRef(KindWebhook, wh.Name, "secret", wh.Secret)
+	}
+
 	for _, d := range m.CertDeliveries {
 		if !dockerName.MatchString(d.Volume) {
 			fail("%s %q: invalid volume name", KindCertDelivery, d.Volume)
@@ -275,6 +290,11 @@ func (m *Manifest) Validate() error {
 			fail("%s %q: engine must be compose or swarm (got %q) — it is immutable, so the document says it out loud", KindStack, st.Name, st.Engine)
 		}
 		validateStackSource(fail, st)
+		// auto_deploy on an inline stack has always been inert rather than refused; only
+		// the new field is refused outright.
+		if st.Webhook != "" && st.Source.Git == nil {
+			fail("%s %q: webhook needs a git source — an inline compose file has nothing to push to", KindStack, st.Name)
+		}
 		envSeen := map[string]bool{}
 		for _, e := range st.Env {
 			if !envVarName.MatchString(e.Key) {
@@ -360,6 +380,11 @@ func (m *Manifest) Validate() error {
 		case v.Source.Git != nil:
 			validateGitSource(fail, KindVolumeSource, v.Volume, v.Source.Git)
 		default:
+			// auto_sync on an inline source has always been ignored rather than refused
+			// (apply forces it off); only the new field is refused outright.
+			if v.Webhook != "" {
+				fail("%s %q: webhook needs a git source — inline files have nothing to push to", KindVolumeSource, v.Volume)
+			}
 			pathSeen := map[string]bool{}
 			for _, f := range v.Source.Files {
 				// Delivered files land inside the volume; a path that climbs out of

@@ -109,6 +109,9 @@ cert_deliveries:
 generated_secrets:
   - { name: db-password }
 
+webhooks:
+  - { name: app-repo }         # one webhook for everything app.git feeds
+
 stacks:
   - name: db
     engine: swarm
@@ -122,6 +125,7 @@ stacks:
       git: { url: "https://…/app.git", ref: main, path: stacks/api.yml, credential: app-repo }
     watch_paths: ["stacks/api.yml"]
     auto_deploy: true
+    webhook: app-repo          # the webhook whose pushes deploy it
     env:
       - { key: SMTP_PASSWORD, secret: true }          # a slot you fill in the console
       - { key: DSN, secret: true,

@@ -60,6 +60,7 @@ type Manifest struct {
 	CertDeliveries    []CertDelivery    `yaml:"cert_deliveries"`
 	KeyringDeliveries []KeyringDelivery `yaml:"keyring_deliveries"`
 	GeneratedSecrets  []GeneratedSecret `yaml:"generated_secrets"`
+	Webhooks          []Webhook         `yaml:"webhooks"`
 	Stacks            []Stack           `yaml:"stacks"`
 	VolumeSources     []VolumeSource    `yaml:"volume_sources"`
 }
@@ -238,6 +239,21 @@ type EnvVar struct {
 	FromGenerated string `yaml:"from_generated"`
 }
 
+// Webhook declares the endpoint a git server pushes to. Stacks and volume sources link to
+// it by name (`webhook:`), and each decides for itself — repository, branch, paths —
+// whether a push acts on it. Scoped like a certificate: a cluster, or Shared for a
+// fleet-wide webhook (which needs webhooks.edit fleet-wide).
+//
+// The secret is create-only, the registry precedent: a declared value_from_env seeds it
+// (so the same value can be configured on the forge by other tooling); omitted, Daffa
+// generates one, and rotating it in the console is how you read it.
+type Webhook struct {
+	Name    string     `yaml:"name"`
+	Cluster string     `yaml:"cluster"`
+	Shared  bool       `yaml:"shared"`
+	Secret  *SecretRef `yaml:"secret"`
+}
+
 // Stack declares a stack REGISTRATION: source, watch paths, env and secret slots.
 // Apply never deploys — deploying is a runtime action with its own concurrency
 // guard, driven separately (the CLI's --deploy walks stacks in document order).
@@ -248,7 +264,11 @@ type Stack struct {
 	Source     StackSource `yaml:"source"`
 	WatchPaths []string    `yaml:"watch_paths"`
 	AutoDeploy bool        `yaml:"auto_deploy"`
-	Env        []EnvVar    `yaml:"env"`
+	// Webhook names the webhook whose pushes deploy this stack. Omitted with auto_deploy
+	// on, a webhook named after the stack is created and linked — what auto_deploy meant
+	// before webhooks were objects. A link made in the console is left alone.
+	Webhook string   `yaml:"webhook"`
+	Env     []EnvVar `yaml:"env"`
 	// SecretFiles are file-shaped secrets (compose `secrets:` files). A bare name is
 	// a slot, filled through the UI or API after apply; from_generated and composed
 	// value forms are owned and injected, like the EnvVar shapes.
@@ -316,6 +336,7 @@ type VolumeSource struct {
 	UID            int              `yaml:"uid"`
 	GID            int              `yaml:"gid"`
 	AutoSync       bool             `yaml:"auto_sync"`
+	Webhook        string           `yaml:"webhook"` // as Stack.Webhook
 }
 
 // Parse decodes a manifest strictly: unknown fields are errors, and so is a second

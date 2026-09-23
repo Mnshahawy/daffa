@@ -128,6 +128,10 @@ func manifestCapFor(k manifest.Kind) (c caps.Cap, envScoped bool) {
 		// stacks.edit checks for those stacks ARE its authorization. This mapping
 		// exists so the every-kind pin below still answers.
 		return caps.StacksEdit, true
+	case manifest.KindWebhook:
+		// Env-scoped; a SHARED webhook is checked with no cluster, i.e. globally — the
+		// same rule the create route applies.
+		return caps.WebhooksEdit, true
 	case manifest.KindStack:
 		return caps.StacksEdit, true
 	case manifest.KindVolumeSource:
@@ -182,6 +186,9 @@ func (r *manifestRun) declares(k manifest.Kind, name string) bool {
 		}
 		for _, x := range r.m.Keyrings {
 			put(manifest.KindKeyring, x.Name)
+		}
+		for _, x := range r.m.Webhooks {
+			put(manifest.KindWebhook, x.Name)
 		}
 		for _, x := range r.m.Stacks {
 			put(manifest.KindStack, x.Name)
@@ -379,11 +386,25 @@ func (r *manifestRun) preflight(ctx context.Context) (code, msg string) {
 	for range r.m.KeyringDeliveries {
 		add(manifest.KindKeyringDelivery, "")
 	}
+	for _, wh := range r.m.Webhooks {
+		cluster := r.cluster(wh.Cluster)
+		if wh.Shared {
+			cluster = "" // fleet-wide: the capability fleet-wide
+		}
+		add(manifest.KindWebhook, cluster)
+	}
 	for _, st := range r.m.Stacks {
 		add(manifest.KindStack, r.cluster(st.Cluster))
+		// auto_deploy with no webhook named may create one on the stack's cluster.
+		if st.AutoDeploy && st.Webhook == "" {
+			add(manifest.KindWebhook, r.cluster(st.Cluster))
+		}
 	}
 	for _, v := range r.m.VolumeSources {
 		add(manifest.KindVolumeSource, r.cluster(v.Cluster))
+		if v.AutoSync && v.Webhook == "" {
+			add(manifest.KindWebhook, r.cluster(v.Cluster))
+		}
 	}
 
 	for _, n := range needs {
@@ -520,6 +541,12 @@ func (r *manifestRun) walk(ctx context.Context) error {
 		case manifest.KindGeneratedSecret:
 			for _, x := range r.m.GeneratedSecrets {
 				if err = r.ensureGeneratedSecret(ctx, x); err != nil {
+					return err
+				}
+			}
+		case manifest.KindWebhook:
+			for _, x := range r.m.Webhooks {
+				if err = r.ensureWebhook(ctx, x); err != nil {
 					return err
 				}
 			}
@@ -1317,6 +1344,130 @@ func (r *manifestRun) ensureKeyringDelivery(ctx context.Context, d manifest.Keyr
 	return nil
 }
 
+func (r *manifestRun) ensureWebhook(ctx context.Context, wh manifest.Webhook) error {
+	res := manifestResourceView{Kind: string(manifest.KindWebhook), Name: wh.Name}
+	envID := ""
+	if !wh.Shared {
+		cluster := r.cluster(wh.Cluster)
+		res.Cluster = cluster
+		var blocked bool
+		var err error
+		envID, blocked, err = r.envFor(ctx, manifest.KindWebhook, wh.Name, cluster)
+		if err != nil || blocked {
+			return err
+		}
+	}
+
+	existing, err := r.s.store.WebhookByName(ctx, wh.Name)
+	switch {
+	case err == nil:
+		res.ID = existing.ID
+		// The secret is create-only, so it is never compared: in sync means "exists here".
+		if existing.EnvID != envID {
+			where := "fleet-wide"
+			if existing.EnvID != "" {
+				where = "on cluster " + r.s.envName(ctx, existing.EnvID)
+			}
+			res.Verdict, res.Detail = verdictDrifted, "exists "+where+"; a webhook's scope is immutable — create another"
+		} else {
+			res.Verdict = verdictInSync
+		}
+	case errors.Is(err, store.ErrNotFound):
+		plain, declared := r.secret(wh.Secret)
+		if wh.Secret != nil && wh.Secret.ValueFromEnv != "" && !declared {
+			res.Verdict, res.Detail = verdictBlocked, secretNeed(wh.Secret)
+			break
+		}
+		res.Verdict = verdictCreate
+		if !r.apply {
+			break
+		}
+		row, err := r.createManifestWebhook(ctx, wh.Name, envID, plain)
+		if err != nil {
+			return err
+		}
+		res.ID = row.ID
+		r.auditEnsure(ctx, manifest.KindWebhook, envID, wh.Name, verdictCreate)
+	default:
+		return err
+	}
+	r.push(res)
+	return nil
+}
+
+// createManifestWebhook stores a webhook with the given secret, or a generated one when
+// plain is empty — the generated secret is never shown; rotating it in the console is how
+// an operator reads one.
+func (r *manifestRun) createManifestWebhook(ctx context.Context, name, envID, plain string) (*store.Webhook, error) {
+	if plain == "" {
+		var err error
+		if plain, err = randomToken(); err != nil {
+			return nil, err
+		}
+	}
+	sealed, err := r.s.sealer.Seal(plain)
+	if err != nil {
+		return nil, err
+	}
+	row := &store.Webhook{Name: name, EnvID: envID, SecretEnc: sealed, CreatedBy: r.user.ID}
+	if err := r.s.store.CreateWebhook(ctx, row); err != nil {
+		return nil, fmt.Errorf("manifest: creating webhook %q: %w", name, err)
+	}
+	return row, nil
+}
+
+// pendingWebhook stands in, during a plan, for a webhook this document creates before the
+// target that links it. It never reaches the store: apply resolves the real id.
+const pendingWebhook = "\x00pending"
+
+// namedWebhook resolves the webhook a target names: its id, "" when none is named, or a
+// blocked reason. It must be fleet-wide or on the target's cluster — the linking rule the
+// API enforces.
+func (r *manifestRun) namedWebhook(ctx context.Context, name, envID string) (id, blocked string, err error) {
+	if name == "" {
+		return "", "", nil
+	}
+	wh, err := r.s.store.WebhookByName(ctx, name)
+	switch {
+	case errors.Is(err, store.ErrNotFound) && r.pending(manifest.KindWebhook, name):
+		return pendingWebhook, "", nil
+	case errors.Is(err, store.ErrNotFound):
+		return "", fmt.Sprintf("no such webhook %q", name), nil
+	case err != nil:
+		return "", "", err
+	}
+	if wh.EnvID != "" && wh.EnvID != envID {
+		return "", fmt.Sprintf("webhook %q belongs to another cluster — link a shared one, or one on this cluster", name), nil
+	}
+	return wh.ID, "", nil
+}
+
+// targetWebhook decides what a target ends up linked to: the webhook the document names;
+// else whatever it is already linked to (a link made in the console stays — ensure-only);
+// else, when auto-deploy/sync is on, a webhook of its own named after it, created now.
+// That last case is what `auto_deploy: true` meant before webhooks were objects, so an
+// existing manifest keeps deploying on push.
+func (r *manifestRun) targetWebhook(ctx context.Context, named, current string, auto bool, base, envID, cluster string) (string, error) {
+	switch {
+	case named != "":
+		return named, nil
+	case current != "" || !auto:
+		return current, nil
+	case !r.apply:
+		return pendingWebhook, nil
+	}
+	name, err := r.s.freeWebhookName(ctx, base, cluster)
+	if err != nil {
+		return "", err
+	}
+	row, err := r.createManifestWebhook(ctx, name, envID, "")
+	if err != nil {
+		return "", err
+	}
+	r.auditEnsure(ctx, manifest.KindWebhook, envID, name, verdictCreate)
+	return row.ID, nil
+}
+
 func (r *manifestRun) ensureStack(ctx context.Context, st manifest.Stack) error {
 	cluster := r.cluster(st.Cluster)
 	res := manifestResourceView{Kind: string(manifest.KindStack), Name: st.Name, Cluster: cluster}
@@ -1340,6 +1491,16 @@ func (r *manifestRun) ensureStack(ctx context.Context, st manifest.Stack) error 
 		default:
 			credID = cred.ID
 		}
+	}
+
+	namedWH, whBlocked, err := r.namedWebhook(ctx, st.Webhook, envID)
+	if err != nil {
+		return err
+	}
+	if whBlocked != "" {
+		res.Verdict, res.Detail = verdictBlocked, whBlocked
+		r.push(res)
+		return nil
 	}
 
 	existing, err := r.s.store.StackByName(ctx, envID, st.Name)
@@ -1425,26 +1586,17 @@ func (r *manifestRun) ensureStack(ctx context.Context, st manifest.Stack) error 
 	}
 
 	watch := strings.Join(st.WatchPaths, "\n")
-	if existing.AutoDeploy != st.AutoDeploy || existing.WatchPaths != watch {
+	webhookID, err := r.targetWebhook(ctx, namedWH, existing.WebhookID,
+		st.AutoDeploy && existing.SourceKind == "git", st.Name, envID, cluster)
+	if err != nil {
+		return err
+	}
+	if existing.AutoDeploy != st.AutoDeploy || existing.WatchPaths != watch || existing.WebhookID != webhookID {
 		changed = true
 		if r.apply {
-			if err := r.s.store.SetStackAutoDeploy(ctx, existing.ID, st.AutoDeploy, watch); err != nil {
+			if err := r.s.store.SetStackAutoDeploy(ctx, existing.ID, st.AutoDeploy, webhookID, watch); err != nil {
 				return fmt.Errorf("manifest: setting auto-deploy on %q: %w", st.Name, err)
 			}
-		}
-	}
-	// A git stack turning auto-deploy on needs a webhook secret to verify pushes with.
-	if r.apply && st.AutoDeploy && existing.SourceKind == "git" && existing.WebhookSecretEnc == "" {
-		secret, err := randomToken()
-		if err != nil {
-			return err
-		}
-		sealed, err := r.s.sealer.Seal(secret)
-		if err != nil {
-			return err
-		}
-		if err := r.s.store.SetStackWebhookSecret(ctx, existing.ID, sealed); err != nil {
-			return fmt.Errorf("manifest: minting webhook secret for %q: %w", st.Name, err)
 		}
 	}
 
@@ -1758,6 +1910,16 @@ func (r *manifestRun) ensureVolumeSource(ctx context.Context, v manifest.VolumeS
 		}
 	}
 
+	namedWH, whBlocked, err := r.namedWebhook(ctx, v.Webhook, envID)
+	if err != nil {
+		return err
+	}
+	if whBlocked != "" {
+		res.Verdict, res.Detail = verdictBlocked, whBlocked
+		r.push(res)
+		return nil
+	}
+
 	var files []store.VolSourceFile
 	names := make([]string, 0, len(v.Source.Files))
 	for _, f := range v.Source.Files {
@@ -1791,26 +1953,18 @@ func (r *manifestRun) ensureVolumeSource(ctx context.Context, v manifest.VolumeS
 				RestartTargets: strings.TrimSpace(v.RestartTargets),
 			}
 			applyVolumeSourceSpec(row, v, credID)
+			if row.SourceKind == "git" {
+				if row.WebhookID, err = r.targetWebhook(ctx, namedWH, "", row.AutoSync,
+					"volume-"+v.Volume, envID, cluster); err != nil {
+					return err
+				}
+			}
 			if err := r.s.store.CreateVolumeSource(ctx, row); err != nil {
 				return fmt.Errorf("manifest: creating volume source %q: %w", v.Volume, err)
 			}
 			if row.SourceKind == "inline" {
 				if err := r.s.store.SetVolSourceFiles(ctx, row.ID, files); err != nil {
 					return fmt.Errorf("manifest: storing files for %q: %w", v.Volume, err)
-				}
-			}
-			if row.AutoSync && row.WebhookSecretEnc == "" {
-				secret, err := randomToken()
-				if err != nil {
-					return err
-				}
-				sealed, err := r.s.sealer.Seal(secret)
-				if err != nil {
-					return err
-				}
-				row.WebhookSecretEnc = sealed
-				if err := r.s.store.UpdateVolumeSource(ctx, row); err != nil {
-					return fmt.Errorf("manifest: storing webhook secret for %q: %w", v.Volume, err)
 				}
 			}
 			res.ID = row.ID
@@ -1828,6 +1982,12 @@ func (r *manifestRun) ensureVolumeSource(ctx context.Context, v manifest.VolumeS
 		want.UID, want.GID, want.StackID = v.UID, v.GID, stackID
 		want.RestartTargets = strings.TrimSpace(v.RestartTargets)
 		applyVolumeSourceSpec(&want, v, credID)
+		if want.SourceKind == "git" {
+			if want.WebhookID, err = r.targetWebhook(ctx, namedWH, existing.WebhookID, want.AutoSync,
+				"volume-"+v.Volume, envID, cluster); err != nil {
+				return err
+			}
+		}
 
 		filesChanged := false
 		if want.SourceKind == "inline" {
@@ -1842,7 +2002,7 @@ func (r *manifestRun) ensureVolumeSource(ctx context.Context, v manifest.VolumeS
 			want.GitCredentialID == existing.GitCredentialID && want.AutoSync == existing.AutoSync &&
 			want.UID == existing.UID && want.GID == existing.GID &&
 			want.StackID == existing.StackID && want.RestartTargets == existing.RestartTargets &&
-			!filesChanged {
+			want.WebhookID == existing.WebhookID && !filesChanged {
 			res.Verdict = verdictInSync
 			break
 		}
@@ -1880,7 +2040,7 @@ func applyVolumeSourceSpec(row *store.VolumeSource, v manifest.VolumeSource, cre
 		// An inline source has no repository: git fields and the push-driven webhook
 		// are meaningless, same rule as applyVolumeSourceRequest.
 		row.GitURL, row.GitRef, row.GitPath, row.GitCredentialID = "", "", "", ""
-		row.AutoSync = false
+		row.AutoSync, row.WebhookID = false, ""
 	}
 }
 

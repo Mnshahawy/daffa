@@ -110,11 +110,14 @@ A stack can redeploy itself when you push. It is **off until you turn it on**, p
 statements, and a tool that conflates them eventually deploys someone's half-finished
 branch at 2am.
 
-Turn it on in the stack's page and Daffa gives you a URL and a secret to paste into your
-repository's webhook settings (Forgejo, Gitea, GitHub and GitLab are all understood). A
-push then arrives signed, and Daffa deploys **only if all of these hold**:
+Pushes arrive through a **webhook** — a URL and a secret you paste into your repository's
+webhook settings (Forgejo, Gitea, GitHub and GitLab are all understood). Webhooks are
+shared objects under Settings → Webhooks: one webhook drives every stack and volume source
+a repository feeds (or, as an organisation-level hook, every repository), and each linked
+stack decides for itself. A push deploys a stack **only if all of these hold**:
 
-- the signature verifies (HMAC-SHA256 over the exact body, with that stack's own secret),
+- the signature verifies (HMAC-SHA256 over the exact body, with the webhook's secret),
+- the push is for the repository the stack is built from,
 - the push was to the branch the stack tracks — a push to a feature branch does nothing,
 - and it changed a file the stack **watches**.
 

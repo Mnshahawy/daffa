@@ -823,8 +823,10 @@ func TestMigrate0018ManifestApplies(t *testing.T) {
 	if err := s.CreateEnvironment(ctx, env); err != nil {
 		t.Fatal(err)
 	}
-	st := &Stack{EnvID: env.ID, Name: "api", Engine: "compose", SourceKind: "inline", InlineYAML: "services: {}"}
-	if err := s.CreateStack(ctx, st); err != nil {
+	// Raw SQL in the 0017 shape: the store's CreateStack names columns later migrations add.
+	st := &Stack{ID: NewID()}
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO stacks (id, env_id, name, engine, source_kind, inline_yaml, created_at)
+        VALUES (?, ?, 'api', 'compose', 'inline', 'services: {}', '2026-01-01T00:00:00Z')`, st.ID, env.ID); err != nil {
 		t.Fatal(err)
 	}
 	reg := &Registry{Name: "ghcr", URL: "ghcr.io", Username: "ci", PasswordEnc: "sealed"}
@@ -898,5 +900,114 @@ func TestMigrate0019SecretValues(t *testing.T) {
 	}
 	if list, err := s.ListManifestApplies(ctx); err != nil || len(list) != 1 {
 		t.Fatalf("pre-migration applies after 0019: %d, %v", len(list), err)
+	}
+}
+
+// 0021 on a populated 0020 database: every per-target secret becomes a webhook of its own
+// holding the SAME ciphertext (so the forge keeps verifying), linked, on the target's
+// cluster; name collisions across clusters are suffixed; the old column is cleared; and
+// every role that could deploy can still manage auto-deploy.
+func TestMigrate0021Webhooks(t *testing.T) {
+	ctx := context.Background()
+	url := "sqlite://" + filepath.Join(t.TempDir(), "test.db")
+
+	stopAfter = "0020_cleanup_keep_images"
+	defer func() { stopAfter = "" }()
+
+	s, err := Open(ctx, url)
+	if err != nil {
+		t.Fatalf("open at 0020: %v", err)
+	}
+	defer s.Close()
+
+	prod := &Environment{Name: "prod"}
+	staging := &Environment{Name: "staging"}
+	for _, e := range []*Environment{prod, staging} {
+		if err := s.CreateEnvironment(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, q := range []string{
+		`INSERT INTO stacks (id, env_id, name, source_kind, git_url, auto_deploy, webhook_secret_enc, created_at)
+		 VALUES ('st_prod', '` + prod.ID + `', 'api', 'git', 'https://x/api.git', 1, 'sealed-prod', '2026-01-01T00:00:00Z')`,
+		`INSERT INTO stacks (id, env_id, name, source_kind, git_url, auto_deploy, webhook_secret_enc, created_at)
+		 VALUES ('st_staging', '` + staging.ID + `', 'api', 'git', 'https://x/api.git', 0, 'sealed-staging', '2026-01-02T00:00:00Z')`,
+		`INSERT INTO stacks (id, env_id, name, source_kind, created_at)
+		 VALUES ('st_plain', '` + prod.ID + `', 'plain', 'inline', '2026-01-03T00:00:00Z')`,
+		`INSERT INTO volume_sources (id, env_id, volume, git_url, auto_sync, webhook_secret_enc, created_at)
+		 VALUES ('vsr_1', '` + prod.ID + `', 'proxy', 'https://x/cfg.git', 1, 'sealed-vol', '2026-01-01T00:00:00Z')`,
+		`INSERT INTO roles (id, name, description, is_admin, builtin, created_at)
+		 VALUES ('role_deployer', 'Deployer', '', 0, 0, '2026-01-01T00:00:00Z')`,
+		`INSERT INTO role_caps (role_id, ns, mask) VALUES ('role_deployer', 'deploy', 3)`,
+	} {
+		if _, err := s.db.ExecContext(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	stopAfter = ""
+	if err := s.migrate(ctx); err != nil {
+		t.Fatalf("migrating to 0021: %v", err)
+	}
+
+	cases := []struct{ stack, webhook, env, sealed string }{
+		{"st_prod", "api", prod.ID, "sealed-prod"},
+		{"st_staging", "api-staging", staging.ID, "sealed-staging"},
+	}
+	for _, c := range cases {
+		st, err := s.StackByID(ctx, c.stack)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wh, err := s.WebhookByID(ctx, st.WebhookID)
+		if err != nil {
+			t.Fatalf("%s: no webhook linked after 0021: %v", c.stack, err)
+		}
+		if wh.Name != c.webhook || wh.EnvID != c.env || wh.SecretEnc != c.sealed {
+			t.Errorf("%s: webhook %+v, want name %q env %q secret %q", c.stack, wh, c.webhook, c.env, c.sealed)
+		}
+	}
+	// Paused stays paused: the link moved, the switch did not.
+	if st, _ := s.StackByID(ctx, "st_staging"); st.AutoDeploy {
+		t.Error("0021 turned on a stack whose auto-deploy was off")
+	}
+	if st, _ := s.StackByID(ctx, "st_plain"); st.WebhookID != "" {
+		t.Error("0021 invented a webhook for a stack that had none")
+	}
+	v, err := s.VolumeSourceByID(ctx, "vsr_1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wh, err := s.WebhookByID(ctx, v.WebhookID); err != nil || wh.Name != "volume-proxy" || wh.SecretEnc != "sealed-vol" {
+		t.Errorf("volume source webhook after 0021: %+v, %v", wh, err)
+	}
+
+	var leftover int
+	if err := s.db.QueryRowContext(ctx, `SELECT
+        (SELECT COUNT(*) FROM stacks WHERE webhook_secret_enc <> '') +
+        (SELECT COUNT(*) FROM volume_sources WHERE webhook_secret_enc <> '')`).Scan(&leftover); err != nil || leftover != 0 {
+		t.Errorf("secrets left in the retired column: %d (%v) — rotation would miss them", leftover, err)
+	}
+
+	var mask int64
+	if err := s.db.QueryRowContext(ctx, `SELECT mask FROM role_caps WHERE role_id = 'role_deployer' AND ns = 'deploy'`).Scan(&mask); err != nil {
+		t.Fatal(err)
+	}
+	if mask != 3|512|1024 {
+		t.Errorf("a role with stacks.view+edit has deploy mask %d after 0021, want %d", mask, 3|512|1024)
+	}
+
+	// And the store sees them: fleet-scoped holders on prod see prod's, not staging's.
+	list, err := s.ListWebhooks(ctx, false, []string{prod.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, wh := range list {
+		if wh.EnvID == staging.ID {
+			t.Errorf("a prod-scoped holder listed staging's webhook %q", wh.Name)
+		}
+	}
+	if n, _ := s.WebhookInUse(ctx, v.WebhookID); n != 1 {
+		t.Errorf("WebhookInUse = %d, want 1", n)
 	}
 }

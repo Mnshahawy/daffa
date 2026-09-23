@@ -142,6 +142,8 @@ var (
 	// reveal is audited. This is the one deliberate crack in "sealed values are write-only through
 	// the API" (docs/secrets.md), and it is a crack you must be handed a key to.
 	SecretsReveal = Cap{NSDeploy, 1 << 8}
+	WebhooksView  = Cap{NSDeploy, 1 << 9}
+	WebhooksEdit  = Cap{NSDeploy, 1 << 10}
 
 	// ── data ────────────────────────────────────────────────────────────────────
 	BackupsView     = Cap{NSData, 1 << 0}
@@ -309,6 +311,14 @@ var All = []Def{
 	// source uses stays behind gitcreds.*.
 	{VolSourcesView, "volsources.view", "volsources", ModeView, ScopeEnv, "See volume sources — repository, ref, subtree, live commit and sync status."},
 	{VolSourcesEdit, "volsources.edit", "volsources", ModeEdit, ScopeEnv, "Create, edit, sync and delete volume sources. A sync overwrites the volume's Daffa-delivered files with the repository's."},
+	// Webhooks are NOT the credential-store split, though they hold a secret. Their edit is
+	// env-grantable because a cluster-scoped operator could turn on auto-deploy before
+	// webhooks were objects (stacks.edit minted the secret) and must still be able to. The
+	// monitor rule applies instead: a FLEET-WIDE webhook needs webhooks.edit globally. The
+	// secret only authenticates pushes, and a push can only deploy what is linked to it —
+	// linking takes the target's own edit capability. See .ai/webhooks.md.
+	{WebhooksView, "webhooks.view", "webhooks", ModeView, ScopeEnv, "See webhooks — their URLs, what they drive and their last delivery. Never the secret."},
+	{WebhooksEdit, "webhooks.edit", "webhooks", ModeEdit, ScopeEnv, "Create, rotate and delete webhooks. A fleet-wide webhook requires this on every cluster."},
 	{SecretsReveal, "secrets.reveal", "secrets", ModeStandalone, ScopeEnv, "Reveal the plaintext of a stack's secret environment variables and secret files. Sealed values are otherwise write-only; every reveal is recorded in the audit log. Separate from editing — setting a secret does not grant reading it back."},
 
 	// ── data ────────────────────────────────────────────────────────────────────

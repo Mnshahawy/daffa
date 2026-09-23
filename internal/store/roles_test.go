@@ -93,13 +93,16 @@ func TestSeededRolesGrantWhatTheyClaim(t *testing.T) {
 				"volumes.view", "volumes.edit",
 				"stacks.view", "stacks.edit",
 				"registries.view", "gitcreds.view",
+				// Granted by 0021 to every role that could deploy, so auto-deploy
+				// kept working when webhooks became objects.
+				"webhooks.view", "webhooks.edit",
 				"backups.view", "backups.edit", "storage.view",
 				"monitors.view", "monitors.edit", "audit.view",
 				"clusters.view",
 			}},
 			{"Viewer", []string{
 				"containers.view", "images.view", "networks.view", "volumes.view",
-				"stacks.view",
+				"stacks.view", "webhooks.view",
 				"backups.view", "storage.view",
 				"monitors.view", "audit.view",
 				"clusters.view",

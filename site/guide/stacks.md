@@ -82,13 +82,26 @@ Old deployments are pruned: the last 50 per stack, plus anything from the last 9
 A stack can redeploy itself when you push. It is **off until you turn it on**, per stack:
 "the compose file changed" and "put this in production right now" are different statements.
 
-Turn it on in the stack's page and Daffa gives you a URL and a secret to paste into your
-repository's webhook settings (Forgejo, Gitea, GitHub and GitLab are all understood). A push
-then deploys **only if all of these hold**:
+Pushes arrive through a **webhook** — a URL and a secret you paste into your repository's
+webhook settings (Forgejo, Gitea, GitHub and GitLab are all understood). Webhooks live in
+**Settings → Webhooks** and are shared: one webhook can drive every stack and volume source a
+repository feeds, or — as an organisation-level webhook — every repository you have. A webhook
+is either pinned to one cluster or fleet-wide; a fleet-wide one suits a repository that
+deploys staging from `develop` and production from `main`.
 
-- the signature verifies (HMAC-SHA256 over the exact body, with that stack's own secret),
+On a stack's Settings tab, pick the webhook and turn auto-deploy on (or let Daffa create a
+webhook for just that stack in one step). A push then deploys the stack **only if all of these
+hold**:
+
+- the signature verifies (HMAC-SHA256 over the exact body, with the webhook's secret),
+- the push is for the repository the stack is built from (so an organisation-level webhook
+  deploys only what the push touched),
 - the push was to the branch the stack tracks, and
 - it changed a file the stack **watches**.
+
+Turning auto-deploy off keeps the webhook linked: pushes are acknowledged and ignored until you
+turn it back on. **Settings → Webhooks** shows each webhook's last delivery, stack by stack —
+what deployed, and why the rest did not.
 
 By default a stack watches only its own compose file, so a README typo will not redeploy
 anything. Widen it with globs, one per line:
@@ -101,6 +114,10 @@ config/**
 `*` stays within a path segment; `**` crosses them. The webhook endpoint is the only route
 that can start a deploy without a session, so it refuses anything unsigned and records every
 attempt — accepted or rejected — in the audit log.
+
+Webhook URLs from before webhooks were shared (`/webhooks/stacks/<id>`) keep working: the
+upgrade turned each stack's secret into a webhook of its own, with the same secret, linked to
+that stack.
 
 ## Lifecycle hooks
 

@@ -83,6 +83,11 @@ var tsNames = map[reflect.Type]string{
 
 	reflect.TypeOf(deploymentView{}): "Deployment",
 
+	reflect.TypeOf(webhookView{}):               "Webhook",
+	reflect.TypeOf(webhookTargetView{}):         "WebhookTarget",
+	reflect.TypeOf(deliveryRecord{}):            "WebhookDelivery",
+	reflect.TypeOf(deliveryResult{}):            "WebhookDeliveryResult",
+	reflect.TypeOf(webhookSecretResponse{}):     "WebhookWithSecret",
 	reflect.TypeOf(volumeSourceView{}):          "VolumeSource",
 	reflect.TypeOf(volumeSourceSavedResponse{}): "VolumeSourceSaved",
 	reflect.TypeOf(envView{}):                   "Environment",

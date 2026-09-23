@@ -3,8 +3,6 @@ package api
 import (
 	"context"
 	"errors"
-	"io"
-	"log/slog"
 	"net/http"
 	"path"
 	"regexp"
@@ -44,7 +42,7 @@ type volumeSourceView struct {
 	StackName       string     `json:"stack_name,omitempty"`
 	RestartTargets  string     `json:"restart_targets,omitempty"`
 	AutoSync        bool       `json:"auto_sync"`
-	HasWebhook      bool       `json:"has_webhook_secret"`
+	WebhookID       string     `json:"webhook_id,omitempty"` // the linked webhook; never its secret
 	SyncedCommit    string     `json:"synced_commit,omitempty"`
 	SyncedAt        *time.Time `json:"synced_at,omitempty"`
 	Status          string     `json:"status"`
@@ -61,7 +59,7 @@ func (s *Server) viewVolumeSource(ctx context.Context, v *store.VolumeSource) vo
 		Volume: v.Volume, SourceKind: v.SourceKind, GitURL: v.GitURL, GitRef: v.GitRef, GitPath: v.GitPath,
 		GitCredentialID: v.GitCredentialID, UID: v.UID, GID: v.GID,
 		StackID: v.StackID, RestartTargets: v.RestartTargets,
-		AutoSync: v.AutoSync, HasWebhook: v.WebhookSecretEnc != "",
+		AutoSync: v.AutoSync, WebhookID: v.WebhookID,
 		SyncedCommit: v.SyncedCommit, Status: v.Status, LastError: v.LastError,
 	}
 	if v.StackID != "" {
@@ -93,12 +91,10 @@ func (s *Server) handleListVolumeSources(w http.ResponseWriter, r *http.Request)
 	httpx.JSON(w, http.StatusOK, out)
 }
 
-// volumeSourceSavedResponse is the create/update answer. The webhook secret appears
-// exactly once, when it is minted — it is sealed in the database afterwards and never
-// handed back.
+// volumeSourceSavedResponse is the create/update answer. (It carried the source's own
+// webhook secret before webhooks were objects; secrets now come from the webhook routes.)
 type volumeSourceSavedResponse struct {
-	Source        volumeSourceView `json:"source"`
-	WebhookSecret string           `json:"webhook_secret,omitempty"`
+	Source volumeSourceView `json:"source"`
 }
 
 type volSourceFileInput struct {
@@ -122,8 +118,9 @@ type volumeSourceRequest struct {
 	StackID        string               `json:"stack_id"`
 	RestartTargets string               `json:"restart_targets"`
 	AutoSync       bool                 `json:"auto_sync"`
-	// Rotate mints a fresh webhook secret. The old one stops working immediately.
-	Rotate bool `json:"rotate"`
+	// WebhookID links the webhook whose pushes sync this source; "" unlinks. Required
+	// for auto_sync — a push has to arrive somewhere.
+	WebhookID string `json:"webhook_id"`
 }
 
 // applyVolumeSourceRequest validates the request and copies it onto the source. Shared by
@@ -170,7 +167,16 @@ func (s *Server) applyVolumeSourceRequest(w http.ResponseWriter, r *http.Request
 		v.GitRef = strings.TrimSpace(req.GitRef)
 		v.GitPath = strings.TrimSpace(req.GitPath)
 		v.GitCredentialID = req.GitCredentialID
-		v.AutoSync = req.AutoSync
+		whID, err := s.linkableWebhook(r.Context(), req.WebhookID, v.EnvID)
+		if err != nil {
+			httpx.BadRequest(w, r, err.Error())
+			return false
+		}
+		if req.AutoSync && whID == "" {
+			httpx.BadRequest(w, r, "Auto-sync needs a webhook — pick the one your git server pushes to.")
+			return false
+		}
+		v.AutoSync, v.WebhookID = req.AutoSync, whID
 	case "inline":
 		if len(req.Files) == 0 {
 			httpx.BadRequest(w, r, "An inline volume source needs at least one file — that is its content.")
@@ -202,7 +208,7 @@ func (s *Server) applyVolumeSourceRequest(w http.ResponseWriter, r *http.Request
 		// An inline source has no repository to push to, so git fields and the push-driven
 		// webhook are meaningless — clear them rather than store a lie.
 		v.GitURL, v.GitRef, v.GitPath, v.GitCredentialID = "", "", "", ""
-		v.AutoSync = false
+		v.AutoSync, v.WebhookID = false, ""
 	default:
 		httpx.BadRequest(w, r, "The source kind must be git or inline.")
 		return false
@@ -238,26 +244,6 @@ func volSourceFilesFromRequest(in []volSourceFileInput) ([]store.VolSourceFile, 
 	return out, nil
 }
 
-// mintWebhookSecret creates the source's webhook secret when auto-sync needs one (or a
-// rotation asks for one), returning the plaintext to show exactly once.
-func (s *Server) mintWebhookSecret(v *store.VolumeSource, req *volumeSourceRequest) (string, error) {
-	// v.AutoSync, not req.AutoSync: apply already resolved it (an inline source is forced
-	// off, since there is no repository to push).
-	if !v.AutoSync || (v.WebhookSecretEnc != "" && !req.Rotate) {
-		return "", nil
-	}
-	secret, err := randomToken()
-	if err != nil {
-		return "", err
-	}
-	sealed, err := s.sealer.Seal(secret)
-	if err != nil {
-		return "", err
-	}
-	v.WebhookSecretEnc = sealed
-	return secret, nil
-}
-
 func (s *Server) handleCreateVolumeSource(w http.ResponseWriter, r *http.Request) {
 	var req volumeSourceRequest
 	if err := httpx.Decode(w, r, &req); err != nil {
@@ -280,11 +266,6 @@ func (s *Server) handleCreateVolumeSource(w http.ResponseWriter, r *http.Request
 
 	v := &store.VolumeSource{EnvID: req.EnvID, Volume: req.Volume}
 	if !s.applyVolumeSourceRequest(w, r, &req, v) {
-		return
-	}
-	secret, err := s.mintWebhookSecret(v, &req)
-	if err != nil {
-		httpx.Error(w, r, err)
 		return
 	}
 	if u, ok := auth.UserFrom(r.Context()); ok {
@@ -323,11 +304,7 @@ func (s *Server) handleCreateVolumeSource(w http.ResponseWriter, r *http.Request
 		_ = s.reportVolumeSourceSync(context.WithoutCancel(r.Context()), &v)
 	}(*v)
 
-	resp := volumeSourceSavedResponse{Source: s.viewVolumeSource(r.Context(), v)}
-	if secret != "" {
-		resp.WebhookSecret = secret // shown once
-	}
-	httpx.JSON(w, http.StatusOK, resp)
+	httpx.JSON(w, http.StatusOK, volumeSourceSavedResponse{Source: s.viewVolumeSource(r.Context(), v)})
 }
 
 func (s *Server) handleGetVolumeSource(w http.ResponseWriter, r *http.Request) {
@@ -395,11 +372,6 @@ func (s *Server) handleUpdateVolumeSource(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	secret, err := s.mintWebhookSecret(v, &req)
-	if err != nil {
-		httpx.Error(w, r, err)
-		return
-	}
 	if err := s.store.UpdateVolumeSource(r.Context(), v); err != nil {
 		httpx.Error(w, r, err)
 		return
@@ -431,11 +403,7 @@ func (s *Server) handleUpdateVolumeSource(w http.ResponseWriter, r *http.Request
 		_ = s.reportVolumeSourceSync(context.WithoutCancel(r.Context()), &v)
 	}(*v)
 
-	resp := volumeSourceSavedResponse{Source: s.viewVolumeSource(r.Context(), v)}
-	if secret != "" {
-		resp.WebhookSecret = secret // shown once
-	}
-	httpx.JSON(w, http.StatusOK, resp)
+	httpx.JSON(w, http.StatusOK, volumeSourceSavedResponse{Source: s.viewVolumeSource(r.Context(), v)})
 }
 
 func (s *Server) handleDeleteVolumeSource(w http.ResponseWriter, r *http.Request) {
@@ -475,93 +443,6 @@ func (s *Server) handleSyncVolumeSource(w http.ResponseWriter, r *http.Request) 
 		EnvID: v.EnvID, Action: "volsource.sync", Target: v.Volume, Outcome: "ok",
 	})
 	httpx.JSON(w, http.StatusOK, s.viewVolumeSource(r.Context(), v))
-}
-
-// handleVolumeSourceWebhook is the push-triggered sync: the stack webhook's twin, with
-// the same posture — outside /api/, authenticated by the HMAC alone, and it confirms
-// nothing to an unsigned caller.
-func (s *Server) handleVolumeSourceWebhook(w http.ResponseWriter, r *http.Request) {
-	v, err := s.store.VolumeSourceByID(r.Context(), r.PathValue("id"))
-	if errors.Is(err, store.ErrNotFound) {
-		httpx.Fail(w, r, http.StatusNotFound, "not_found", "No such webhook.")
-		return
-	}
-	if err != nil {
-		httpx.Error(w, r, err)
-		return
-	}
-
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxWebhookBody))
-	if err != nil {
-		httpx.BadRequest(w, r, "The payload could not be read.")
-		return
-	}
-
-	secret, err := s.sealer.Open(v.WebhookSecretEnc)
-	if err != nil || secret == "" {
-		s.auditVolSourceWebhook(r, v, "denied", "auto-sync is not enabled for this source")
-		httpx.Fail(w, r, http.StatusNotFound, "not_found", "No such webhook.")
-		return
-	}
-	if err := verifySignature(r, body, secret); err != nil {
-		s.auditVolSourceWebhook(r, v, "denied", err.Error())
-		httpx.Fail(w, r, http.StatusUnauthorized, "bad_signature",
-			"The signature does not match. Check the secret configured on the git server.")
-		return
-	}
-
-	if isPing(r) {
-		httpx.JSON(w, http.StatusOK, map[string]string{"status": "pong"})
-		return
-	}
-	if !v.AutoSync {
-		httpx.JSON(w, http.StatusOK, map[string]string{
-			"status": "ignored", "reason": "auto-sync is turned off for this source",
-		})
-		return
-	}
-
-	push, err := parsePush(body)
-	if err != nil {
-		httpx.BadRequest(w, r, "The payload is not a push event this understands.")
-		return
-	}
-	if push.Ref != "" && v.GitRef != "" && !refMatches(push.Ref, v.GitRef) {
-		httpx.JSON(w, http.StatusOK, map[string]string{
-			"status": "ignored", "reason": "push was to " + push.Ref + ", this source tracks " + v.GitRef,
-		})
-		return
-	}
-	// Nothing under the subtree was touched. (An empty file list — some forges omit it on
-	// large pushes — syncs rather than silently doing nothing; the hash makes a redundant
-	// sync cost one clone.)
-	if len(push.Files) > 0 && !touchesSubtree(push.Files, v.GitPath) {
-		httpx.JSON(w, http.StatusOK, map[string]string{
-			"status": "ignored", "reason": "no file under " + path.Clean(v.GitPath) + " was changed",
-		})
-		return
-	}
-
-	// Background: a clone plus a fan-out of volume writes is longer than a forge's
-	// webhook timeout wants to wait, and the source row records the outcome either way.
-	go func(v store.VolumeSource) {
-		_ = s.reportVolumeSourceSync(context.WithoutCancel(r.Context()), &v)
-	}(*v)
-
-	s.auditVolSourceWebhook(r, v, "ok", "")
-	slog.Info("webhook volume sync started", "volume", v.Volume, "ref", push.Ref)
-	httpx.JSON(w, http.StatusAccepted, map[string]string{"status": "syncing"})
-}
-
-func (s *Server) auditVolSourceWebhook(r *http.Request, v *store.VolumeSource, outcome, reason string) {
-	detail := map[string]string{"ip": s.clientIP(r)}
-	if reason != "" {
-		detail["reason"] = reason
-	}
-	s.audit(r.Context(), store.AuditEntry{
-		EnvID: v.EnvID, Action: "volsource.webhook", Target: v.Volume,
-		Outcome: outcome, Detail: store.AuditDetail(detail),
-	})
 }
 
 // touchesSubtree reports whether any pushed file lives under the source's subtree.

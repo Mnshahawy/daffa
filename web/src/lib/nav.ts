@@ -250,6 +250,13 @@ export const settingsGroups: { title: string; items: SettingsTab[] }[] = [
         icon: 'layers',
       },
       {
+        name: 'settings-webhooks',
+        label: 'Webhooks',
+        hint: 'Where your git server tells Daffa about a push',
+        cap: Cap.WebhooksView,
+        icon: 'plug',
+      },
+      {
         name: 'settings-ssh',
         label: 'SSH keys',
         hint: 'Keys Daffa dials out to clusters and nodes with',

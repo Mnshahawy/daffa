@@ -123,9 +123,12 @@ type Stack struct {
 	DeployedCommit string
 	DeployedAt     time.Time
 
-	// AutoDeploy makes a verified push deploy this stack. Off unless someone says so.
-	AutoDeploy       bool
-	WebhookSecretEnc string
+	// AutoDeploy makes a verified push to WebhookID deploy this stack. With a webhook
+	// linked and this off, the stack is paused: pushes are acknowledged and ignored.
+	AutoDeploy bool
+	// WebhookID links the webhook whose pushes may deploy this stack; "" = none.
+	// (The per-stack webhook_secret_enc column is retired — see migration 0021.)
+	WebhookID string
 	// WatchPaths is newline-separated globs; empty means just the compose file.
 	WatchPaths string
 
@@ -141,7 +144,7 @@ type Stack struct {
 // registry credentials are matched to a stack's images at deploy time, not pinned per stack.
 const stackCols = `id, env_id, node_id, name, engine, group_name, source_kind, git_url, git_ref, git_path,
     git_credential_id, inline_yaml, deployed_hash, deployed_commit, deployed_at,
-    auto_deploy, webhook_secret_enc, watch_paths, created_at, created_by`
+    auto_deploy, webhook_id, watch_paths, created_at, created_by`
 
 // stackReadCols adds the outcome of the most recent DEPLOY — and only a deploy: `up` and
 // `pull` apply the bundle, `stop`/`restart`/`down` act on what is already there.
@@ -158,18 +161,19 @@ const stackReadCols = stackCols + `,
 
 func scanStack(sc interface{ Scan(...any) error }) (*Stack, error) {
 	var s Stack
-	var credID, deployedAt, createdBy, lastDeploy sql.NullString
+	var credID, deployedAt, createdBy, lastDeploy, webhookID sql.NullString
 	var createdAt string
 	var autoDeploy int
 	err := sc.Scan(&s.ID, &s.EnvID, &s.NodeID, &s.Name, &s.Engine, &s.GroupName, &s.SourceKind, &s.GitURL,
 		&s.GitRef, &s.GitPath, &credID, &s.InlineYAML, &s.DeployedHash,
-		&s.DeployedCommit, &deployedAt, &autoDeploy, &s.WebhookSecretEnc, &s.WatchPaths,
+		&s.DeployedCommit, &deployedAt, &autoDeploy, &webhookID, &s.WatchPaths,
 		&createdAt, &createdBy, &lastDeploy)
 	if err != nil {
 		return nil, err
 	}
 	s.LastDeployStatus = lastDeploy.String
 	s.GitCredentialID = credID.String
+	s.WebhookID = webhookID.String
 	s.CreatedBy = createdBy.String
 	s.AutoDeploy = autoDeploy != 0
 	s.CreatedAt = parseTS(createdAt)
@@ -185,7 +189,7 @@ func (s *Store) CreateStack(ctx context.Context, st *Stack) error {
 	}
 	st.CreatedAt = now()
 	_, err := s.exec(ctx, `INSERT INTO stacks (`+stackCols+`)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', NULL, 0, '', '', ?, ?)`,
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', NULL, 0, NULL, '', ?, ?)`,
 		st.ID, st.EnvID, st.NodeID, st.Name, st.Engine, st.GroupName, st.SourceKind, st.GitURL, st.GitRef,
 		st.GitPath, nullStr(st.GitCredentialID), st.InlineYAML,
 		ts(st.CreatedAt), nullStr(st.CreatedBy))
@@ -195,17 +199,11 @@ func (s *Store) CreateStack(ctx context.Context, st *Stack) error {
 	return nil
 }
 
-// SetStackAutoDeploy stores the opt-in and what it watches.
-func (s *Store) SetStackAutoDeploy(ctx context.Context, stackID string, enabled bool, watchPaths string) error {
-	_, err := s.exec(ctx, `UPDATE stacks SET auto_deploy = ?, watch_paths = ? WHERE id = ?`,
-		boolInt(enabled), watchPaths, stackID)
-	return err
-}
-
-// SetStackWebhookSecret stores the sealed HMAC secret. Called when auto-deploy is first
-// enabled and whenever the secret is rotated.
-func (s *Store) SetStackWebhookSecret(ctx context.Context, stackID, sealed string) error {
-	_, err := s.exec(ctx, `UPDATE stacks SET webhook_secret_enc = ? WHERE id = ?`, sealed, stackID)
+// SetStackAutoDeploy stores the opt-in, the webhook it listens to ("" unlinks) and what
+// it watches.
+func (s *Store) SetStackAutoDeploy(ctx context.Context, stackID string, enabled bool, webhookID, watchPaths string) error {
+	_, err := s.exec(ctx, `UPDATE stacks SET auto_deploy = ?, webhook_id = ?, watch_paths = ? WHERE id = ?`,
+		boolInt(enabled), nullStr(webhookID), watchPaths, stackID)
 	return err
 }
 

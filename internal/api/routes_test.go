@@ -91,6 +91,9 @@ func TestBodyScopedRoutesAreKnown(t *testing.T) {
 		// Enrolling an agent adds a node to the cluster named in the body, so its handler
 		// checks nodes.edit there via s.mayUseEnv before minting a join token.
 		"POST /api/agents": true,
+		// A webhook's cluster is in the body — or absent, which means FLEET-WIDE, so like
+		// POST /api/monitors it takes webhooks.edit globally in that case. See .ai/webhooks.md.
+		"POST /api/webhooks": true,
 		// Inline-compose image upgrades: the env arrives in the body and each handler
 		// checks it via s.mayUseEnv before touching a registry. See .ai/image-upgrades.md.
 		"POST /api/compose/images":      true,
@@ -147,6 +150,9 @@ func TestTargetRoutesUseTheRightScope(t *testing.T) {
 		}
 		if rt.scope == scopeVolumeSource && !strings.HasPrefix(path, "/api/volume-sources/{id}") {
 			t.Errorf("%s is scopeVolumeSource but its {id} is not a volume source", rt.pattern)
+		}
+		if rt.scope == scopeWebhook && !strings.HasPrefix(path, "/api/webhooks/{id}") {
+			t.Errorf("%s is scopeWebhook but its {id} is not a webhook", rt.pattern)
 		}
 	}
 }

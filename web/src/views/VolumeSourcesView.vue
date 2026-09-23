@@ -74,15 +74,25 @@ const blank = () => ({
   stack_id: '',
   restart_targets: '',
   auto_sync: false,
+  webhook_id: '',
 })
 const form = ref(blank())
 const open = ref(false)
 const editing = ref<VolumeSource | null>(null)
 const busy = ref(false)
 
-// The secret is shown exactly once, when it is minted. It is sealed in the database
-// afterwards and there is no way to read it back — the stacks auto-deploy pattern verbatim.
-const minted = ref<{ source: VolumeSource; secret: string } | null>(null)
+// Sync on push goes through a webhook — an object of its own in Settings → Webhooks, which
+// one repository's stacks and volume sources can share. Linkable: fleet-wide, or on the
+// source's cluster (the rule the server enforces).
+const { data: webhooks } = useQuery({
+  queryKey: ['webhooks'],
+  queryFn: daffa.webhooks,
+  enabled: computed(() => session.canAnywhere(Cap.WebhooksView)),
+})
+const linkableWebhooks = computed(() =>
+  (webhooks.value ?? []).filter((w) => !w.env_id || w.env_id === form.value.env_id),
+)
+const webhookName = (id?: string) => (webhooks.value ?? []).find((w) => w.id === id)?.name
 
 function startAdd() {
   editing.value = null
@@ -110,6 +120,7 @@ async function startEdit(s: VolumeSource) {
     stack_id: s.stack_id ?? '',
     restart_targets: s.restart_targets ?? '',
     auto_sync: s.auto_sync,
+    webhook_id: s.webhook_id ?? '',
   }
   open.value = true
   // The list omits file contents (they can be large); fetch them for the editor.
@@ -175,7 +186,7 @@ const steps = computed<WizardStep[]>(() => [
   },
 ])
 
-async function save(rotate = false) {
+async function save() {
   // Switching an inline source to git throws away the files stored in Daffa. It is one-way and the
   // server refuses the reverse, so it earns a confirm — the same caution the stack switch shows.
   if (editing.value?.source_kind === 'inline' && form.value.source_kind === 'git') {
@@ -193,37 +204,21 @@ async function save(rotate = false) {
 
   busy.value = true
   try {
-    const body: VolumeSourceRequest = { ...form.value, rotate }
+    const body: VolumeSourceRequest = { ...form.value }
     const editingSource = editing.value
-    const r = editingSource
-      ? await daffa.updateVolumeSource(editingSource.id, body)
-      : await daffa.createVolumeSource(body)
-    // A minted secret gets its own one-time reveal panel — that IS the success feedback, so a
-    // toast on top of it would be redundant. Otherwise, confirm the save landed.
-    if (r.webhook_secret) minted.value = { source: r.source, secret: r.webhook_secret }
-    else toast.ok(editingSource ? 'Source saved.' : 'Source created.')
-    await qc.invalidateQueries({ queryKey: ['volume-sources'] })
+    if (editingSource) await daffa.updateVolumeSource(editingSource.id, body)
+    else await daffa.createVolumeSource(body)
+    toast.ok(editingSource ? 'Source saved.' : 'Source created.')
+    await Promise.all([
+      qc.invalidateQueries({ queryKey: ['volume-sources'] }),
+      qc.invalidateQueries({ queryKey: ['webhooks'] }),
+    ])
     close()
   } catch (e) {
     toast.err(e, 'Could not save the volume source.')
   } finally {
     busy.value = false
   }
-}
-
-// Rotating destroys nothing you can point at, but it does silently stop webhook syncs until
-// the new secret reaches the git server — the stack rotate's caution, verbatim.
-async function askRotate() {
-  const ok = await confirm({
-    title: 'Rotate the webhook secret?',
-    body:
-      'The current secret stops working the moment the new one is minted. Pushes will not sync ' +
-      'until you paste the new secret into your git server’s webhook settings — and it is shown ' +
-      'only once.',
-    confirmLabel: 'Rotate',
-    intent: 'caution',
-  })
-  if (ok) void save(true)
 }
 
 // ── row actions ───────────────────────────────────────────────────────────────
@@ -290,7 +285,7 @@ function sourceLine(s: VolumeSource): string {
 }
 
 function webhookUrl(id: string): string {
-  return `${location.origin}/webhooks/volume-sources/${id}`
+  return `${location.origin}/webhooks/${id}`
 }
 
 </script>
@@ -309,50 +304,6 @@ function webhookUrl(id: string): string {
         </BaseButton>
       </template>
     </PageHeader>
-
-    <!-- The one time the webhook secret is visible. It survives the form closing, because
-         it appears exactly once and closing the form must not eat it. -->
-    <div
-      v-if="minted"
-      class="mb-6 rounded-[var(--radius-card)] border p-4"
-      :style="{
-        background: 'var(--accent-soft)',
-        borderColor: 'color-mix(in oklch, var(--accent) 40%, transparent)',
-      }"
-    >
-      <div class="mb-2 flex items-start justify-between gap-2">
-        <p class="text-sm font-medium">
-          Webhook secret for {{ minted.source.volume }} — copy it now
-        </p>
-        <BaseButton intent="ghost" size="xs" aria-label="Dismiss" @click="minted = null">
-          <AppIcon name="x" class="size-3.5" />
-        </BaseButton>
-      </div>
-
-      <p class="muted mb-2 text-xs">
-        Add this to your repository's webhook settings. Content type
-        <code class="font-mono">application/json</code>, event: push.
-      </p>
-      <div
-        class="mb-2 flex items-start gap-2 rounded-[var(--radius-control)] p-2.5 font-mono text-xs"
-        :style="{ background: 'var(--surface)' }"
-      >
-        <code class="flex-1 break-all">{{ webhookUrl(minted.source.id) }}</code>
-        <CopyButton intent="ghost" size="xs" :text="webhookUrl(minted.source.id)" />
-      </div>
-
-      <div
-        class="flex items-start gap-2 rounded-[var(--radius-control)] p-2.5 font-mono text-xs"
-        :style="{ background: 'var(--surface)' }"
-      >
-        <code class="flex-1 break-all">{{ minted.secret }}</code>
-        <CopyButton intent="ghost" size="xs" :text="minted.secret" />
-      </div>
-      <p class="muted mt-1.5 text-xs">
-        This is shown once. It is stored encrypted and cannot be read back — if you lose it, edit
-        the source and rotate it, then update the git server.
-      </p>
-    </div>
 
     <!-- ── New / edit ─────────────────────────────────────────────────────────── -->
     <WizardModal
@@ -606,19 +557,22 @@ function webhookUrl(id: string): string {
             Sync on push — a webhook from your git server triggers the sync
           </label>
           <p class="subtle mt-1 text-xs">
-            Edit the config in the repo, merge, done — no redeploy. Saving with this on mints a
-            webhook secret, shown once.
+            Edit the config in the repo, merge, done — no redeploy.
           </p>
 
-          <div
-            v-if="editing && form.auto_sync && editing.has_webhook_secret"
-            class="mt-2 flex items-center gap-3"
-          >
-            <span class="muted text-xs">A secret is configured.</span>
-            <!-- Recoverable, but it stops push-syncs until the git server is updated: caution. -->
-            <BaseButton intent="caution" size="xs" :loading="busy" @click="askRotate">
-              Rotate secret
-            </BaseButton>
+          <div v-if="form.auto_sync || form.webhook_id" class="mt-3">
+            <label for="vs-webhook" class="mb-1.5 block text-sm font-medium">Webhook</label>
+            <Select id="vs-webhook" v-model="form.webhook_id" :required="form.auto_sync">
+              <option value="">— none —</option>
+              <option v-for="w in linkableWebhooks" :key="w.id" :value="w.id">
+                {{ w.name }}{{ w.env_name ? '' : ' (any cluster)' }}
+              </option>
+            </Select>
+            <p class="subtle mt-1 text-xs">
+              The same webhook can drive the stacks this repository feeds; each target checks the
+              branch and paths for itself. Create one in
+              <RouterLink :to="{ name: 'settings-webhooks' }" class="underline">Settings → Webhooks</RouterLink>.
+            </p>
           </div>
         </div>
       </template>
@@ -712,11 +666,14 @@ function webhookUrl(id: string): string {
               </p>
             </div>
 
-            <!-- The webhook endpoint, on the row that answers to it. The secret is not here —
-                 it was shown once, when it was minted. -->
-            <div v-if="s.auto_sync" class="mt-2 flex items-center gap-2 font-mono text-xs">
-              <code class="subtle break-all">POST {{ webhookUrl(s.id) }}</code>
-              <CopyButton intent="ghost" size="xs" :text="webhookUrl(s.id)" />
+            <!-- The webhook this source listens to. Its secret lives with the webhook, in
+                 Settings → Webhooks, shared by everything linked to it. -->
+            <div v-if="s.auto_sync && s.webhook_id" class="mt-2 flex items-center gap-2 font-mono text-xs">
+              <code class="subtle break-all">
+                POST {{ webhookUrl(s.webhook_id) }}
+                <template v-if="webhookName(s.webhook_id)">({{ webhookName(s.webhook_id) }})</template>
+              </code>
+              <CopyButton intent="ghost" size="xs" :text="webhookUrl(s.webhook_id)" />
             </div>
           </div>
 

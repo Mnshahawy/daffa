@@ -1256,6 +1256,124 @@ CREATE TABLE secret_values (
 ALTER TABLE cleanup_settings ADD COLUMN keep_images TEXT NOT NULL DEFAULT '';
 ALTER TABLE env_cleanup_policies ADD COLUMN keep_images TEXT NOT NULL DEFAULT '';
 `},
+
+	// Webhooks become objects of their own, linkable to any number of stacks and volume
+	// sources — one hook for a repository that feeds five stacks, or one org-level hook for
+	// every repository. See .ai/webhooks.md.
+	//
+	// env_id NULL is a fleet-wide webhook (and needs webhooks.edit globally, the monitor
+	// rule). Names are global, like the credential stores: a manifest refers to one by name.
+	// last_delivery is the JSON of the most recent delivery's per-target verdicts — the
+	// answer to "why did my push not deploy?", which otherwise lives only in an audit trail
+	// split across every target.
+	//
+	// The link columns carry no ON DELETE: deleting a webhook something still uses is
+	// refused (the InUse rule), not cascaded into silently-dead auto-deploys.
+	//
+	// The role grants keep auto-deploy working for everyone who had it: webhooks.view to
+	// every role with stacks.view, webhooks.edit to every role with stacks.edit (bits 0/1 →
+	// 9/10 of the deploy mask). Scope lives on the grant, so a cluster-scoped operator stays
+	// cluster-scoped. The Go step then turns each per-target secret into its own webhook.
+	{name: "0021_webhooks", sql: `
+CREATE TABLE webhooks (
+    id               TEXT PRIMARY KEY,
+    name             TEXT NOT NULL UNIQUE,
+    env_id           TEXT REFERENCES environments (id) ON DELETE CASCADE, -- NULL = fleet-wide
+    secret_enc       TEXT NOT NULL,              -- sealed; shown once, at mint or rotation
+    last_delivery_at TEXT,
+    last_delivery    TEXT NOT NULL DEFAULT '',   -- JSON: the last delivery's per-target verdicts
+    created_at       TEXT NOT NULL,
+    created_by       TEXT
+);
+ALTER TABLE stacks ADD COLUMN webhook_id TEXT REFERENCES webhooks (id);
+ALTER TABLE volume_sources ADD COLUMN webhook_id TEXT REFERENCES webhooks (id);
+UPDATE role_caps SET mask = mask | 512 WHERE ns = 'deploy' AND (mask & 1) <> 0;
+UPDATE role_caps SET mask = mask | 1024 WHERE ns = 'deploy' AND (mask & 2) <> 0;
+`, fn: migrateWebhooks},
+}
+
+// migrateWebhooks is 0021's Go step: every stack and volume source that had a webhook secret
+// gets a webhook of its own, holding the SAME sealed secret (the sealer binds no context, so
+// the ciphertext moves as-is), on the target's cluster, and linked to it. Hooks already
+// configured on forges keep verifying, and the legacy /webhooks/stacks/{id} URL resolves
+// through the link. The old column is cleared rather than dropped — the schema is
+// append-only, and a secret living in two places is one that rotation would miss.
+func migrateWebhooks(ctx context.Context, tx *sql.Tx, s *Store) error {
+	type legacy struct {
+		table, id, envID, name, sealed string
+	}
+	var todo []legacy
+	// Read everything before writing anything: a write on the transaction while its own
+	// rows are still open is "conn busy" on Postgres.
+	for _, q := range []struct{ table, sql string }{
+		{"stacks", `SELECT s.id, s.env_id, s.name, s.webhook_secret_enc FROM stacks s
+            WHERE s.webhook_secret_enc <> '' ORDER BY s.created_at`},
+		{"volume_sources", `SELECT v.id, v.env_id, 'volume-' || v.volume, v.webhook_secret_enc
+            FROM volume_sources v WHERE v.webhook_secret_enc <> '' ORDER BY v.created_at`},
+	} {
+		rows, err := tx.QueryContext(ctx, q.sql)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			l := legacy{table: q.table}
+			if err := rows.Scan(&l.id, &l.envID, &l.name, &l.sealed); err != nil {
+				rows.Close()
+				return err
+			}
+			todo = append(todo, l)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+	}
+	if len(todo) == 0 {
+		return nil
+	}
+
+	envNames := map[string]string{}
+	rows, err := tx.QueryContext(ctx, `SELECT id, name FROM environments`)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var id, name string
+		if err := rows.Scan(&id, &name); err != nil {
+			rows.Close()
+			return err
+		}
+		envNames[id] = name
+	}
+	rows.Close()
+
+	// Stack names are unique per cluster, webhook names fleet-wide: "api" on staging and
+	// "api" on prod become "api" and "api-prod". The id is the last resort that cannot collide.
+	used := map[string]bool{}
+	nameFor := func(l legacy) string {
+		for _, n := range []string{l.name, l.name + "-" + envNames[l.envID], l.name + "-" + l.id} {
+			if !used[n] {
+				used[n] = true
+				return n
+			}
+		}
+		return "" // unreachable: ids are unique
+	}
+
+	stamp := ts(now())
+	for _, l := range todo {
+		id := "whk_" + NewID()
+		if _, err := tx.ExecContext(ctx, s.rebind(`INSERT INTO webhooks
+            (id, name, env_id, secret_enc, created_at) VALUES (?, ?, ?, ?, ?)`),
+			id, nameFor(l), l.envID, l.sealed, stamp); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, s.rebind(`UPDATE `+l.table+`
+            SET webhook_id = ?, webhook_secret_enc = '' WHERE id = ?`), id, l.id); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // migrateCertEnvScope is 0009: certificates gain a nullable env_id and lose global name

@@ -56,9 +56,9 @@ type stackView struct {
 	AutoDeploy bool     `json:"auto_deploy"`
 	WatchPaths string   `json:"watch_paths,omitempty"`
 	Watching   []string `json:"watching,omitempty"` // resolved, including the default
-	// HasSecret says a webhook is configured. The secret itself is shown exactly once,
-	// when it is minted, and never handed back.
-	HasSecret bool `json:"has_secret"`
+	// WebhookID is the webhook whose pushes deploy this stack. The secret lives on the
+	// webhook, shown once when minted, and never handed back.
+	WebhookID string `json:"webhook_id,omitempty"`
 }
 
 func viewStack(s *store.Stack) stackView {
@@ -70,7 +70,7 @@ func viewStack(s *store.Stack) stackView {
 		InlineYAML:       s.InlineYAML,
 		AutoDeploy:       s.AutoDeploy,
 		WatchPaths:       s.WatchPaths,
-		HasSecret:        s.WebhookSecretEnc != "",
+		WebhookID:        s.WebhookID,
 		DeployedCommit:   s.DeployedCommit,
 		LastDeployStatus: s.LastDeployStatus,
 		Actions:          []string{},

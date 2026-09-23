@@ -521,7 +521,7 @@ export interface Stack {
   auto_deploy: boolean
   watch_paths?: string
   watching?: string[]
-  has_secret: boolean
+  webhook_id?: string
 }
 
 export interface StackDetail {
@@ -632,11 +632,13 @@ export interface StackSecretItemRequest {
 export interface AutoDeployRequest {
   enabled?: boolean
   watch_paths?: string
-  rotate?: boolean
+  webhook_id?: string
+  create_webhook?: boolean
 }
 
 export interface AutoDeployResult {
   enabled: boolean
+  webhook_id?: string
   secret?: string
   watch: string[]
 }
@@ -700,6 +702,54 @@ export interface RewriteResponse {
   inline_yaml: string
 }
 
+export interface Webhook {
+  id: string
+  name: string
+  env_id?: string
+  env_name?: string
+  path: string
+  targets: WebhookTarget[]
+  hidden_targets: number
+  last_delivery_at?: string
+  last_delivery?: WebhookDelivery
+}
+
+export interface WebhookTarget {
+  kind: string
+  id: string
+  name: string
+  env_id: string
+  env_name?: string
+  paused: boolean
+}
+
+export interface WebhookDelivery {
+  event: string
+  ref?: string
+  repos?: string[]
+  results: WebhookDeliveryResult[]
+}
+
+export interface WebhookDeliveryResult {
+  kind: string
+  id: string
+  name: string
+  env_id: string
+  status: string
+  reason?: string
+  deployment_id?: string
+}
+
+export interface WebhookRequest {
+  name?: string
+  env_id?: string
+}
+
+export interface WebhookWithSecret {
+  webhook: Webhook
+  secret: string
+}
+
 export interface VolumeSource {
   id: string
   env_id: string
@@ -716,7 +766,7 @@ export interface VolumeSource {
   stack_name?: string
   restart_targets?: string
   auto_sync: boolean
-  has_webhook_secret: boolean
+  webhook_id?: string
   synced_commit?: string
   synced_at?: string
   status: 'pending' | 'ok' | 'error'
@@ -745,7 +795,7 @@ export interface VolumeSourceRequest {
   stack_id?: string
   restart_targets?: string
   auto_sync?: boolean
-  rotate?: boolean
+  webhook_id?: string
 }
 
 export interface VolSourceFileInputRequest {
@@ -756,7 +806,6 @@ export interface VolSourceFileInputRequest {
 
 export interface VolumeSourceSaved {
   source: VolumeSource
-  webhook_secret?: string
 }
 
 export interface BackupJob {
@@ -1569,6 +1618,11 @@ export const daffa = {
     api.post<LatestHintResponse>('/api/compose/latest-hint', body),
   rewriteComposeImages: (body: RewriteRequest) =>
     api.post<RewriteResponse>('/api/compose/rewrite', body),
+  webhooks: () => api.get<Webhook[]>('/api/webhooks'),
+  createWebhook: (body: WebhookRequest) => api.post<WebhookWithSecret>('/api/webhooks', body),
+  updateWebhook: (id: string, body: WebhookRequest) => api.put<Webhook>(`/api/webhooks/${id}`, body),
+  rotateWebhook: (id: string) => api.post<WebhookWithSecret>(`/api/webhooks/${id}/rotate`),
+  deleteWebhook: (id: string) => api.del<StatusResponse>(`/api/webhooks/${id}`),
   volumeSources: () => api.get<VolumeSource[]>('/api/volume-sources'),
   createVolumeSource: (body: VolumeSourceRequest) =>
     api.post<VolumeSourceSaved>('/api/volume-sources', body),

@@ -79,6 +79,10 @@ export const Cap = {
   VolsourcesView: { ns: Ns.Deploy, bit: 64 },
   /** Create, edit, sync and delete volume sources. A sync overwrites the volume's Daffa-delivered files with the repository's. */
   VolsourcesEdit: { ns: Ns.Deploy, bit: 128 },
+  /** See webhooks — their URLs, what they drive and their last delivery. Never the secret. */
+  WebhooksView: { ns: Ns.Deploy, bit: 512 },
+  /** Create, rotate and delete webhooks. A fleet-wide webhook requires this on every cluster. */
+  WebhooksEdit: { ns: Ns.Deploy, bit: 1024 },
   /** Reveal the plaintext of a stack's secret environment variables and secret files. Sealed values are otherwise write-only; every reveal is recorded in the audit log. Separate from editing — setting a secret does not grant reading it back. */
   SecretsReveal: { ns: Ns.Deploy, bit: 256 },
   /** See backup jobs and whether they are succeeding. */

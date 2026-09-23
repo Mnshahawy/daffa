@@ -36,6 +36,9 @@
       "name": "inline-compose image upgrades"
     },
     {
+      "name": "webhooks"
+    },
+    {
       "name": "volume sources"
     },
     {
@@ -4967,8 +4970,8 @@
         "tags": [
           "stacks"
         ],
-        "summary": "Turn auto-deploy on or off; the webhook secret is returned once",
-        "description": "The webhook secret is in the response exactly once, when it is minted — on first enable, or when rotate asks for a fresh one.\n\nRequires the capability at the stack's owning cluster. An unknown id and an unauthorized one both answer 404 — outsiders cannot distinguish them.",
+        "summary": "Link a stack to a webhook and turn auto-deploy on or off",
+        "description": "Links the stack to a webhook (or unlinks it) and pauses or resumes it. With create_webhook the handler also makes one on the stack's cluster — which it checks webhooks.edit for itself — and that secret is in the response exactly once.\n\nRequires the capability at the stack's owning cluster. An unknown id and an unauthorized one both answer 404 — outsiders cannot distinguish them.",
         "x-daffa-capability": "stacks.edit",
         "x-daffa-scope": "stack",
         "requestBody": {
@@ -4981,8 +4984,8 @@
               },
               "example": {
                 "enabled": true,
-                "watch_paths": "apps/web/**",
-                "rotate": false
+                "webhook_id": "whk_abc",
+                "watch_paths": "apps/web/**"
               }
             }
           }
@@ -5374,6 +5377,310 @@
         }
       }
     },
+    "/api/webhooks": {
+      "get": {
+        "operationId": "webhooks",
+        "tags": [
+          "webhooks"
+        ],
+        "summary": "List the webhooks the caller may view, with what each drives and its last delivery",
+        "description": "The door a forge pushes through, linked to any number of stacks and volume sources. See .ai/webhooks.md. The list is scopeAny: fleet-wide webhooks show to every holder (they have to pick one to link), cluster ones where visible() says. Create is body-scoped — the cluster, or none for fleet-wide, is in the payload.\n\nSatisfied by the capability held globally or on any cluster; list responses are filtered to what the caller may see.",
+        "x-daffa-capability": "webhooks.view",
+        "x-daffa-scope": "any",
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Webhook"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No live session or valid token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but the capability is not held at the required scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something went wrong on the server; the audit log has the details.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createWebhook",
+        "tags": [
+          "webhooks"
+        ],
+        "summary": "Create a webhook; its secret is returned exactly once",
+        "description": "The target cluster arrives in the request body; the handler checks the capability there after decoding.",
+        "x-daffa-capability": "webhooks.edit",
+        "x-daffa-scope": "body",
+        "requestBody": {
+          "description": "Request bodies are capped at 1 MiB; unknown fields are refused.",
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebhookRequest"
+              },
+              "example": {
+                "name": "platform-repo",
+                "env_id": "env_prod"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookWithSecret"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is wrong, and the message says how to fix it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No live session or valid token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something went wrong on the server; the audit log has the details.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/webhooks/{id}": {
+      "put": {
+        "operationId": "updateWebhook",
+        "tags": [
+          "webhooks"
+        ],
+        "summary": "Rename a webhook (its cluster cannot change)",
+        "x-daffa-capability": "webhooks.edit",
+        "x-daffa-scope": "unset",
+        "requestBody": {
+          "description": "Request bodies are capped at 1 MiB; unknown fields are refused.",
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebhookRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Webhook"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is wrong, and the message says how to fix it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No live session or valid token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Nothing lives at that id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something went wrong on the server; the audit log has the details.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteWebhook",
+        "tags": [
+          "webhooks"
+        ],
+        "summary": "Delete a webhook nothing is linked to",
+        "description": "Refused while anything is linked: refuse, don't orphan.",
+        "x-daffa-capability": "webhooks.edit",
+        "x-daffa-scope": "unset",
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No live session or valid token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Nothing lives at that id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something went wrong on the server; the audit log has the details.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/webhooks/{id}/rotate": {
+      "post": {
+        "operationId": "rotateWebhook",
+        "tags": [
+          "webhooks"
+        ],
+        "summary": "Rotate a webhook's secret; the new one is returned exactly once",
+        "description": "The old secret stops verifying immediately, for every linked target.",
+        "x-daffa-capability": "webhooks.edit",
+        "x-daffa-scope": "unset",
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookWithSecret"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No live session or valid token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Nothing lives at that id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Something went wrong on the server; the audit log has the details.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/volume-sources": {
       "get": {
         "operationId": "volumeSources",
@@ -5436,7 +5743,7 @@
           "volume sources"
         ],
         "summary": "Create a volume source; the first sync starts in the background",
-        "description": "The first sync starts in the background; the source row records its outcome. The webhook secret (when auto_sync mints one) is in the response exactly once.\n\nThe target cluster arrives in the request body; the handler checks the capability there after decoding.",
+        "description": "The first sync starts in the background; the source row records its outcome. auto_sync needs a webhook_id — the webhook is the door the push comes through.\n\nThe target cluster arrives in the request body; the handler checks the capability there after decoding.",
         "x-daffa-capability": "volsources.edit",
         "x-daffa-scope": "body",
         "requestBody": {
@@ -15261,8 +15568,8 @@
               "type": "string"
             }
           },
-          "has_secret": {
-            "type": "boolean"
+          "webhook_id": {
+            "type": "string"
           }
         },
         "required": [
@@ -15273,8 +15580,7 @@
           "engine_label",
           "actions",
           "source_kind",
-          "auto_deploy",
-          "has_secret"
+          "auto_deploy"
         ]
       },
       "StackDetail": {
@@ -15627,7 +15933,10 @@
           "watch_paths": {
             "type": "string"
           },
-          "rotate": {
+          "webhook_id": {
+            "type": "string"
+          },
+          "create_webhook": {
             "type": "boolean"
           }
         },
@@ -15638,6 +15947,9 @@
         "properties": {
           "enabled": {
             "type": "boolean"
+          },
+          "webhook_id": {
+            "type": "string"
           },
           "secret": {
             "type": "string"
@@ -15819,6 +16131,166 @@
           "inline_yaml"
         ]
       },
+      "Webhook": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "env_id": {
+            "type": "string"
+          },
+          "env_name": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "targets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WebhookTarget"
+            }
+          },
+          "hidden_targets": {
+            "type": "integer"
+          },
+          "last_delivery_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "last_delivery": {
+            "$ref": "#/components/schemas/WebhookDelivery"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "path",
+          "targets",
+          "hidden_targets"
+        ]
+      },
+      "WebhookTarget": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "env_id": {
+            "type": "string"
+          },
+          "env_name": {
+            "type": "string"
+          },
+          "paused": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "kind",
+          "id",
+          "name",
+          "env_id",
+          "paused"
+        ]
+      },
+      "WebhookDelivery": {
+        "type": "object",
+        "properties": {
+          "event": {
+            "type": "string"
+          },
+          "ref": {
+            "type": "string"
+          },
+          "repos": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "results": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WebhookDeliveryResult"
+            }
+          }
+        },
+        "required": [
+          "event",
+          "results"
+        ]
+      },
+      "WebhookDeliveryResult": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "env_id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "deployment_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "id",
+          "name",
+          "env_id",
+          "status"
+        ]
+      },
+      "WebhookRequest": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "env_id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "WebhookWithSecret": {
+        "type": "object",
+        "properties": {
+          "webhook": {
+            "$ref": "#/components/schemas/Webhook"
+          },
+          "secret": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "webhook",
+          "secret"
+        ]
+      },
       "VolumeSource": {
         "type": "object",
         "properties": {
@@ -15867,8 +16339,8 @@
           "auto_sync": {
             "type": "boolean"
           },
-          "has_webhook_secret": {
-            "type": "boolean"
+          "webhook_id": {
+            "type": "string"
           },
           "synced_commit": {
             "type": "string"
@@ -15909,7 +16381,6 @@
           "uid",
           "gid",
           "auto_sync",
-          "has_webhook_secret",
           "status"
         ]
       },
@@ -15976,8 +16447,8 @@
           "auto_sync": {
             "type": "boolean"
           },
-          "rotate": {
-            "type": "boolean"
+          "webhook_id": {
+            "type": "string"
           }
         },
         "additionalProperties": false
@@ -16002,9 +16473,6 @@
         "properties": {
           "source": {
             "$ref": "#/components/schemas/VolumeSource"
-          },
-          "webhook_secret": {
-            "type": "string"
           }
         },
         "required": [

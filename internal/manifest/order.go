@@ -14,6 +14,7 @@ const (
 	KindCertDelivery    Kind = "cert_delivery"
 	KindKeyringDelivery Kind = "keyring_delivery"
 	KindGeneratedSecret Kind = "generated_secret"
+	KindWebhook         Kind = "webhook"
 	KindStack           Kind = "stack"
 	KindVolumeSource    Kind = "volume_source"
 )
@@ -34,6 +35,7 @@ var Order = []Kind{
 	KindCertDelivery,
 	KindKeyringDelivery,
 	KindGeneratedSecret, // before stacks: their slots consume the generated values
+	KindWebhook,         // before stacks and volume sources, which link to one by name
 	KindStack,
 	KindVolumeSource,
 }

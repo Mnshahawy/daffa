@@ -1,47 +1,73 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
-import { useQueryClient } from '@tanstack/vue-query'
+/**
+ * A stack's auto-deploy: which webhook's pushes may deploy it, whether it is listening right
+ * now, and which files a push must touch. The webhook itself — URL, secret, last delivery —
+ * lives in Settings → Webhooks, because one webhook can drive many stacks. "Create one for
+ * this stack" is the one-step path for the common single-stack repository.
+ */
+import { computed, ref, watch } from 'vue'
+import { useQuery, useQueryClient } from '@tanstack/vue-query'
 import { daffa, type Stack } from '@/lib/api'
-import { toast } from '@mnshahawy/daffa-console-ui'
-import { confirm } from '@mnshahawy/daffa-console-ui'
-import { BaseButton } from '@mnshahawy/daffa-console-ui'
-import { CopyButton } from '@mnshahawy/daffa-console-ui'
+import { Cap } from '@/lib/caps'
+import { useSession } from '@/stores/session'
+import WebhookSecretReveal from '@/components/WebhookSecretReveal.vue'
+import { BaseButton, CopyButton, toast } from '@mnshahawy/daffa-console-ui'
 
 const props = defineProps<{ stack: Stack; canWrite: boolean }>()
 
 const qc = useQueryClient()
+const session = useSession()
+
 const enabled = ref(props.stack.auto_deploy)
+const webhookId = ref(props.stack.webhook_id ?? '')
 const watchPaths = ref(props.stack.watch_paths ?? '')
 const busy = ref(false)
-
-// The secret is shown exactly once, when it is minted. It is sealed in the database
-// afterwards and there is no way to read it back — which is the point, and is why the
-// panel says so rather than leaving someone hunting for it later.
-const secret = ref('')
+// The secret of a webhook this panel just created — shown once, here, then never again.
+const minted = ref<{ path: string; secret: string } | null>(null)
 
 watch(
   () => props.stack,
   (s) => {
     enabled.value = s.auto_deploy
+    webhookId.value = s.webhook_id ?? ''
     watchPaths.value = s.watch_paths ?? ''
   },
 )
 
-const webhookUrl = `${location.origin}/webhooks/stacks/${props.stack.id}`
+const canSeeWebhooks = computed(() => session.canAnywhere(Cap.WebhooksView))
+const { data: webhooks } = useQuery({
+  queryKey: ['webhooks'],
+  queryFn: daffa.webhooks,
+  enabled: canSeeWebhooks,
+})
+// Linkable: fleet-wide, or on this stack's cluster — the rule the server enforces.
+const linkable = computed(() =>
+  (webhooks.value ?? []).filter((w) => !w.env_id || w.env_id === props.stack.env_id),
+)
+const linked = computed(() => (webhooks.value ?? []).find((w) => w.id === webhookId.value))
+const canCreateWebhook = computed(() => session.can(Cap.WebhooksEdit, props.stack.env_id))
+const url = (path: string) => `${location.origin}${path}`
 
-async function save(rotate = false) {
+async function save(opts: { create?: boolean } = {}) {
+  if (enabled.value && !webhookId.value && !opts.create) {
+    toast.err(new Error('Pick the webhook whose pushes should deploy this stack, or create one.'), 'Not saved.')
+    return
+  }
   busy.value = true
   try {
     const r = await daffa.setAutoDeploy(props.stack.id, {
-      enabled: enabled.value,
+      enabled: opts.create ? true : enabled.value,
+      webhook_id: opts.create ? undefined : webhookId.value,
+      create_webhook: opts.create || undefined,
       watch_paths: watchPaths.value,
-      rotate,
     })
-    // A freshly minted secret gets its own one-time reveal below — that IS the feedback, so a
-    // toast on top of it would be redundant. Otherwise, confirm the save landed.
-    if (r.secret) secret.value = r.secret
+    // A freshly minted secret gets its own one-time reveal — that IS the feedback.
+    if (r.secret && r.webhook_id) minted.value = { path: `/webhooks/${r.webhook_id}`, secret: r.secret }
     else toast.ok('Auto-deploy saved.')
-    await qc.invalidateQueries({ queryKey: ['stack'] })
+    await Promise.all([
+      qc.invalidateQueries({ queryKey: ['stack'] }),
+      qc.invalidateQueries({ queryKey: ['webhooks'] }),
+    ])
   } catch (e) {
     toast.err(e, 'Could not save.')
     enabled.value = props.stack.auto_deploy // put the toggle back where it was
@@ -50,22 +76,12 @@ async function save(rotate = false) {
   }
 }
 
-// Rotating does not destroy anything you can point at, but it does silently stop auto-deploy
-// until the new secret reaches the git server — and a webhook that has quietly stopped firing
-// is the kind of thing nobody notices until a release does not happen. Caution, and asked.
-async function askRotate() {
-  const ok = await confirm({
-    title: 'Rotate the webhook secret?',
-    body:
-      'The current secret stops working the moment the new one is minted. Pushes will not deploy ' +
-      'until you paste the new secret into your git server’s webhook settings — and it is shown ' +
-      'only once.',
-    confirmLabel: 'Rotate',
-    intent: 'caution',
-  })
-  if (ok) void save(true)
+// The toggle saves at once when there is something to save; turning it on with no webhook
+// picked just reveals the picker.
+function onToggle() {
+  if (enabled.value && !webhookId.value) return
+  void save()
 }
-
 </script>
 
 <template>
@@ -83,7 +99,7 @@ async function askRotate() {
           type="checkbox"
           :disabled="busy"
           class="accent-[var(--accent)]"
-          @change="save()"
+          @change="onToggle"
         />
         <span class="muted">{{ enabled ? 'On' : 'Off' }}</span>
       </label>
@@ -91,15 +107,58 @@ async function askRotate() {
     </div>
 
     <div class="p-4">
+      <WebhookSecretReveal v-if="minted" class="mb-4" :path="minted.path" :secret="minted.secret" />
+
       <p v-if="!enabled" class="muted text-sm">
         Off. A push to
         <code class="font-mono">{{ stack.git_ref || 'the tracked branch' }}</code> changes nothing
         until someone deploys.
+        <template v-if="stack.webhook_id">
+          The webhook stays linked, so turning this back on needs nothing from the git server.
+        </template>
       </p>
 
       <template v-else>
+        <!-- Which webhook -->
+        <label for="ad-webhook" class="mb-1.5 block text-sm font-medium">Webhook</label>
+        <div class="flex flex-wrap items-center gap-2">
+          <select
+            id="ad-webhook"
+            v-model="webhookId"
+            class="field max-w-sm"
+            :disabled="!canWrite || busy || !canSeeWebhooks"
+          >
+            <option value="">— pick a webhook —</option>
+            <option v-for="w in linkable" :key="w.id" :value="w.id">
+              {{ w.name }}{{ w.env_name ? '' : ' (any cluster)' }}
+            </option>
+            <!-- Linked to one this person cannot list: keep it selectable, by id. -->
+            <option v-if="webhookId && !linked" :value="webhookId">the linked webhook</option>
+          </select>
+          <BaseButton
+            v-if="canWrite && canCreateWebhook && !webhookId"
+            intent="secondary"
+            size="sm"
+            :loading="busy"
+            @click="save({ create: true })"
+          >
+            Create one for this stack
+          </BaseButton>
+        </div>
+        <div v-if="linked" class="mt-2 flex items-center gap-2 font-mono text-xs">
+          <code class="subtle break-all">POST {{ url(linked.path) }}</code>
+          <CopyButton intent="ghost" size="xs" :text="url(linked.path)" />
+        </div>
+        <p class="muted mt-1 text-xs">
+          A push deploys this stack only if it is for
+          <code class="font-mono break-all">{{ stack.git_url }}</code>, on
+          <code class="font-mono">{{ stack.git_ref || 'any branch' }}</code>, and touches a watched
+          file. Secrets, rotation and the last delivery are in
+          <RouterLink :to="{ name: 'settings-webhooks' }" class="underline">Settings → Webhooks</RouterLink>.
+        </p>
+
         <!-- Watched paths -->
-        <label for="watch-paths" class="mb-1.5 block text-sm font-medium">
+        <label for="watch-paths" class="mb-1.5 mt-4 block text-sm font-medium">
           Deploy when these files change
         </label>
         <textarea
@@ -133,60 +192,6 @@ async function askRotate() {
         >
           Save
         </BaseButton>
-
-        <!-- Webhook -->
-        <div class="mt-5 border-t pt-4" :style="{ borderColor: 'var(--border)' }">
-          <p class="mb-2 text-sm font-medium">Webhook</p>
-          <p class="muted mb-2 text-xs">
-            Add this to your repository's webhook settings. Content type
-            <code class="font-mono">application/json</code>, event: push.
-          </p>
-
-          <div
-            class="mb-2 flex items-start gap-2 rounded-[var(--radius-control)] p-2.5 font-mono text-xs"
-            :style="{ background: 'var(--surface-sunken)' }"
-          >
-            <code class="flex-1 break-all">{{ webhookUrl }}</code>
-            <CopyButton intent="ghost" size="xs" :text="webhookUrl" />
-          </div>
-
-          <!-- The one time the secret is visible -->
-          <div
-            v-if="secret"
-            class="rounded-[var(--radius-control)] border p-3"
-            :style="{
-              background: 'var(--accent-soft)',
-              borderColor: 'color-mix(in oklch, var(--accent) 40%, transparent)',
-            }"
-          >
-            <p class="mb-1.5 text-xs font-medium">Secret — copy it now</p>
-            <div
-              class="flex items-start gap-2 rounded-[var(--radius-control)] p-2 font-mono text-xs"
-              :style="{ background: 'var(--surface)' }"
-            >
-              <code class="flex-1 break-all">{{ secret }}</code>
-              <CopyButton intent="ghost" size="xs" :text="secret" />
-            </div>
-            <p class="muted mt-1.5 text-xs">
-              This is shown once. It is stored encrypted and cannot be read back — if you lose it,
-              rotate it and update the git server.
-            </p>
-          </div>
-
-          <div v-else-if="stack.has_secret" class="flex items-center gap-3">
-            <span class="muted text-xs">A secret is configured.</span>
-            <!-- Recoverable, but it stops auto-deploy until the git server is updated: caution. -->
-            <BaseButton
-              v-if="canWrite"
-              intent="caution"
-              size="xs"
-              :loading="busy"
-              @click="askRotate"
-            >
-              Rotate secret
-            </BaseButton>
-          </div>
-        </div>
       </template>
     </div>
   </div>

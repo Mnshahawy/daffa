@@ -36,8 +36,10 @@ type VolumeSource struct {
 	// cannot hot-reload. Space-separated container names; empty = consumer hot-reloads.
 	RestartTargets string
 
-	AutoSync         bool
-	WebhookSecretEnc string
+	AutoSync bool
+	// WebhookID links the webhook whose pushes sync this source; "" = none. AutoSync off
+	// with a webhook linked pauses it. (webhook_secret_enc is retired — migration 0021.)
+	WebhookID string
 
 	SyncedHash   string
 	SyncedCommit string
@@ -53,16 +55,16 @@ type VolumeSource struct {
 }
 
 const volSourceCols = `id, env_id, volume, source_kind, git_url, git_ref, git_path, git_credential_id,
-    uid, gid, stack_id, restart_targets, auto_sync, webhook_secret_enc,
+    uid, gid, stack_id, restart_targets, auto_sync, webhook_id,
     synced_hash, synced_commit, synced_at, status, last_error, warnings, created_at, created_by`
 
 func scanVolumeSource(sc interface{ Scan(...any) error }) (*VolumeSource, error) {
 	var v VolumeSource
-	var credID, stackID, syncedAt, createdBy sql.NullString
+	var credID, stackID, syncedAt, createdBy, webhookID sql.NullString
 	var createdAt string
 	var autoSync int
 	err := sc.Scan(&v.ID, &v.EnvID, &v.Volume, &v.SourceKind, &v.GitURL, &v.GitRef, &v.GitPath, &credID,
-		&v.UID, &v.GID, &stackID, &v.RestartTargets, &autoSync, &v.WebhookSecretEnc,
+		&v.UID, &v.GID, &stackID, &v.RestartTargets, &autoSync, &webhookID,
 		&v.SyncedHash, &v.SyncedCommit, &syncedAt, &v.Status, &v.LastError, &v.Warnings,
 		&createdAt, &createdBy)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -73,6 +75,7 @@ func scanVolumeSource(sc interface{ Scan(...any) error }) (*VolumeSource, error)
 	}
 	v.GitCredentialID = credID.String
 	v.StackID = stackID.String
+	v.WebhookID = webhookID.String
 	v.AutoSync = autoSync != 0
 	if syncedAt.Valid {
 		v.SyncedAt = parseTS(syncedAt.String)
@@ -97,7 +100,7 @@ func (s *Store) CreateVolumeSource(ctx context.Context, v *VolumeSource) error {
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		v.ID, v.EnvID, v.Volume, v.SourceKind, v.GitURL, v.GitRef, v.GitPath, nullStr(v.GitCredentialID),
 		v.UID, v.GID, nullStr(v.StackID), v.RestartTargets, boolInt(v.AutoSync),
-		v.WebhookSecretEnc, v.SyncedHash, v.SyncedCommit, nullTS(v.SyncedAt), v.Status,
+		nullStr(v.WebhookID), v.SyncedHash, v.SyncedCommit, nullTS(v.SyncedAt), v.Status,
 		v.LastError, v.Warnings, ts(v.CreatedAt), nullStr(v.CreatedBy))
 	if err != nil {
 		return fmt.Errorf("store: creating volume source: %w", err)
@@ -164,9 +167,9 @@ func (s *Store) VolumeSourcesByStack(ctx context.Context, stackID string) ([]*Vo
 func (s *Store) UpdateVolumeSource(ctx context.Context, v *VolumeSource) error {
 	_, err := s.exec(ctx, `UPDATE volume_sources SET source_kind = ?, git_url = ?, git_ref = ?, git_path = ?,
         git_credential_id = ?, uid = ?, gid = ?, stack_id = ?, restart_targets = ?,
-        auto_sync = ?, webhook_secret_enc = ? WHERE id = ?`,
+        auto_sync = ?, webhook_id = ? WHERE id = ?`,
 		v.SourceKind, v.GitURL, v.GitRef, v.GitPath, nullStr(v.GitCredentialID), v.UID, v.GID,
-		nullStr(v.StackID), v.RestartTargets, boolInt(v.AutoSync), v.WebhookSecretEnc, v.ID)
+		nullStr(v.StackID), v.RestartTargets, boolInt(v.AutoSync), nullStr(v.WebhookID), v.ID)
 	if err != nil {
 		return fmt.Errorf("store: updating volume source: %w", err)
 	}

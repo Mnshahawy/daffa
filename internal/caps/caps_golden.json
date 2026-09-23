@@ -268,5 +268,15 @@
     "ns": "docker",
     "bit": 7,
     "scope": "env"
+  },
+  "webhooks.edit": {
+    "ns": "deploy",
+    "bit": 10,
+    "scope": "env"
+  },
+  "webhooks.view": {
+    "ns": "deploy",
+    "bit": 9,
+    "scope": "env"
   }
 }

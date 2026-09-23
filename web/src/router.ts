@@ -215,6 +215,12 @@ export const router = createRouter({
               meta: { cap: Cap.GitCredsView },
             },
             {
+              path: 'webhooks',
+              name: 'settings-webhooks',
+              component: () => import('./views/WebhooksView.vue'),
+              meta: { cap: Cap.WebhooksView },
+            },
+            {
               path: 'ssh-keys',
               name: 'settings-ssh',
               component: () => import('./views/SSHKeysView.vue'),
