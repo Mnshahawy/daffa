@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/Mnshahawy/daffa/internal/manifest"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -330,5 +331,20 @@ func TestLogTail(t *testing.T) {
 	}
 	if got := logTail("", 2); got != "" {
 		t.Errorf("logTail(empty) = %q", got)
+	}
+}
+
+// Every SecretRef the schema has must be resolved — a kind the CLI forgets is a value that
+// never reaches the server, and a resource that can only ever plan as blocked. Webhooks were
+// that kind when they joined the schema.
+func TestResolveValuesCoversWebhookSecrets(t *testing.T) {
+	t.Setenv("HOOK_SECRET", "s3cret")
+	m, err := manifest.Parse([]byte("version: 1\ncluster: prod\nwebhooks:\n  - {name: repo, secret: {value_from_env: HOOK_SECRET}}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	values, missing := resolveValues(m)
+	if len(missing) != 0 || values["HOOK_SECRET"] != "s3cret" {
+		t.Fatalf("values=%v missing=%v", values, missing)
 	}
 }

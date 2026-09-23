@@ -165,6 +165,13 @@ func resolveValues(m *manifest.Manifest) (map[string]string, []string) {
 			names = append(names, g.Token.ValueFromEnv)
 		}
 	}
+	// A webhook's secret seeds it on creation; missing this loop meant the value was never
+	// sent, and a declared webhook could only ever plan as blocked.
+	for _, w := range m.Webhooks {
+		if w.Secret != nil && w.Secret.ValueFromEnv != "" {
+			names = append(names, w.Secret.ValueFromEnv)
+		}
+	}
 	for _, st := range m.Stacks {
 		for _, e := range st.Env {
 			if e.ValueFromEnv != "" {
