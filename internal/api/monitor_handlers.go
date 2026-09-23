@@ -2,8 +2,10 @@ package api
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Mnshahawy/daffa/internal/auth"
@@ -169,7 +171,10 @@ func (s *Server) handleCreateMonitor(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.mayMonitor(w, r, m.EnvID) {
+	if !s.mayMonitor(w, r, m.EnvID) || !s.mayAct(w, r, &m) {
+		return
+	}
+	if !s.sealActionSecrets(w, r, &m, nil) {
 		return
 	}
 
@@ -183,7 +188,7 @@ func (s *Server) handleCreateMonitor(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.auditNotify(r, "monitor.create", m.Name)
-	httpx.JSON(w, http.StatusCreated, m)
+	httpx.JSON(w, http.StatusCreated, scrubActions(&m))
 }
 
 // handleUpdateMonitor checks BOTH ends of the move.
@@ -201,7 +206,15 @@ func (s *Server) handleUpdateMonitor(w http.ResponseWriter, r *http.Request) {
 	}
 	m.ID = r.PathValue("id")
 
-	if !s.mayMonitor(w, r, m.EnvID) {
+	if !s.mayMonitor(w, r, m.EnvID) || !s.mayAct(w, r, &m) {
+		return
+	}
+	prev, err := s.store.MonitorByID(r.Context(), m.ID)
+	if err != nil {
+		httpx.Error(w, r, err)
+		return
+	}
+	if !s.sealActionSecrets(w, r, &m, prev) {
 		return
 	}
 
@@ -219,7 +232,7 @@ func (s *Server) handleUpdateMonitor(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.auditNotify(r, "monitor.update", m.Name)
-	httpx.JSON(w, http.StatusOK, m)
+	httpx.JSON(w, http.StatusOK, scrubActions(&m))
 }
 
 func (s *Server) handleDeleteMonitor(w http.ResponseWriter, r *http.Request) {
@@ -264,6 +277,111 @@ func (s *Server) mayMonitor(w http.ResponseWriter, r *http.Request, envID string
 	}
 
 	return s.mayUseEnv(w, r, caps.MonitorsEdit, envID)
+}
+
+// actionCap is the capability each action wields — the one its hand-driven equivalent needs.
+// Creating a monitor that restarts things is restarting things, later, unattended; it must not
+// be a way around containers.edit. HTTP is settings.edit, fleet-wide: it makes the SERVER call
+// an arbitrary URL, the same power as a notification channel, and inside a private network
+// that is a request to anything the server can reach.
+func actionCap(kind string) (c caps.Cap, global bool) {
+	switch kind {
+	case store.ActionRestart:
+		return caps.ContainersEdit, false
+	case store.ActionExec:
+		return caps.ContainersExec, false
+	case store.ActionScale:
+		return caps.ServicesEdit, false
+	case store.ActionHTTP:
+		return caps.SettingsEdit, true
+	}
+	return caps.Cap{}, false // unknown kinds fail validation; the zero Cap fails closed
+}
+
+// mayAct checks the caller holds, on the monitor's cluster, every power its actions wield.
+// Checked on every save, not only when actions change: editing a monitor re-arms what it will
+// do, and a threshold change can be what makes an exec start firing.
+func (s *Server) mayAct(w http.ResponseWriter, r *http.Request, m *store.Monitor) bool {
+	u, ok := auth.UserFrom(r.Context())
+	if !ok {
+		httpx.Fail(w, r, http.StatusUnauthorized, "unauthenticated", "Sign in to continue.")
+		return false
+	}
+	kind, c, global, ok := missingActionCap(u, m)
+	if ok {
+		return true
+	}
+	s.recordDenial(r, u, "missing_capability:"+c.Name())
+	where := " on this cluster"
+	if global {
+		where = " fleet-wide"
+	}
+	httpx.Fail(w, r, http.StatusForbidden, "missing_capability:"+c.Name(),
+		fmt.Sprintf("A %s action needs %s%s — the power it would use, unattended.", kind, c.Name(), where))
+	return false
+}
+
+// missingActionCap is mayAct's decision: the first action whose power u lacks, or ok.
+func missingActionCap(u *store.User, m *store.Monitor) (kind string, c caps.Cap, global, ok bool) {
+	for _, a := range m.Actions {
+		c, global := actionCap(a.Kind)
+		if c == (caps.Cap{}) {
+			continue // validation names the unknown kind with a better sentence
+		}
+		held := u.Caps.Has(c, m.EnvID)
+		if global {
+			held = u.Caps.Global.Has(c)
+		}
+		if !held {
+			return a.Kind, c, global, false
+		}
+	}
+	return "", caps.Cap{}, false, true
+}
+
+// sealActionSecrets turns a plaintext signing secret into a sealed one. An HTTP action saved
+// without a new secret keeps the one it had — the form cannot show it, so it cannot send it
+// back — found by its URL, so reordering the actions keeps it too. By URL and never by
+// position: carrying a secret to a new URL is sending it somewhere its owner never chose.
+func (s *Server) sealActionSecrets(w http.ResponseWriter, r *http.Request, m *store.Monitor, prev *store.Monitor) bool {
+	for i := range m.Actions {
+		a := &m.Actions[i]
+		a.SecretEnc = ""
+		if a.Kind != store.ActionHTTP {
+			a.Secret, a.HasSecret = "", false
+			continue
+		}
+		switch {
+		case a.Secret != "":
+			sealed, err := s.sealer.Seal(a.Secret)
+			if err != nil {
+				httpx.Error(w, r, err)
+				return false
+			}
+			a.SecretEnc = sealed
+		case a.HasSecret && prev != nil:
+			for _, p := range prev.Actions {
+				if p.Kind == store.ActionHTTP && p.URL == strings.TrimSpace(a.URL) && p.SecretEnc != "" {
+					a.SecretEnc = p.SecretEnc
+					break
+				}
+			}
+		}
+		a.Secret = ""
+	}
+	return true
+}
+
+// scrubActions is the monitor as it may leave the server: no secret, sealed or not.
+func scrubActions(m *store.Monitor) *store.Monitor {
+	for i := range m.Actions {
+		m.Actions[i].HasSecret = m.Actions[i].SecretEnc != ""
+		m.Actions[i].Secret = ""
+	}
+	if m.Actions == nil {
+		m.Actions = []store.MonitorAction{}
+	}
+	return m
 }
 
 // ── the alerts ──────────────────────────────────────────────────────────────────

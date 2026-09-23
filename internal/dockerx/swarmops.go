@@ -65,6 +65,33 @@ func (e *Node) RedeployService(ctx context.Context, id string) error {
 	return err
 }
 
+// RestartService recreates every task without re-resolving the image: ForceUpdate alone, and
+// deliberately NOT RedeployService's QueryRegistry. An alert-driven restart is recovery, not a
+// release — on a floating tag, re-resolving would quietly roll out whatever was pushed since,
+// in the middle of an incident, with nobody having asked for it.
+func (e *Node) RestartService(ctx context.Context, id string) error {
+	svc, _, err := e.Client.ServiceInspectWithRaw(ctx, id, types.ServiceInspectOptions{})
+	if err != nil {
+		return err
+	}
+	svc.Spec.TaskTemplate.ForceUpdate++
+	_, err = e.Client.ServiceUpdate(ctx, id, svc.Version, svc.Spec, types.ServiceUpdateOptions{})
+	return err
+}
+
+// ServiceReplicas reads a replicated service's desired count; ok is false for a global service,
+// which has none.
+func (e *Node) ServiceReplicas(ctx context.Context, id string) (replicas uint64, ok bool, err error) {
+	svc, _, err := e.Client.ServiceInspectWithRaw(ctx, id, types.ServiceInspectOptions{})
+	if err != nil {
+		return 0, false, err
+	}
+	if svc.Spec.Mode.Replicated == nil || svc.Spec.Mode.Replicated.Replicas == nil {
+		return 0, false, nil
+	}
+	return *svc.Spec.Mode.Replicated.Replicas, true, nil
+}
+
 // RollbackService puts back the service's PREVIOUS spec.
 //
 // Swarm keeps it — PreviousSpec is a real field — so this is a genuine rollback of the service,

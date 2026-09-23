@@ -1290,6 +1290,21 @@ ALTER TABLE volume_sources ADD COLUMN webhook_id TEXT REFERENCES webhooks (id);
 UPDATE role_caps SET mask = mask | 512 WHERE ns = 'deploy' AND (mask & 1) <> 0;
 UPDATE role_caps SET mask = mask | 1024 WHERE ns = 'deploy' AND (mask & 2) <> 0;
 `, fn: migrateWebhooks},
+
+	// Actions on alerts: a firing monitor can restart, exec, scale or call out, not only tell
+	// someone. See .ai/monitor-actions.md. The actions are a JSON column rather than a table —
+	// an ordered list of at most five, read and written whole with their monitor, never queried
+	// by their contents. action_cooldown_secs defaults to fifteen minutes, the floor between
+	// two runs on one target that keeps restart → resolve → refire from becoming a loop.
+	//
+	// On the alert: actions_at is when its actions started (the cooldown's clock), and
+	// actions_log what each one did.
+	{name: "0022_monitor_actions", sql: `
+ALTER TABLE resource_monitors ADD COLUMN actions TEXT NOT NULL DEFAULT '';
+ALTER TABLE resource_monitors ADD COLUMN action_cooldown_secs INTEGER NOT NULL DEFAULT 900;
+ALTER TABLE monitor_alerts ADD COLUMN actions_at TEXT;
+ALTER TABLE monitor_alerts ADD COLUMN actions_log TEXT NOT NULL DEFAULT '';
+`},
 }
 
 // migrateWebhooks is 0021's Go step: every stack and volume source that had a webhook secret

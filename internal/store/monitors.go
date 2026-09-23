@@ -6,6 +6,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -207,18 +208,162 @@ func invalid(format string, a ...any) error { return badRule{msg: fmt.Sprintf(fo
 // On the wire and in Go it is "", but in the database it is NULL — see nullEnv for why that
 // distinction is load-bearing rather than cosmetic.
 type Monitor struct {
-	ID           string    `json:"id"`
-	Name         string    `json:"name"`
-	Enabled      bool      `json:"enabled"`
-	Metric       string    `json:"metric"`
-	Op           string    `json:"op"`
-	Threshold    float64   `json:"threshold"`
-	DurationSecs int       `json:"duration_secs"`
-	EnvID        string    `json:"env_id"`
-	Stack        string    `json:"stack"`
-	Container    string    `json:"container"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID           string  `json:"id"`
+	Name         string  `json:"name"`
+	Enabled      bool    `json:"enabled"`
+	Metric       string  `json:"metric"`
+	Op           string  `json:"op"`
+	Threshold    float64 `json:"threshold"`
+	DurationSecs int     `json:"duration_secs"`
+	EnvID        string  `json:"env_id"`
+	Stack        string  `json:"stack"`
+	Container    string  `json:"container"`
+	// Actions run, in order, when an alert of this monitor FIRES — not on every round it stays
+	// firing. See .ai/monitor-actions.md.
+	Actions []MonitorAction `json:"actions"`
+	// ActionCooldownSecs is the least time between two runs of the actions on one target. A
+	// restart resolves the alert, the leak refills, it fires again: without this floor that is
+	// a restart loop, and the loop is the outage.
+	ActionCooldownSecs int       `json:"action_cooldown_secs"`
+	CreatedAt          time.Time `json:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
+}
+
+// The things a firing alert can do besides tell someone. Each is a power someone could
+// already exercise by hand, and creating a monitor that wields it takes the capability that
+// power needs — the API checks, per kind, in monitor_handlers.go.
+const (
+	ActionRestart = "restart" // restart the containers, or force-update the swarm service
+	ActionExec    = "exec"    // run a command in each container (a heap dump, a thread dump)
+	ActionScale   = "scale"   // change a swarm service's replicas, within a limit
+	ActionHTTP    = "http"    // POST the alert to a URL (a runbook, a pager, a ticket)
+)
+
+// MonitorAction is one step. Only the fields its Kind reads are meaningful.
+type MonitorAction struct {
+	Kind string `json:"kind"`
+	// exec: the argv, run as written — no shell unless you write ["sh", "-c", "…"].
+	Command []string `json:"command,omitempty"`
+	// exec and http: how long to wait before giving up. 0 means the kind's default.
+	TimeoutSecs int `json:"timeout_secs,omitempty"`
+	// scale: the change in replicas (negative scales in), and the replica count it will not
+	// go past — a ceiling when scaling out, a floor when scaling in.
+	By    int `json:"by,omitempty"`
+	Limit int `json:"limit,omitempty"`
+	// http: where to POST. The optional Secret signs the body (X-Daffa-Signature, HMAC-SHA256)
+	// and is WRITE-ONLY: it arrives in Secret, is sealed by the API into SecretEnc, and comes
+	// back only as HasSecret.
+	URL       string `json:"url,omitempty"`
+	Secret    string `json:"secret,omitempty"`
+	SecretEnc string `json:"-"`
+	HasSecret bool   `json:"has_secret,omitempty"`
+}
+
+// storedAction is MonitorAction as the database holds it — the sealed secret included, which
+// the wire shape deliberately cannot carry out.
+type storedAction struct {
+	Kind        string   `json:"kind"`
+	Command     []string `json:"command,omitempty"`
+	TimeoutSecs int      `json:"timeout_secs,omitempty"`
+	By          int      `json:"by,omitempty"`
+	Limit       int      `json:"limit,omitempty"`
+	URL         string   `json:"url,omitempty"`
+	SecretEnc   string   `json:"secret_enc,omitempty"`
+}
+
+const (
+	maxMonitorActions      = 5
+	DefaultActionCooldown  = 15 * 60
+	minActionCooldownSecs  = 60
+	maxActionCooldownSecs  = 24 * 60 * 60
+	DefaultExecTimeoutSecs = 60
+	maxExecTimeoutSecs     = 600
+	DefaultHTTPTimeoutSecs = 10
+	maxHTTPTimeoutSecs     = 30
+	maxScaleStep           = 10
+)
+
+func (m *Monitor) validateActions() error {
+	if len(m.Actions) == 0 {
+		return nil
+	}
+	// A fleet-wide rule that restarts things would restart them on every host at once, and
+	// its author could not have been checked for the power to do that anywhere in particular.
+	if m.EnvID == "" {
+		return invalid("Actions need a monitor pinned to one cluster — a fleet-wide rule that " +
+			"restarts or execs would do it on every host at once.")
+	}
+	if len(m.Actions) > maxMonitorActions {
+		return invalid("At most %d actions per monitor.", maxMonitorActions)
+	}
+	if m.ActionCooldownSecs == 0 {
+		m.ActionCooldownSecs = DefaultActionCooldown
+	}
+	if m.ActionCooldownSecs < minActionCooldownSecs || m.ActionCooldownSecs > maxActionCooldownSecs {
+		return invalid("The action cooldown must be between a minute and a day — shorter is a " +
+			"restart loop waiting to happen.")
+	}
+	for i := range m.Actions {
+		a := &m.Actions[i]
+		switch a.Kind {
+		case ActionRestart:
+		case ActionExec:
+			if len(a.Command) == 0 || strings.TrimSpace(a.Command[0]) == "" {
+				return invalid("An exec action needs a command, e.g. [\"jcmd\", \"1\", \"GC.heap_dump\", \"/dumps/heap.hprof\"].")
+			}
+			if a.TimeoutSecs < 0 || a.TimeoutSecs > maxExecTimeoutSecs {
+				return invalid("An exec action may wait at most %d seconds.", maxExecTimeoutSecs)
+			}
+		case ActionScale:
+			if a.By == 0 || a.By > maxScaleStep || a.By < -maxScaleStep {
+				return invalid("A scale action changes replicas by 1 to %d, up or down.", maxScaleStep)
+			}
+			// Both directions need their bound: a ceiling so a runaway alert cannot scale a
+			// service across the whole cluster, a floor so scaling in never reaches zero.
+			if a.Limit < 1 {
+				return invalid("A scale action needs a limit of at least 1 — the most replicas it may " +
+					"reach scaling out, or the fewest it may leave scaling in.")
+			}
+		case ActionHTTP:
+			u := strings.TrimSpace(a.URL)
+			if !strings.HasPrefix(u, "https://") && !strings.HasPrefix(u, "http://") {
+				return invalid("An HTTP action needs an http:// or https:// URL.")
+			}
+			if a.TimeoutSecs < 0 || a.TimeoutSecs > maxHTTPTimeoutSecs {
+				return invalid("An HTTP action may wait at most %d seconds.", maxHTTPTimeoutSecs)
+			}
+			a.URL = u
+		default:
+			return invalid("%q is not an action a monitor can take — restart, exec, scale or http.", a.Kind)
+		}
+	}
+	return nil
+}
+
+func encodeActions(in []MonitorAction) (string, error) {
+	if len(in) == 0 {
+		return "", nil
+	}
+	out := make([]storedAction, len(in))
+	for i, a := range in {
+		out[i] = storedAction{Kind: a.Kind, Command: a.Command, TimeoutSecs: a.TimeoutSecs,
+			By: a.By, Limit: a.Limit, URL: a.URL, SecretEnc: a.SecretEnc}
+	}
+	b, err := json.Marshal(out)
+	return string(b), err
+}
+
+func decodeActions(s string) []MonitorAction {
+	out := []MonitorAction{}
+	var stored []storedAction
+	if s == "" || json.Unmarshal([]byte(s), &stored) != nil {
+		return out
+	}
+	for _, a := range stored {
+		out = append(out, MonitorAction{Kind: a.Kind, Command: a.Command, TimeoutSecs: a.TimeoutSecs,
+			By: a.By, Limit: a.Limit, URL: a.URL, SecretEnc: a.SecretEnc, HasSecret: a.SecretEnc != ""})
+	}
+	return out
 }
 
 // validate. Every failure here is a person's mistake rather than a machine's, so every one of
@@ -240,6 +385,9 @@ func (m *Monitor) validate() error {
 	if m.DurationSecs < 60 {
 		return invalid("A monitor's window must be at least 60 seconds — anything shorter fires " +
 			"on a single sample, and every passing spike becomes a page.")
+	}
+	if err := m.validateActions(); err != nil {
+		return err
 	}
 	if PercentMetric(m.Metric) {
 		if m.Threshold < 0 || m.Threshold > 100 {
@@ -269,7 +417,7 @@ func metricLabel(metric string) string {
 }
 
 const monitorCols = `id, name, enabled, metric, op, threshold, duration_secs,
-    env_id, stack, container, created_at, updated_at`
+    env_id, stack, container, actions, action_cooldown_secs, created_at, updated_at`
 
 func (s *Store) CreateMonitor(ctx context.Context, m *Monitor) error {
 	if err := m.validate(); err != nil {
@@ -277,11 +425,15 @@ func (s *Store) CreateMonitor(ctx context.Context, m *Monitor) error {
 	}
 	m.ID = "mon_" + NewID()
 	m.CreatedAt, m.UpdatedAt = now(), now()
+	actions, err := encodeActions(m.Actions)
+	if err != nil {
+		return err
+	}
 
-	_, err := s.exec(ctx, `INSERT INTO resource_monitors (`+monitorCols+`)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+	_, err = s.exec(ctx, `INSERT INTO resource_monitors (`+monitorCols+`)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		m.ID, m.Name, boolInt(m.Enabled), m.Metric, m.Op, m.Threshold, m.DurationSecs,
-		nullEnv(m.EnvID), m.Stack, m.Container, ts(m.CreatedAt), ts(m.UpdatedAt))
+		nullEnv(m.EnvID), m.Stack, m.Container, actions, m.cooldown(), ts(m.CreatedAt), ts(m.UpdatedAt))
 	if err != nil {
 		return fmt.Errorf("store: creating monitor: %w", err)
 	}
@@ -293,13 +445,17 @@ func (s *Store) UpdateMonitor(ctx context.Context, m *Monitor) error {
 		return err
 	}
 	m.UpdatedAt = now()
+	actions, err := encodeActions(m.Actions)
+	if err != nil {
+		return err
+	}
 
 	res, err := s.exec(ctx, `UPDATE resource_monitors SET
         name = ?, enabled = ?, metric = ?, op = ?, threshold = ?, duration_secs = ?,
-        env_id = ?, stack = ?, container = ?, updated_at = ?
+        env_id = ?, stack = ?, container = ?, actions = ?, action_cooldown_secs = ?, updated_at = ?
         WHERE id = ?`,
 		m.Name, boolInt(m.Enabled), m.Metric, m.Op, m.Threshold, m.DurationSecs,
-		nullEnv(m.EnvID), m.Stack, m.Container, ts(m.UpdatedAt), m.ID)
+		nullEnv(m.EnvID), m.Stack, m.Container, actions, m.cooldown(), ts(m.UpdatedAt), m.ID)
 	if err != nil {
 		return fmt.Errorf("store: updating monitor: %w", err)
 	}
@@ -400,10 +556,11 @@ func scanMonitor(row scanner) (*Monitor, error) {
 		m                    Monitor
 		enabled              int
 		envID                *string // NULL when the monitor watches every host
+		actions              string
 		createdAt, updatedAt string
 	)
 	err := row.Scan(&m.ID, &m.Name, &enabled, &m.Metric, &m.Op, &m.Threshold, &m.DurationSecs,
-		&envID, &m.Stack, &m.Container, &createdAt, &updatedAt)
+		&envID, &m.Stack, &m.Container, &actions, &m.ActionCooldownSecs, &createdAt, &updatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -414,8 +571,18 @@ func scanMonitor(row scanner) (*Monitor, error) {
 	if envID != nil {
 		m.EnvID = *envID
 	}
+	m.Actions = decodeActions(actions)
 	m.CreatedAt, m.UpdatedAt = parseTS(createdAt), parseTS(updatedAt)
 	return &m, nil
+}
+
+// cooldown is what is stored: the default when unset, so a monitor that later gains actions
+// does not inherit a zero.
+func (m *Monitor) cooldown() int {
+	if m.ActionCooldownSecs == 0 {
+		return DefaultActionCooldown
+	}
+	return m.ActionCooldownSecs
 }
 
 // nullEnv writes "every host" as NULL rather than as the empty string.
@@ -499,14 +666,18 @@ func (s *Store) Evaluate(ctx context.Context, m *Monitor, at time.Time) ([]Breac
 
 	// The window is (from, at] — half-open at the bottom so a sample sitting exactly on the
 	// boundary is not counted twice by two consecutive evaluations.
-	where := []string{"ts_unix > ?", "ts_unix <= ?"}
+	//
+	// The machine's own rows (HostSentinel) are not a container and never a target: without
+	// this, a rule with no container filter also judged the whole host as if it were a
+	// container named ":host" — and with actions, would have tried to restart it.
+	where := []string{"ts_unix > ?", "ts_unix <= ?", "container_name <> ?"}
 
 	// ARGUMENT ORDER IS SQL-TEXT ORDER, not logical order. The threshold's placeholder lives in
 	// the SELECT clause, which the database reads before the WHERE — so the threshold binds
 	// FIRST, ahead of the window bounds, however unnatural that reads here. Get this wrong and
 	// nothing errors: the threshold silently becomes a unix timestamp, every comparison is
 	// false, and the monitor simply never fires. Which is the worst way for a monitor to fail.
-	args := []any{m.Threshold, from.UTC().Unix(), at.UTC().Unix()}
+	args := []any{m.Threshold, from.UTC().Unix(), at.UTC().Unix(), HostSentinel}
 
 	// The unit a monitor watches is the SERVICE, not the container. A compose replica keeps a
 	// stable name across a redeploy, but a swarm task does not — its name carries the task id and
@@ -602,6 +773,48 @@ type Alert struct {
 	LastSeenAt    time.Time  `json:"last_seen_at"`
 	ResolvedAt    *time.Time `json:"resolved_at"`
 	ResolveReason string     `json:"resolve_reason"`
+	// Actions is what the monitor's actions did when this alert fired, in order — empty when
+	// it has none, or they have not finished yet.
+	Actions []ActionResult `json:"actions,omitempty"`
+}
+
+// ActionResult is one action's outcome on one firing.
+type ActionResult struct {
+	Kind   string    `json:"kind"`
+	OK     bool      `json:"ok"`
+	Detail string    `json:"detail"` // what it did, or why it did not
+	At     time.Time `json:"at"`
+}
+
+// ClaimAlertActions stamps the moment an alert's actions started. It is what the cooldown
+// measures from, and it is written BEFORE they run, so a slow exec cannot let the next
+// firing slip past the cooldown while the first is still going.
+func (s *Store) ClaimAlertActions(ctx context.Context, alertID string) error {
+	_, err := s.exec(ctx, `UPDATE monitor_alerts SET actions_at = ? WHERE id = ?`, ts(now()), alertID)
+	return err
+}
+
+// RecordAlertActions stores what the actions did.
+func (s *Store) RecordAlertActions(ctx context.Context, alertID string, results []ActionResult) error {
+	b, err := json.Marshal(results)
+	if err != nil {
+		return err
+	}
+	_, err = s.exec(ctx, `UPDATE monitor_alerts SET actions_log = ? WHERE id = ?`, string(b), alertID)
+	return err
+}
+
+// LastActionAt is when a monitor's actions last started on a target, zero if never. Keyed on
+// the target, not the alert: the loop a cooldown breaks spans alerts — fire, act, resolve,
+// fire again.
+func (s *Store) LastActionAt(ctx context.Context, monitorID, target string) (time.Time, error) {
+	var last sql.NullString
+	err := s.queryRow(ctx, `SELECT MAX(actions_at) FROM monitor_alerts
+        WHERE monitor_id = ? AND container_name = ?`, monitorID, target).Scan(&last)
+	if err != nil || !last.Valid {
+		return time.Time{}, err
+	}
+	return parseTS(last.String), nil
 }
 
 const (
@@ -724,7 +937,7 @@ func (s *Store) ListAlerts(ctx context.Context, global bool, envs []string, limi
 
 	q := `SELECT a.id, a.monitor_id, m.name, a.env_id, a.container_name, a.container_id,
              a.stack, a.state, a.value, a.started_at, a.last_seen_at, a.resolved_at,
-             a.resolve_reason
+             a.resolve_reason, a.actions_log
           FROM monitor_alerts a
           JOIN resource_monitors m ON m.id = a.monitor_id`
 	var args []any
@@ -759,11 +972,15 @@ func (s *Store) ListAlerts(ctx context.Context, global bool, envs []string, limi
 			a                     Alert
 			startedAt, lastSeenAt string
 			resolvedAt            *string
+			actionsLog            string
 		)
 		if err := rows.Scan(&a.ID, &a.MonitorID, &a.MonitorName, &a.EnvID, &a.ContainerName,
 			&a.ContainerID, &a.Stack, &a.State, &a.Value, &startedAt, &lastSeenAt,
-			&resolvedAt, &a.ResolveReason); err != nil {
+			&resolvedAt, &a.ResolveReason, &actionsLog); err != nil {
 			return nil, err
+		}
+		if actionsLog != "" {
+			_ = json.Unmarshal([]byte(actionsLog), &a.Actions)
 		}
 		a.StartedAt, a.LastSeenAt = parseTS(startedAt), parseTS(lastSeenAt)
 		if resolvedAt != nil {

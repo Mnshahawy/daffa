@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useQuery, useQueryClient } from '@tanstack/vue-query'
-import { daffa, type Alert, type Monitor } from '@/lib/api'
+import { daffa, type Alert, type Monitor, type MonitorAction } from '@/lib/api'
 import { Cap } from '@/lib/caps'
 import { confirm } from '@mnshahawy/daffa-console-ui'
 import { useSession } from '@/stores/session'
@@ -13,6 +13,7 @@ import { ComboBox } from '@mnshahawy/daffa-console-ui'
 import { EmptyState } from '@mnshahawy/daffa-console-ui'
 import { Select } from '@mnshahawy/daffa-console-ui'
 import { StatusPill } from '@mnshahawy/daffa-console-ui'
+import MonitorActionsEditor from '@/components/MonitorActionsEditor.vue'
 
 const session = useSession()
 const qc = useQueryClient()
@@ -82,8 +83,10 @@ const blank = {
   env_id: '',
   stack: '',
   container: '',
+  actions: [] as MonitorAction[],
+  action_cooldown_secs: 900,
 }
-const draft = ref({ ...blank })
+const draft = ref({ ...blank, actions: [] as MonitorAction[] })
 const editing = ref<string | null>(null)
 
 // ── target suggestions (stack / container comboboxes) ─────────────────────────
@@ -222,13 +225,14 @@ function decompose(m: Monitor) {
 
 function edit(m: Monitor) {
   editing.value = m.id
-  draft.value = { ...m }
+  // A copy of each action: the editor mutates them in place, and Cancel must leave the list alone.
+  draft.value = { ...m, actions: (m.actions ?? []).map((a) => ({ ...a })) }
   decompose(m)
 }
 
 function reset() {
   editing.value = null
-  draft.value = { ...blank }
+  draft.value = { ...blank, actions: [] }
   resource.value = 'mem'
   unit.value = '%'
   amount.value = 70
@@ -312,7 +316,8 @@ function sentence(m: Monitor | typeof blank): string {
   ]
     .filter(Boolean)
     .join(', ')
-  return `Alert when ${metricLabel(m.metric)} ${dir} ${inUnits(m.metric, m.threshold)} for ${dur} — ${where}.`
+  const then = m.actions?.length ? ` Then: ${m.actions.map((a) => a.kind).join(', then ')}.` : ''
+  return `Alert when ${metricLabel(m.metric)} ${dir} ${inUnits(m.metric, m.threshold)} for ${dur} — ${where}.${then}`
 }
 
 function fmtValue(a: Alert, m?: Monitor): string {
@@ -416,6 +421,12 @@ const recoveredStatus: Status = { tone: 'success', label: 'Recovered' }
               <td class="py-3 pr-4">
                 <span class="font-medium">{{ a.container_name }}</span>
                 <span v-if="a.stack" class="subtle text-xs"> · {{ a.stack }}</span>
+                <ul v-if="a.actions?.length" class="mt-1 space-y-0.5 text-xs">
+                  <li v-for="(r, i) in a.actions" :key="i" :title="r.detail" class="truncate">
+                    <span :style="{ color: r.ok ? 'var(--success)' : 'var(--danger)' }">{{ r.kind }}</span>
+                    <span class="subtle"> — {{ r.detail.split('\n')[0] }}</span>
+                  </li>
+                </ul>
               </td>
               <td class="hidden py-3 pr-4 md:table-cell">{{ a.monitor_name }}</td>
               <td class="py-3 pr-4 text-right font-mono text-xs font-medium">
@@ -658,6 +669,12 @@ const recoveredStatus: Status = { tone: 'success', label: 'Recovered' }
           </div>
         </div>
 
+        <MonitorActionsEditor
+          v-model="draft.actions"
+          v-model:cooldown="draft.action_cooldown_secs"
+          :env-id="draft.env_id"
+        />
+
         <p
           class="rounded-[var(--radius-control)] px-3 py-2 text-sm"
           :style="{ background: 'var(--surface-sunken)' }"
@@ -799,6 +816,12 @@ const recoveredStatus: Status = { tone: 'success', label: 'Recovered' }
               <td class="py-3 pr-4">
                 <span class="font-medium">{{ a.container_name }}</span>
                 <span class="subtle text-xs"> · {{ a.monitor_name }}</span>
+                <ul v-if="a.actions?.length" class="mt-1 space-y-0.5 text-xs">
+                  <li v-for="(r, i) in a.actions" :key="i" :title="r.detail" class="truncate">
+                    <span :style="{ color: r.ok ? 'var(--success)' : 'var(--danger)' }">{{ r.kind }}</span>
+                    <span class="subtle"> — {{ r.detail.split('\n')[0] }}</span>
+                  </li>
+                </ul>
               </td>
               <td class="muted py-3 pr-4 text-xs">{{ a.resolve_reason }}</td>
               <td class="subtle hidden py-3 pr-4 text-right text-xs sm:table-cell">

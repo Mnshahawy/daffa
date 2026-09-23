@@ -100,6 +100,7 @@ func NewServer(cfg *config.Config, st *store.Store, pool *dockerx.Pool, sealer *
 	// own, so it always sees the sample that was just written. Two tickers would race, and the
 	// loser would keep evaluating a window one interval stale.
 	eval := monitor.NewEvaluator(st, s.notify, slog.Default())
+	eval.SetActions(s) // monitor_actions.go
 	s.collector.OnRound(eval.Run)
 
 	return s

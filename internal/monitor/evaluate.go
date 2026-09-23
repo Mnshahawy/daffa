@@ -21,10 +21,23 @@ import (
 // loser would be evaluating a window that is one interval stale — which for a rule with a
 // coverage floor means it would intermittently decide there was not enough data.
 type Evaluator struct {
-	store  *store.Store
-	notify *notify.Notifier
-	log    *slog.Logger
+	store   *store.Store
+	notify  *notify.Notifier
+	log     *slog.Logger
+	actions ActionRunner
 }
+
+// ActionRunner carries out a monitor's actions for an alert that has just fired. It lives in
+// the api package, which holds the Docker pool, the sealer and the audit log; the evaluator
+// only decides WHEN — on the transition to firing, never on a round that is merely still
+// firing, or a restart would be retried every thirty seconds.
+type ActionRunner interface {
+	RunActions(ctx context.Context, m *store.Monitor, a *store.Alert)
+}
+
+// SetActions installs the runner. Without one, actions are stored but never run — which is
+// what the tests that exercise alerting alone want.
+func (e *Evaluator) SetActions(r ActionRunner) { e.actions = r }
 
 func NewEvaluator(st *store.Store, n *notify.Notifier, log *slog.Logger) *Evaluator {
 	return &Evaluator{store: st, notify: n, log: log}
@@ -97,6 +110,11 @@ func (e *Evaluator) evaluate(ctx context.Context, m *store.Monitor, at time.Time
 				continue
 			}
 			fired[b.EnvID] = append(fired[b.EnvID], a)
+			if len(m.Actions) > 0 && e.actions != nil {
+				// Off the evaluation loop: an exec may wait a minute, and the next monitor's
+				// round must not. Detached, because this round's context ends with it.
+				go e.actions.RunActions(context.WithoutCancel(ctx), m, a)
+			}
 
 		case b.Sustained(expected):
 			// Still bad. Keep the value current so the UI shows what it is doing now, and do
@@ -210,12 +228,26 @@ func (e *Evaluator) notifyFired(ctx context.Context, m *store.Monitor, envID str
 		Event:   notify.MonitorFired,
 		Subject: subject,
 		Title:   title,
-		Summary: fmt.Sprintf("The rule is: %s.", rule),
+		Summary: fmt.Sprintf("The rule is: %s.%s", rule, actionsNote(m)),
 		Target:  m.Name,
 		Detail:  strings.TrimRight(detail.String(), "\n"),
 		Link:    "/monitors",
 		Failed:  true,
 	})
+}
+
+// actionsNote tells whoever is paged that something is already being done, so two people do
+// not restart the same service by hand while its monitor is restarting it.
+func actionsNote(m *store.Monitor) string {
+	if len(m.Actions) == 0 {
+		return ""
+	}
+	kinds := make([]string, 0, len(m.Actions))
+	for _, a := range m.Actions {
+		kinds = append(kinds, a.Kind)
+	}
+	return fmt.Sprintf(" Its actions (%s) are running now; what they did is on the Monitors page.",
+		strings.Join(kinds, ", "))
 }
 
 // ── how a rule reads to a person ────────────────────────────────────────────────

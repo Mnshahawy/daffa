@@ -18139,6 +18139,15 @@
           "container": {
             "type": "string"
           },
+          "actions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MonitorAction"
+            }
+          },
+          "action_cooldown_secs": {
+            "type": "integer"
+          },
           "created_at": {
             "type": "string",
             "format": "date-time"
@@ -18159,8 +18168,45 @@
           "env_id",
           "stack",
           "container",
+          "actions",
+          "action_cooldown_secs",
           "created_at",
           "updated_at"
+        ]
+      },
+      "MonitorAction": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "command": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "timeout_secs": {
+            "type": "integer"
+          },
+          "by": {
+            "type": "integer"
+          },
+          "limit": {
+            "type": "integer"
+          },
+          "url": {
+            "type": "string"
+          },
+          "secret": {
+            "type": "string"
+          },
+          "has_secret": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "kind"
         ]
       },
       "Alert": {
@@ -18214,6 +18260,12 @@
           },
           "resolve_reason": {
             "type": "string"
+          },
+          "actions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ActionResult"
+            }
           }
         },
         "required": [
@@ -18230,6 +18282,30 @@
           "last_seen_at",
           "resolved_at",
           "resolve_reason"
+        ]
+      },
+      "ActionResult": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "kind",
+          "ok",
+          "detail",
+          "at"
         ]
       },
       "MonitorRequest": {
@@ -18265,6 +18341,15 @@
           "container": {
             "type": "string"
           },
+          "actions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MonitorActionRequest"
+            }
+          },
+          "action_cooldown_secs": {
+            "type": "integer"
+          },
           "created_at": {
             "type": "string",
             "format": "date-time"
@@ -18272,6 +18357,39 @@
           "updated_at": {
             "type": "string",
             "format": "date-time"
+          }
+        },
+        "additionalProperties": false
+      },
+      "MonitorActionRequest": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "command": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "timeout_secs": {
+            "type": "integer"
+          },
+          "by": {
+            "type": "integer"
+          },
+          "limit": {
+            "type": "integer"
+          },
+          "url": {
+            "type": "string"
+          },
+          "secret": {
+            "type": "string"
+          },
+          "has_secret": {
+            "type": "boolean"
           }
         },
         "additionalProperties": false

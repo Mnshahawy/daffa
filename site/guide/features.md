@@ -79,6 +79,8 @@ when it should speak up.
 
 - **Hosts** — the machines Daffa manages (add an agent here).
 - **Git** — access to your repositories, for stacks and volume sources.
+- **Webhooks** — where your git server tells Daffa about a push; one webhook can drive every
+  stack and volume source a repository feeds.
 - **Registries** — credentials for private images.
 - **Storage** — S3-compatible buckets for backups.
 - **Certificates** — internal CAs, the certificates they sign, and backup encryption keys.
@@ -89,6 +91,25 @@ when it should speak up.
 - **Resource monitors** — alert when a container stays over a CPU or memory line.
 - **Container logs** — the default log driver and rotation applied to deployed stacks.
 - **Notifications** — who gets told, and when.
+
+### Actions on alerts
+
+A monitor pinned to one cluster can also **act** when it fires — once per firing, in order:
+
+- **Restart** — the service's containers one at a time, or a force-update of a swarm service
+  (the image is not re-pulled: recovery, not a release).
+- **Run a command** — in every replica, e.g. `jcmd 1 GC.heap_dump /dumps/heap.hprof` or a
+  Node `kill -USR2` heap snapshot. The exit code and the tail of the output are kept on the
+  alert. Write dumps to a mounted volume; the container's filesystem goes with a restart.
+- **Scale** — a swarm service's replicas up or down by a step, never past a limit.
+- **Call a URL** — POST the alert as JSON to a runbook or pager, optionally signed
+  (`X-Daffa-Signature: sha256=…`, the GitHub webhook shape).
+
+Put the dump before the restart and you keep the evidence the restart would destroy. A
+**cooldown** (15 minutes by default) caps how often one target is acted on, so restart →
+recover → refire cannot become a restart loop. Arming an action takes the capability it
+wields — containers.edit to restart, containers.exec to run a command, services.edit to
+scale, settings.edit fleet-wide to call out — and every run is in the audit log.
 
 Everything you can do is gated by a capability, and the console only shows what your roles
 actually permit — a menu full of links that bounce you back where you came from is worse

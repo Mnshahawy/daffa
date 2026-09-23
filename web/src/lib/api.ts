@@ -1288,8 +1288,21 @@ export interface Monitor {
   env_id: string
   stack: string
   container: string
+  actions: MonitorAction[]
+  action_cooldown_secs: number
   created_at: string
   updated_at: string
+}
+
+export interface MonitorAction {
+  kind: string
+  command?: string[]
+  timeout_secs?: number
+  by?: number
+  limit?: number
+  url?: string
+  secret?: string
+  has_secret?: boolean
 }
 
 export interface Alert {
@@ -1306,6 +1319,14 @@ export interface Alert {
   last_seen_at: string
   resolved_at: string | null
   resolve_reason: string
+  actions?: ActionResult[]
+}
+
+export interface ActionResult {
+  kind: string
+  ok: boolean
+  detail: string
+  at: string
 }
 
 export interface MonitorRequest {
@@ -1319,8 +1340,21 @@ export interface MonitorRequest {
   env_id?: string
   stack?: string
   container?: string
+  actions?: MonitorActionRequest[]
+  action_cooldown_secs?: number
   created_at?: string
   updated_at?: string
+}
+
+export interface MonitorActionRequest {
+  kind?: string
+  command?: string[]
+  timeout_secs?: number
+  by?: number
+  limit?: number
+  url?: string
+  secret?: string
+  has_secret?: boolean
 }
 
 export interface MonitorConfig {
