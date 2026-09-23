@@ -23,6 +23,13 @@ func DiskUsageOptions() types.DiskUsageOptions {
 	return types.DiskUsageOptions{}
 }
 
+// ImageDiskUsageOptions asks only for the image layers: the sweep measures what it freed
+// before and after, and walking every container's writable layer twice to do it would be
+// the slow part of the sweep.
+func ImageDiskUsageOptions() types.DiskUsageOptions {
+	return types.DiskUsageOptions{Types: []types.DiskUsageObject{types.ImageObject}}
+}
+
 func BuildCachePruneOptions(f filters.Args) types.BuildCachePruneOptions {
 	// Not All: pruning only the unused cache leaves the layers an in-flight build is
 	// relying on alone. The filters carry the age floor, if the caller set one — BuildKit

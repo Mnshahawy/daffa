@@ -56,7 +56,12 @@ type CleanupPolicy struct {
 	Schedule  string          `json:"schedule"` // cron, UTC; required when enabled
 	Targets   []CleanupTarget `json:"targets"`
 	KeepHours int             `json:"keep_hours"` // artifacts younger than this are never touched
-	UpdatedAt time.Time       `json:"updated_at"`
+	// KeepImages are image patterns the sweep never removes, however old and unused:
+	// the locally built image CI runners start from, a vendor image pinned for an
+	// emergency. Grammar in dockerx.parseKeepRules. Always present (never null) so the
+	// form can bind to it.
+	KeepImages []string  `json:"keep_images"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
 
 // ErrInvalidCleanupPolicy is every way a policy can be wrong: the REQUEST is wrong, so the
@@ -71,6 +76,10 @@ func (e badCleanupPolicy) Is(target error) bool { return target == ErrInvalidCle
 func invalidCleanup(format string, a ...any) error {
 	return badCleanupPolicy{msg: fmt.Sprintf(format, a...)}
 }
+
+// maxKeepImages bounds the exemption list. Every pattern is tried against every unused
+// image on every node; a list this long is a list someone should be replacing with a label.
+const maxKeepImages = 100
 
 // maxKeepHours is a year. Past that the policy is not a retention window, it is a typo —
 // and one that would quietly mean "never actually prune anything".
@@ -99,6 +108,17 @@ func (p *CleanupPolicy) Validate() error {
 		}
 		seen[t] = true
 	}
+	// Blank lines are forgiven (normalize drops them) — a textarea ends in one more often
+	// than not. A pattern with a space in it is two patterns someone forgot to split.
+	for _, pat := range p.KeepImages {
+		if pat = strings.TrimSpace(pat); pat != "" && strings.ContainsAny(pat, " \t\n") {
+			return invalidCleanup("%q is not an image pattern — use one per line, like myorg/runner or ghcr.io/myorg/*.", pat)
+		}
+	}
+	if len(p.KeepImages) > maxKeepImages {
+		return invalidCleanup("At most %d images can be kept by pattern — label the rest %s=true instead.",
+			maxKeepImages, "daffa.keep")
+	}
 	if !p.Enabled {
 		return nil
 	}
@@ -111,10 +131,11 @@ func (p *CleanupPolicy) Validate() error {
 	return nil
 }
 
-// normalize puts the targets in run order and trims the schedule, so two policies that
-// mean the same thing are stored the same way.
+// normalize puts the targets in run order and trims the schedule and patterns, so two
+// policies that mean the same thing are stored the same way.
 func (p *CleanupPolicy) normalize() {
 	p.Schedule = strings.TrimSpace(p.Schedule)
+	p.KeepImages = dedupeTrimmed(p.KeepImages)
 	sort.SliceStable(p.Targets, func(i, j int) bool {
 		return cleanupTargetOrder(p.Targets[i]) < cleanupTargetOrder(p.Targets[j])
 	})
@@ -129,7 +150,7 @@ func cleanupTargetOrder(t CleanupTarget) int {
 	return len(CleanupTargets)
 }
 
-const cleanupCols = `enabled, schedule, targets, keep_hours, updated_at`
+const cleanupCols = `enabled, schedule, targets, keep_hours, keep_images, updated_at`
 
 // GlobalCleanupPolicy reads the fleet-wide default. Never configured returns (nil, nil):
 // "no automatic cleanup" is a deliberate state, and inventing a default that deletes
@@ -147,15 +168,17 @@ func (s *Store) SaveGlobalCleanupPolicy(ctx context.Context, p *CleanupPolicy) e
 	p.UpdatedAt = now()
 
 	_, err := s.exec(ctx, `
-        INSERT INTO cleanup_settings (id, enabled, schedule, targets, keep_hours, updated_at)
-        VALUES ('cleanup', ?, ?, ?, ?, ?)
+        INSERT INTO cleanup_settings (id, enabled, schedule, targets, keep_hours, keep_images, updated_at)
+        VALUES ('cleanup', ?, ?, ?, ?, ?, ?)
         ON CONFLICT (id) DO UPDATE SET
             enabled = EXCLUDED.enabled,
             schedule = EXCLUDED.schedule,
             targets = EXCLUDED.targets,
             keep_hours = EXCLUDED.keep_hours,
+            keep_images = EXCLUDED.keep_images,
             updated_at = EXCLUDED.updated_at`,
-		boolInt(p.Enabled), p.Schedule, joinTargets(p.Targets), p.KeepHours, ts(p.UpdatedAt))
+		boolInt(p.Enabled), p.Schedule, joinTargets(p.Targets), p.KeepHours,
+		strings.Join(p.KeepImages, "\n"), ts(p.UpdatedAt))
 	if err != nil {
 		return fmt.Errorf("store: saving the cleanup policy: %w", err)
 	}
@@ -186,15 +209,17 @@ func (s *Store) SaveEnvCleanupPolicy(ctx context.Context, envID string, p *Clean
 	p.UpdatedAt = now()
 
 	_, err := s.exec(ctx, `
-        INSERT INTO env_cleanup_policies (env_id, enabled, schedule, targets, keep_hours, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO env_cleanup_policies (env_id, enabled, schedule, targets, keep_hours, keep_images, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT (env_id) DO UPDATE SET
             enabled = EXCLUDED.enabled,
             schedule = EXCLUDED.schedule,
             targets = EXCLUDED.targets,
             keep_hours = EXCLUDED.keep_hours,
+            keep_images = EXCLUDED.keep_images,
             updated_at = EXCLUDED.updated_at`,
-		envID, boolInt(p.Enabled), p.Schedule, joinTargets(p.Targets), p.KeepHours, ts(p.UpdatedAt))
+		envID, boolInt(p.Enabled), p.Schedule, joinTargets(p.Targets), p.KeepHours,
+		strings.Join(p.KeepImages, "\n"), ts(p.UpdatedAt))
 	if err != nil {
 		return fmt.Errorf("store: saving the cleanup policy for %s: %w", envID, err)
 	}
@@ -223,6 +248,22 @@ func (s *Store) EffectiveCleanupPolicy(ctx context.Context, envID string) (*Clea
 	return s.GlobalCleanupPolicy(ctx)
 }
 
+// dedupeTrimmed trims each entry and drops blanks and repeats, keeping first-seen order —
+// the order the operator typed them in is the order they will read them back in.
+func dedupeTrimmed(in []string) []string {
+	out := []string{}
+	seen := map[string]bool{}
+	for _, v := range in {
+		v = strings.TrimSpace(v)
+		if v == "" || seen[v] {
+			continue
+		}
+		seen[v] = true
+		out = append(out, v)
+	}
+	return out
+}
+
 func joinTargets(targets []CleanupTarget) string {
 	out := make([]string, 0, len(targets))
 	for _, t := range targets {
@@ -248,9 +289,10 @@ func scanCleanupPolicy(row scanner) (*CleanupPolicy, error) {
 		p         CleanupPolicy
 		enabled   int
 		targets   string
+		keep      string
 		updatedAt string
 	)
-	err := row.Scan(&enabled, &p.Schedule, &targets, &p.KeepHours, &updatedAt)
+	err := row.Scan(&enabled, &p.Schedule, &targets, &p.KeepHours, &keep, &updatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -259,6 +301,7 @@ func scanCleanupPolicy(row scanner) (*CleanupPolicy, error) {
 	}
 	p.Enabled = enabled != 0
 	p.Targets = splitTargets(targets)
+	p.KeepImages = dedupeTrimmed(strings.Split(keep, "\n"))
 	p.UpdatedAt = parseTS(updatedAt)
 	return &p, nil
 }

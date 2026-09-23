@@ -14400,6 +14400,12 @@
           "keep_hours": {
             "type": "integer"
           },
+          "keep_images": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
           "updated_at": {
             "type": "string",
             "format": "date-time"
@@ -14410,6 +14416,7 @@
           "schedule",
           "targets",
           "keep_hours",
+          "keep_images",
           "updated_at"
         ]
       },
@@ -14465,6 +14472,12 @@
           },
           "keep_hours": {
             "type": "integer"
+          },
+          "keep_images": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         },
         "additionalProperties": false

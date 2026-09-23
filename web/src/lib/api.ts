@@ -277,6 +277,7 @@ export interface CleanupPolicy {
   schedule: string
   targets: ('images' | 'containers' | 'networks' | 'build-cache')[]
   keep_hours: number
+  keep_images: string[]
   updated_at: string
 }
 
@@ -295,6 +296,7 @@ export interface CleanupPolicyRequest {
   schedule?: string
   targets?: string[]
   keep_hours?: number
+  keep_images?: string[]
 }
 
 export interface Agent {

@@ -39,6 +39,25 @@ The machinery underneath — where you go to inspect and reclaim, not every day.
   none) are Docker's, and Daffa leaves them alone.
 - **Host** — the daemon, its version and its disk. Prunes tell you what they freed.
 
+### Automatic cleanup
+
+A fleet-wide schedule (Settings → Automatic cleanup), overridable per host, that sweeps
+stopped containers, unused images, unused networks and build cache. Two things keep it
+from being `docker system prune -a` on a timer:
+
+- **An age floor.** Nothing created inside the window (a week by default) is touched, so
+  the last few releases stay rollback-able.
+- **Images it never removes.** List patterns, one per line, as `docker images` prints
+  them: `myorg/ci-runner` keeps every tag of that repository, `ghcr.io/myorg/*` keeps
+  everything under the prefix, `name@sha256:…` keeps exactly that content. Images you
+  build can carry `LABEL daffa.keep=true` instead. Daffa's own deploy-runner image is
+  always kept.
+
+Daffa cannot tell a locally built image from a pulled one — under Docker's containerd
+image store both carry a registry-style digest — so an image that only exists on the host
+(a CI runner image, say) needs a pattern or the label to survive the sweep. Volumes are
+never swept automatically.
+
 ## Records
 
 - **Audit** — every mutating action, and every one *refused*. This is the view you want

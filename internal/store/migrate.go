@@ -1248,6 +1248,14 @@ CREATE TABLE secret_values (
     created_by TEXT NOT NULL
 );
 `},
+
+	// The scheduled image sweep learns "except these". Newline-separated patterns (see
+	// dockerx.parseKeepRules), on both the fleet default and the per-host override, empty
+	// by default so every existing policy sweeps exactly as it did. See .ai/cleanup.md.
+	{name: "0020_cleanup_keep_images", sql: `
+ALTER TABLE cleanup_settings ADD COLUMN keep_images TEXT NOT NULL DEFAULT '';
+ALTER TABLE env_cleanup_policies ADD COLUMN keep_images TEXT NOT NULL DEFAULT '';
+`},
 }
 
 // migrateCertEnvScope is 0009: certificates gain a nullable env_id and lose global name

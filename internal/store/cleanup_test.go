@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"slices"
 	"testing"
 )
 
@@ -257,5 +258,90 @@ func TestMigrate0016CleanupOnPopulatedDatabase(t *testing.T) {
 	}
 	if err := s.StartCleanupRun(ctx, env.ID, "manual"); err != nil {
 		t.Fatalf("recording a run for a pre-existing host: %v", err)
+	}
+}
+
+// Keep patterns round-trip trimmed and de-duplicated in the order typed, blank lines
+// dropped — and an unset list reads back as empty, never nil, so the form binds to it.
+func TestCleanupPolicyKeepImagesRoundTrip(t *testing.T) {
+	eachDialect(t, func(t *testing.T, s *Store) { testKeepImagesRoundTrip(t, s) })
+}
+
+func testKeepImagesRoundTrip(t *testing.T, s *Store) {
+	ctx := context.Background()
+
+	if err := s.SaveGlobalCleanupPolicy(ctx, &CleanupPolicy{Enabled: true, Schedule: "0 3 * * *",
+		Targets: []CleanupTarget{CleanupImages}, KeepHours: 168,
+		KeepImages: []string{" myorg/runner ", "", "ghcr.io/myorg/*", "myorg/runner"}}); err != nil {
+		t.Fatal(err)
+	}
+	p, err := s.GlobalCleanupPolicy(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"myorg/runner", "ghcr.io/myorg/*"}; !slices.Equal(p.KeepImages, want) {
+		t.Errorf("keep_images = %q, want %q", p.KeepImages, want)
+	}
+
+	if err := s.SaveGlobalCleanupPolicy(ctx, &CleanupPolicy{KeepHours: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if p, _ = s.GlobalCleanupPolicy(ctx); p.KeepImages == nil || len(p.KeepImages) != 0 {
+		t.Errorf("an empty list read back as %#v", p.KeepImages)
+	}
+
+	bad := CleanupPolicy{KeepImages: []string{"myorg/runner ghcr.io/x"}}
+	if err := bad.Validate(); !errors.Is(err, ErrInvalidCleanupPolicy) {
+		t.Errorf("two patterns on one line were accepted: %v", err)
+	}
+}
+
+// 0020 on a database that already has policies: both keep the sweep they had, with an
+// empty keep list, and can take one afterwards.
+func TestMigrate0020KeepImagesOnPopulatedDatabase(t *testing.T) {
+	ctx := context.Background()
+	url := "sqlite://" + filepath.Join(t.TempDir(), "test.db")
+
+	stopAfter = "0019_secret_values"
+	defer func() { stopAfter = "" }()
+
+	s, err := Open(ctx, url)
+	if err != nil {
+		t.Fatalf("open at 0019: %v", err)
+	}
+	defer s.Close()
+
+	env := &Environment{Name: "prod"}
+	if err := s.CreateEnvironment(ctx, env); err != nil {
+		t.Fatal(err)
+	}
+	// Written with the 0019 column list — the store's own save already names keep_images.
+	for _, q := range []string{
+		`INSERT INTO cleanup_settings (id, enabled, schedule, targets, keep_hours, updated_at)
+		 VALUES ('cleanup', 1, '0 3 * * *', 'images', 72, '2026-01-01T00:00:00Z')`,
+		`INSERT INTO env_cleanup_policies (env_id, enabled, schedule, targets, keep_hours, updated_at)
+		 VALUES ('` + env.ID + `', 0, '', 'containers images', 24, '2026-01-01T00:00:00Z')`,
+	} {
+		if _, err := s.db.ExecContext(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	stopAfter = ""
+	if err := s.migrate(ctx); err != nil {
+		t.Fatalf("migrating to 0020: %v", err)
+	}
+
+	g, err := s.GlobalCleanupPolicy(ctx)
+	if err != nil || g == nil || !g.Enabled || g.KeepHours != 72 || len(g.KeepImages) != 0 {
+		t.Fatalf("fleet policy after 0020 = %+v (%v)", g, err)
+	}
+	o, err := s.EnvCleanupPolicy(ctx, env.ID)
+	if err != nil || o == nil || o.Enabled || o.KeepHours != 24 || len(o.KeepImages) != 0 {
+		t.Fatalf("host override after 0020 = %+v (%v)", o, err)
+	}
+	o.KeepImages = []string{"myorg/runner"}
+	if err := s.SaveEnvCleanupPolicy(ctx, env.ID, o); err != nil {
+		t.Fatalf("saving a keep list after 0020: %v", err)
 	}
 }

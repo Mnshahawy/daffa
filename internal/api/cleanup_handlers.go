@@ -19,13 +19,15 @@ import (
 	"github.com/Mnshahawy/daffa/internal/store"
 )
 
-// cleanupPolicyRequest is the four things a person chooses. Not store.CleanupPolicy: that
+// cleanupPolicyRequest is the five things a person chooses. Not store.CleanupPolicy: that
 // carries UpdatedAt, which is the store's to stamp.
 type cleanupPolicyRequest struct {
 	Enabled   bool     `json:"enabled"`
 	Schedule  string   `json:"schedule"`
 	Targets   []string `json:"targets"`
 	KeepHours int      `json:"keep_hours"`
+	// Image patterns the sweep never removes; see dockerx.parseKeepRules.
+	KeepImages []string `json:"keep_images,omitempty"`
 }
 
 func decodeCleanupPolicy(w http.ResponseWriter, r *http.Request) (*store.CleanupPolicy, bool) {
@@ -40,10 +42,11 @@ func decodeCleanupPolicy(w http.ResponseWriter, r *http.Request) (*store.Cleanup
 		targets = append(targets, store.CleanupTarget(strings.TrimSpace(t)))
 	}
 	p := &store.CleanupPolicy{
-		Enabled:   body.Enabled,
-		Schedule:  strings.TrimSpace(body.Schedule),
-		Targets:   targets,
-		KeepHours: body.KeepHours,
+		Enabled:    body.Enabled,
+		Schedule:   strings.TrimSpace(body.Schedule),
+		Targets:    targets,
+		KeepHours:  body.KeepHours,
+		KeepImages: body.KeepImages,
 	}
 
 	// The cron is parsed here, with the library the scheduler uses, rather than discovered

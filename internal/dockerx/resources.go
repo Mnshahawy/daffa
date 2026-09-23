@@ -375,6 +375,11 @@ type PruneOptions struct {
 	// reclaim on a host that deploys versioned tags: without it, the previous release's
 	// image stays tagged and stays forever.
 	UnusedImages bool
+
+	// KeepImages exempts images from an UnusedImages sweep by pattern (see
+	// parseKeepRules). Only meaningful with UnusedImages: a dangling image has no name to
+	// match, and the manual button never widens past dangling.
+	KeepImages []string
 }
 
 // Prune is the manual, conservative sweep behind the buttons on the disk card: dangling
@@ -418,6 +423,12 @@ func (e *Node) PruneWith(ctx context.Context, target PruneTarget, opts PruneOpti
 
 	switch target {
 	case PruneImages:
+		// The widened sweep is done image by image, because ImagesPrune cannot be told
+		// "except these" — see imagesweep.go. The dangling-only prune has nothing worth
+		// excluding and stays one daemon call.
+		if opts.UnusedImages {
+			return e.sweepUnusedImages(ctx, opts)
+		}
 		r, err := e.Client.ImagesPrune(ctx, args)
 		if err != nil {
 			return nil, fmt.Errorf("dockerx: pruning images: %w", err)

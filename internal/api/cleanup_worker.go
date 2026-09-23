@@ -23,6 +23,7 @@ import (
 	"github.com/robfig/cron/v3"
 
 	"github.com/Mnshahawy/daffa/internal/dockerx"
+	"github.com/Mnshahawy/daffa/internal/stacks"
 	"github.com/Mnshahawy/daffa/internal/store"
 )
 
@@ -215,6 +216,12 @@ func (s *Server) sweepHost(ctx context.Context, envID string, policy *store.Clea
 		// so a dangling-only prune walks straight past the thing that is actually filling
 		// the disk. The age floor above is what makes this safe to do unattended.
 		UnusedImages: true,
+		// Daffa's own runner image is always kept. Nothing references it between deploys
+		// and it was built long before any sensible age floor, so without this every sweep
+		// deleted it and the next deploy, volume job or host probe had to pull it again —
+		// from Docker Hub, which a locked-down host may not reach and an anonymous one is
+		// rate-limited on. Appended to a copy: the policy's list is the operator's.
+		KeepImages: append(append([]string{}, policy.KeepImages...), stacks.RunnerImage),
 	}
 
 	var failures []string
@@ -225,14 +232,17 @@ func (s *Server) sweepHost(ctx context.Context, envID string, policy *store.Clea
 				continue // unknown target in the database; the policy validator refuses new ones
 			}
 			res, err := node.PruneWith(ctx, pt, opts)
+			if res != nil {
+				// The image sweep reports what it DID reclaim alongside the images it
+				// could not remove; a partial sweep is still a sweep.
+				freed += int64(res.Freed)
+				deleted += res.Deleted
+			}
 			if err != nil {
 				// One failing target does not abandon the rest: reclaiming three of four
 				// kinds beats reclaiming none because the build cache was busy.
 				failures = append(failures, fmt.Sprintf("%s on %s: %v", target, node.Name, err))
-				continue
 			}
-			freed += int64(res.Freed)
-			deleted += res.Deleted
 		}
 	}
 	if len(failures) > 0 {

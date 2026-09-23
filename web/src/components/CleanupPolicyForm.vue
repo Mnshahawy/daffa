@@ -59,6 +59,9 @@ const enabled = ref(false)
 const schedule = ref('30 3 * * *')
 const keepHours = ref<number | string>(168)
 const targets = ref<string[]>(['containers', 'images', 'build-cache'])
+// One pattern per line. A textarea rather than a chip list: people paste these from
+// `docker images`, several at a time.
+const keepImages = ref('')
 
 const keepNumber = computed(() => Number(keepHours.value) || 0)
 const keepDays = computed(() => Math.round((keepNumber.value / 24) * 10) / 10)
@@ -72,6 +75,7 @@ watch(
     schedule.value = p.schedule || '30 3 * * *'
     keepHours.value = p.keep_hours
     targets.value = [...p.targets]
+    keepImages.value = (p.keep_images ?? []).join('\n')
   },
   { immediate: true },
 )
@@ -90,6 +94,10 @@ function request(): CleanupPolicyRequest {
     // gives '' , and the API wants a number either way.
     keep_hours: keepNumber.value,
     targets: targets.value,
+    keep_images: keepImages.value
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean),
   }
 }
 </script>
@@ -187,6 +195,26 @@ function request(): CleanupPolicyRequest {
             <span class="subtle block text-xs leading-snug">{{ t.hint }}</span>
           </span>
         </label>
+      </div>
+      <div v-if="targets.includes('images')" class="mt-3">
+        <label for="cp-keep-images" class="mb-1.5 block text-sm font-medium">
+          Never prune these images
+        </label>
+        <textarea
+          id="cp-keep-images"
+          v-model="keepImages"
+          rows="3"
+          placeholder="myorg/ci-runner&#10;ghcr.io/myorg/*"
+          class="field font-mono text-xs"
+          :disabled="disabled"
+          data-cursor="text"
+        />
+        <p class="subtle mt-1 text-xs leading-relaxed">
+          One per line, as <span class="font-mono">docker images</span> shows them. A name
+          without a tag keeps every tag; <span class="font-mono">*</span> matches anything.
+          Images you build can carry <span class="font-mono">LABEL daffa.keep=true</span>
+          instead. Daffa's own runner image is always kept.
+        </p>
       </div>
       <p class="subtle mt-2 text-xs leading-relaxed">
         Volumes are never swept automatically, by design — a pruned volume is deleted data,
