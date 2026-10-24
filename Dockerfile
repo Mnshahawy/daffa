@@ -73,7 +73,7 @@ RUN mkdir -p /out/state/var/lib/daffa
 # ── 3a. the agent image (~4× smaller than the console). An intermediate stage so the full
 #        console below stays the default target. The agent listens on nothing — it dials
 #        out — so there is no EXPOSE; it only needs its state dir to persist identity. ──
-FROM gcr.io/distroless/static-debian12:nonroot AS agent
+FROM gcr.io/distroless/static-debian13:nonroot AS agent
 COPY --from=build-agent /out/daffa-agent /usr/local/bin/daffa-agent
 # Same nonroot-owned state dir trick as the console (see the note below): the agent writes
 # /var/lib/daffa/agent.json, and a root-owned mountpoint would leave nonroot unable to.
@@ -83,7 +83,7 @@ VOLUME /var/lib/daffa
 ENTRYPOINT ["/usr/local/bin/daffa-agent"]
 
 # ── 3. ship the full console (LAST stage = default target for `docker build .`) ─────
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM gcr.io/distroless/static-debian13:nonroot
 
 COPY --from=build /out/daffa /usr/local/bin/daffa
 
