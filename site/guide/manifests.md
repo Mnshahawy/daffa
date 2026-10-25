@@ -146,9 +146,11 @@ the document is rejected at parse time:
 
 - **In the console** — apply creates the slot, the report lists it as *unfilled*, and
   a value you type is never overwritten by later applies.
-- **`value_from_env`** — the CLI resolves the named variable from *its own*
-  environment at submit time and sends the value beside the document, which stays
-  byte-identical and safe to commit.
+- **`value_from_env`** — on a stack env var or secret file (and the create-only
+  registry, git-credential and webhook secrets): the CLI resolves the named variable
+  from *its own* environment at submit time and sends the value beside the document,
+  which stays byte-identical and safe to commit. A supplied value overwrites the stored
+  one; an apply without it leaves the stored value alone.
 - **`from_generated`** — Daffa mints the value at first apply (sealed at rest, never
   regenerated) and injects it into every slot that references it. One generated
   password can reach the database *and* every service that dials it.

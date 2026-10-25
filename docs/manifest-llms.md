@@ -288,6 +288,7 @@ stacks:
           value: "postgres://app:${generated:db-password}@db:5432/app" }  # composed
     secret_files:               # Swarm engine ONLY (they become raft secrets)
       - api_signing_key                                       # slot (bare string)
+      - { name: tls_key, value_from_env: TLS_KEY }            # CLI fills from ITS env
       - { name: db_password, from_generated: db-password }    # injected
       - { name: database_url,
           value: "postgres://app:${generated:db-password}@db:5432/app" }  # composed
@@ -299,13 +300,16 @@ Constraints and semantics:
   `value_from_env`, `from_generated`, and `${generated:…}` references all require
   `secret: true`. A secret `value` MUST contain at least one `${generated:…}`
   reference — otherwise it would be a literal secret in the document.
-- A secret-file `value` must likewise reference at least one generated secret;
-  `from_generated` and `value` are mutually exclusive.
+- A secret file likewise has at most ONE source (`value` / `value_from_env` /
+  `from_generated`), and a secret-file `value` must reference at least one generated
+  secret.
 - `${generated:name}` is the ONLY substitution the format has, legal only inside
   secret values. There is no other templating — generate the document fully resolved.
-- Slot semantics: plain slots and `value_from_env` slots are never overwritten once
-  filled (absence of the variable is not intent). Generated-backed slots are OWNED:
-  apply converges them to the stored value.
+- Slot semantics: a plain slot is never overwritten once a human fills it. A
+  `value_from_env` slot (env var or secret file) is written whenever the submitter
+  resolves its variable — a supplied value is declared intent and overwrites — and left
+  alone when it does not (absence of the variable is not intent). Generated-backed slots
+  are OWNED: apply converges them to the stored value.
 - `secret_files` on a `compose`-engine stack is a validation error — use secret env
   vars there.
 - Apply REGISTERS stacks; it never deploys them. `daffa apply --deploy` deploys the

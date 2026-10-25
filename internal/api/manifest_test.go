@@ -488,3 +488,65 @@ func TestManifestGeneratedSecretPlanTouchesNothing(t *testing.T) {
 		t.Fatal("plan minted a secret value")
 	}
 }
+
+// A value_from_env secret file is a slot the submitter fills: a resolved value is written
+// (and overwrites — declared intent), plan does not call it unfilled, and an apply
+// without the variable leaves the filled file alone.
+func TestManifestSecretFileValueFromEnv(t *testing.T) {
+	s, ctx, env := manifestServer(t)
+	u := manifestAdmin()
+	pretendSwarm(t, s, env.ID)
+	doc := `
+version: 1
+cluster: local
+stacks:
+  - name: edge
+    engine: swarm
+    source: {compose: "services: {}"}
+    secret_files:
+      - { name: origin_key, value_from_env: ORIGIN_KEY }
+`
+	content := func() string {
+		t.Helper()
+		st, err := s.store.StackByName(ctx, env.ID, "edge")
+		if err != nil {
+			t.Fatal(err)
+		}
+		secs, _ := s.store.StackSecrets(ctx, st.ID)
+		if len(secs) != 1 {
+			return ""
+		}
+		got, _ := s.sealer.Open(secs[0].ContentEnc)
+		return got
+	}
+
+	// Without the variable it is a plain slot: created stack, file unfilled.
+	rep := runManifestDoc(t, s, ctx, u, doc, nil, true)
+	if len(rep.Unfilled) != 1 || rep.Unfilled[0].Name != "origin_key" || rep.Unfilled[0].Kind != "stack_secret_file" {
+		t.Fatalf("unresolved file not reported unfilled: %+v", rep.Unfilled)
+	}
+
+	// A plan with the value resolved reports what apply will do, not the stored state.
+	rep = runManifestDoc(t, s, ctx, u, doc, map[string]string{"ORIGIN_KEY": "k1"}, false)
+	if len(rep.Unfilled) != 0 || verdictOf(t, rep, "stack", "edge").Verdict != verdictUpdate {
+		t.Fatalf("plan with a resolved value: %+v %+v", rep.Unfilled, rep.Resources)
+	}
+	if content() != "" {
+		t.Fatal("plan wrote the secret file")
+	}
+
+	runManifestDoc(t, s, ctx, u, doc, map[string]string{"ORIGIN_KEY": "k1"}, true)
+	if got := content(); got != "k1" {
+		t.Fatalf("file %q, want k1", got)
+	}
+	rep = runManifestDoc(t, s, ctx, u, doc, map[string]string{"ORIGIN_KEY": "k2"}, true)
+	if got := content(); got != "k2" || verdictOf(t, rep, "stack", "edge").Verdict != verdictUpdate {
+		t.Fatalf("a new value must overwrite: %q %+v", got, rep.Resources)
+	}
+
+	// Absence is not intent: the filled file stays, in sync, and is not unfilled.
+	rep = runManifestDoc(t, s, ctx, u, doc, nil, true)
+	if got := content(); got != "k2" || len(rep.Unfilled) != 0 || verdictOf(t, rep, "stack", "edge").Verdict != verdictInSync {
+		t.Fatalf("without the variable: %q %+v %+v", got, rep.Unfilled, rep.Resources)
+	}
+}

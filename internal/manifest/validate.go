@@ -349,8 +349,17 @@ func (m *Manifest) Validate() error {
 				fail("%s %q: secret file %q declared twice", KindStack, st.Name, sf.Name)
 			}
 			fileSeen[sf.Name] = true
-			if sf.FromGenerated != "" && sf.Value != "" {
-				fail("%s %q: secret file %q: from_generated and value are mutually exclusive", KindStack, st.Name, sf.Name)
+			sources := 0
+			for _, set := range []bool{sf.Value != "", sf.ValueFromEnv != "", sf.FromGenerated != ""} {
+				if set {
+					sources++
+				}
+			}
+			if sources > 1 {
+				fail("%s %q: secret file %q: value, value_from_env and from_generated are mutually exclusive", KindStack, st.Name, sf.Name)
+			}
+			if sf.ValueFromEnv != "" && !envVarName.MatchString(sf.ValueFromEnv) {
+				fail("%s %q: secret file %q: value_from_env %q is not a valid environment variable name", KindStack, st.Name, sf.Name, sf.ValueFromEnv)
 			}
 			refs := GeneratedRefs(sf.Value)
 			if sf.Value != "" && len(refs) == 0 {

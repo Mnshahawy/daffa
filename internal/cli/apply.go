@@ -178,6 +178,11 @@ func resolveValues(m *manifest.Manifest) (map[string]string, []string) {
 				names = append(names, e.ValueFromEnv)
 			}
 		}
+		for _, sf := range st.SecretFiles {
+			if sf.ValueFromEnv != "" {
+				names = append(names, sf.ValueFromEnv)
+			}
+		}
 	}
 
 	values := map[string]string{}

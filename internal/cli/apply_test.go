@@ -348,3 +348,15 @@ func TestResolveValuesCoversWebhookSecrets(t *testing.T) {
 		t.Fatalf("values=%v missing=%v", values, missing)
 	}
 }
+
+func TestResolveValuesCoversSecretFiles(t *testing.T) {
+	t.Setenv("ORIGIN_KEY", "pem")
+	m, err := manifest.Parse([]byte("version: 1\ncluster: prod\nstacks:\n  - name: edge\n    engine: swarm\n    source: {compose: 'x: y'}\n    secret_files: [{name: origin_key, value_from_env: ORIGIN_KEY}]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	values, missing := resolveValues(m)
+	if len(missing) != 0 || values["ORIGIN_KEY"] != "pem" {
+		t.Fatalf("values=%v missing=%v", values, missing)
+	}
+}

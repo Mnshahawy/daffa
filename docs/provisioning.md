@@ -165,7 +165,9 @@ Secret-bearing resources split by what the API can actually do:
 
 - Resources whose secrets are updatable after creation (stack env and secret files) are
   created with the slot empty and reported `unfilled`. Apply never overwrites a slot a
-  human has since filled.
+  human has since filled — unless the slot declares `value_from_env` and the submitter
+  sent a value, which is declared intent (`secret_files: [{name: tls_key,
+  value_from_env: TLS_KEY}]`, like the env var form).
 - Resources whose secret is create-only (registries, git credentials — they have no
   update route) are created only when a value is resolvable; otherwise the report says
   `blocked` and names what is needed. Creating a husk with an empty password would move

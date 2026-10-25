@@ -1735,9 +1735,10 @@ func (r *manifestRun) ensureStackEnv(ctx context.Context, row *store.Stack, st m
 }
 
 // ensureStackSecrets converges the stack's OWNED secret files — the from_generated
-// and composed forms. Slot-form files are untouched (reportStackSlots handles them),
-// and rows the manifest does not declare are preserved: this is a merge, never a
-// replace, exactly like ensureStackEnv.
+// and composed forms — and writes any value_from_env file the submitter resolved (declared
+// intent, so it overwrites, exactly like the env var form). Slot-form files are untouched
+// (reportStackSlots handles them), and rows the manifest does not declare are preserved:
+// this is a merge, never a replace, exactly like ensureStackEnv.
 func (r *manifestRun) ensureStackSecrets(ctx context.Context, row *store.Stack, st manifest.Stack) (bool, error) {
 	if row == nil {
 		return false, nil
@@ -1746,6 +1747,12 @@ func (r *manifestRun) ensureStackSecrets(ctx context.Context, row *store.Stack, 
 	var owned []ownedFile
 	changed := false
 	for _, sf := range st.SecretFiles {
+		if sf.ValueFromEnv != "" {
+			if val, ok := r.values[sf.ValueFromEnv]; ok && val != "" {
+				owned = append(owned, ownedFile{sf.Name, val})
+			}
+			continue // unresolved: a slot — absence of the variable is not intent
+		}
 		if sf.FromGenerated == "" && sf.Value == "" {
 			continue // a slot, a human's to fill
 		}
@@ -1861,6 +1868,11 @@ func (r *manifestRun) reportStackSlots(ctx context.Context, st manifest.Stack, c
 	}
 	for _, sf := range st.SecretFiles {
 		if sf.FromGenerated != "" || sf.Value != "" {
+			continue
+		}
+		// A resolved value_from_env fills the file on apply; a plan must not call it
+		// unfilled just because the write has not happened yet.
+		if val, ok := r.values[sf.ValueFromEnv]; sf.ValueFromEnv != "" && ok && val != "" {
 			continue
 		}
 		if !haveSecret[sf.Name] {

@@ -275,19 +275,22 @@ type Stack struct {
 	SecretFiles []SecretFile `yaml:"secret_files"`
 }
 
-// SecretFile is one stack secret file. Three shapes, mirroring EnvVar:
+// SecretFile is one stack secret file. Four shapes, mirroring EnvVar:
 //
 //	db_password                                        slot (bare string)
+//	{name: tls_key, value_from_env: TLS_KEY}           slot the submitter fills
 //	{name: db_password, from_generated: db-password}   injected
 //	{name: database_url, value:
 //	 "postgres://app:${generated:db-password}@db/x"}   composed
 //
 // A value that references no generated secret is refused — it would put a literal
-// secret in the document.
+// secret in the document. value_from_env follows the env var rule: a resolved value is
+// declared intent and overwrites; an absent one leaves a filled file alone.
 type SecretFile struct {
 	Name          string `yaml:"name"`
 	FromGenerated string `yaml:"from_generated"`
 	Value         string `yaml:"value"`
+	ValueFromEnv  string `yaml:"value_from_env"`
 }
 
 // UnmarshalYAML accepts the bare-string slot form alongside the mapping forms, and
@@ -304,12 +307,12 @@ func (s *SecretFile) UnmarshalYAML(node *yaml.Node) error {
 	}
 	for k := range raw {
 		switch k {
-		case "name", "from_generated", "value":
+		case "name", "from_generated", "value", "value_from_env":
 		default:
 			return fmt.Errorf("secret file: unknown field %q", k)
 		}
 	}
-	s.Name, s.FromGenerated, s.Value = raw["name"], raw["from_generated"], raw["value"]
+	s.Name, s.FromGenerated, s.Value, s.ValueFromEnv = raw["name"], raw["from_generated"], raw["value"], raw["value_from_env"]
 	return nil
 }
 
