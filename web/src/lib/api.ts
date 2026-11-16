@@ -69,8 +69,28 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   throw new ApiError(res.status, code, message)
 }
 
+// What every generated GET takes last. `signal` is how TanStack Query cancels a request it
+// has superseded. Ignored, the browser stops waiting but the request runs on, and so does
+// whatever it costs the server: a list refetched on every Docker event once stacked up a dozen
+// concurrent container listings a second against one daemon. A method passed bare as a queryFn
+// (`queryFn: daffa.stacks`) receives TanStack's context here, which carries the signal.
+export interface GetOptions<Q = never> {
+  signal?: AbortSignal
+  query?: Q
+}
+
+// The query string for a generated GET; undefined values are left out.
+function qs(query?: object): string {
+  if (!query) return ''
+  const p = new URLSearchParams()
+  for (const [k, v] of Object.entries(query)) if (v !== undefined) p.set(k, String(v))
+  const s = p.toString()
+  return s ? `?${s}` : ''
+}
+
 export const api = {
-  get: <T>(path: string) => request<T>(path),
+  get: <T>(path: string, opts: { signal?: AbortSignal } = {}) =>
+    request<T>(path, { signal: opts.signal }),
   post: <T>(path: string, body?: unknown) =>
     request<T>(path, { method: 'POST', body: body ? JSON.stringify(body) : undefined }),
   put: <T = { status: string }>(path: string, body?: unknown) =>
@@ -337,6 +357,7 @@ export interface Container {
   labels?: string[]
   node?: string
   node_id?: string
+  snapshot_at?: string
 }
 
 export interface Port {
@@ -366,6 +387,7 @@ export interface Stats {
 }
 
 export interface DockerEvent {
+  type: string
   action: string
   id: string
   name: string
@@ -1582,36 +1604,42 @@ export interface ManifestApplyView {
 export const daffa = {
   ...manualDaffa,
   logout: () => api.post<StatusResponse>('/api/auth/logout'),
-  myTokens: () => api.get<APIToken[]>('/api/tokens'),
+  myTokens: (opts: GetOptions = {}) => api.get<APIToken[]>('/api/tokens', opts),
   createToken: (body: CreateTokenRequest) => api.post<CreatedAPIToken>('/api/tokens', body),
   deleteToken: (id: string) => api.del<StatusResponse>(`/api/tokens/${id}`),
-  allTokens: () => api.get<APIToken[]>('/api/tokens/all'),
-  capabilities: () => api.get<CapabilityRegistry>('/api/capabilities'),
-  environments: () => api.get<Environment[]>('/api/clusters'),
+  allTokens: (opts: GetOptions = {}) => api.get<APIToken[]>('/api/tokens/all', opts),
+  capabilities: (opts: GetOptions = {}) => api.get<CapabilityRegistry>('/api/capabilities', opts),
+  environments: (opts: GetOptions = {}) => api.get<Environment[]>('/api/clusters', opts),
   testClusterConnection: (body: SSHClusterRequest) =>
     api.post<SSHConnectionTest>('/api/clusters/test-connection', body),
   createCluster: (body: SSHClusterRequest) => api.post<CreatedCluster>('/api/clusters', body),
   deleteCluster: (cluster: string) => api.del<Record<string, string>>(`/api/clusters/${cluster}`),
-  df: (cluster: string) => api.get<NodeDisk[]>(`/api/clusters/${cluster}/df`),
-  hostLogConfig: (cluster: string) => api.get<HostLogConfig>(`/api/clusters/${cluster}/logging`),
+  df: (cluster: string, opts: GetOptions = {}) =>
+    api.get<NodeDisk[]>(`/api/clusters/${cluster}/df`, opts),
+  hostLogConfig: (cluster: string, opts: GetOptions = {}) =>
+    api.get<HostLogConfig>(`/api/clusters/${cluster}/logging`, opts),
   saveHostLogConfig: (cluster: string, body: LogConfigRequest) =>
     api.put<LogConfig>(`/api/clusters/${cluster}/logging`, body),
   clearHostLogConfig: (cluster: string) => api.del<void>(`/api/clusters/${cluster}/logging`),
-  hostCleanup: (cluster: string) => api.get<EnvCleanupResponse>(`/api/clusters/${cluster}/cleanup`),
+  hostCleanup: (cluster: string, opts: GetOptions = {}) =>
+    api.get<EnvCleanupResponse>(`/api/clusters/${cluster}/cleanup`, opts),
   saveHostCleanup: (cluster: string, body: CleanupPolicyRequest) =>
     api.put<CleanupPolicy>(`/api/clusters/${cluster}/cleanup`, body),
   clearHostCleanup: (cluster: string) => api.del<void>(`/api/clusters/${cluster}/cleanup`),
   runCleanup: (cluster: string) => api.post<StatusResponse>(`/api/clusters/${cluster}/cleanup/run`),
-  agents: () => api.get<Agent[]>('/api/agents'),
+  agents: (opts: GetOptions = {}) => api.get<Agent[]>('/api/agents', opts),
   createAgent: (body: CreateAgentRequest) => api.post<NewAgent>('/api/agents', body),
   deleteAgent: (id: string) => api.del<StatusResponse>(`/api/agents/${id}`),
-  containers: (cluster: string) => api.get<Container[]>(`/api/clusters/${cluster}/containers`),
-  services: (cluster: string) => api.get<Service[]>(`/api/clusters/${cluster}/services`),
-  service: (cluster: string, id: string) =>
-    api.get<Service>(`/api/clusters/${cluster}/services/${id}`),
-  tasks: (cluster: string, id: string) =>
-    api.get<Task[]>(`/api/clusters/${cluster}/services/${id}/tasks`),
-  clusterNodes: (cluster: string) => api.get<ClusterNode[]>(`/api/clusters/${cluster}/nodes`),
+  containers: (cluster: string, opts: GetOptions<{ all?: boolean }> = {}) =>
+    api.get<Container[]>(`/api/clusters/${cluster}/containers${qs(opts.query)}`, opts),
+  services: (cluster: string, opts: GetOptions = {}) =>
+    api.get<Service[]>(`/api/clusters/${cluster}/services`, opts),
+  service: (cluster: string, id: string, opts: GetOptions = {}) =>
+    api.get<Service>(`/api/clusters/${cluster}/services/${id}`, opts),
+  tasks: (cluster: string, id: string, opts: GetOptions = {}) =>
+    api.get<Task[]>(`/api/clusters/${cluster}/services/${id}/tasks`, opts),
+  clusterNodes: (cluster: string, opts: GetOptions = {}) =>
+    api.get<ClusterNode[]>(`/api/clusters/${cluster}/nodes`, opts),
   redeployService: (cluster: string, id: string) =>
     api.post<StatusResponse>(`/api/clusters/${cluster}/services/${id}/redeploy`),
   rollbackService: (cluster: string, id: string) =>
@@ -1622,25 +1650,32 @@ export const daffa = {
     api.post<AddNodeResponse>(`/api/clusters/${cluster}/nodes`, body),
   updateNode: (cluster: string, id: string, body: NodeUpdateRequest) =>
     api.patch<StatusResponse>(`/api/clusters/${cluster}/nodes/${id}`, body),
-  joinTokens: (cluster: string) => api.get<JoinTokens>(`/api/clusters/${cluster}/swarm/tokens`),
-  taskHistory: (cluster: string) =>
-    api.get<TaskHistoryResponse>(`/api/clusters/${cluster}/swarm/task-history`),
+  joinTokens: (cluster: string, opts: GetOptions = {}) =>
+    api.get<JoinTokens>(`/api/clusters/${cluster}/swarm/tokens`, opts),
+  taskHistory: (cluster: string, opts: GetOptions = {}) =>
+    api.get<TaskHistoryResponse>(`/api/clusters/${cluster}/swarm/task-history`, opts),
   setTaskHistory: (cluster: string, body: TaskHistoryRequest) =>
     api.put<TaskHistoryResponse>(`/api/clusters/${cluster}/swarm/task-history`, body),
-  images: (cluster: string) => api.get<Image[]>(`/api/clusters/${cluster}/images`),
-  networks: (cluster: string) => api.get<Network[]>(`/api/clusters/${cluster}/networks`),
-  volumes: (cluster: string) => api.get<Volume[]>(`/api/clusters/${cluster}/volumes`),
+  images: (cluster: string, opts: GetOptions = {}) =>
+    api.get<Image[]>(`/api/clusters/${cluster}/images`, opts),
+  networks: (cluster: string, opts: GetOptions = {}) =>
+    api.get<Network[]>(`/api/clusters/${cluster}/networks`, opts),
+  volumes: (cluster: string, opts: GetOptions = {}) =>
+    api.get<Volume[]>(`/api/clusters/${cluster}/volumes`, opts),
   prune: (cluster: string, target: 'images' | 'containers' | 'networks' | 'volumes' | 'build-cache') =>
     api.post<PruneResult>(`/api/clusters/${cluster}/prune/${target}`),
-  stacks: () => api.get<Stack[]>('/api/stacks'),
-  stack: (id: string) => api.get<StackDetail>(`/api/stacks/${id}`),
-  stackDeployments: (id: string) => api.get<Deployment[]>(`/api/stacks/${id}/deployments`),
-  stackEnv: (id: string) => api.get<EnvVarItem[]>(`/api/stacks/${id}/env`),
-  stackSecrets: (id: string) => api.get<StackSecretItem[]>(`/api/stacks/${id}/secrets`),
-  revealStackEnv: (id: string, key: string) =>
-    api.get<RevealedValue>(`/api/stacks/${id}/env/${key}/reveal`),
-  revealStackSecret: (id: string, name: string) =>
-    api.get<RevealedValue>(`/api/stacks/${id}/secrets/${name}/reveal`),
+  stacks: (opts: GetOptions = {}) => api.get<Stack[]>('/api/stacks', opts),
+  stack: (id: string, opts: GetOptions = {}) => api.get<StackDetail>(`/api/stacks/${id}`, opts),
+  stackDeployments: (id: string, opts: GetOptions = {}) =>
+    api.get<Deployment[]>(`/api/stacks/${id}/deployments`, opts),
+  stackEnv: (id: string, opts: GetOptions = {}) =>
+    api.get<EnvVarItem[]>(`/api/stacks/${id}/env`, opts),
+  stackSecrets: (id: string, opts: GetOptions = {}) =>
+    api.get<StackSecretItem[]>(`/api/stacks/${id}/secrets`, opts),
+  revealStackEnv: (id: string, key: string, opts: GetOptions = {}) =>
+    api.get<RevealedValue>(`/api/stacks/${id}/env/${key}/reveal`, opts),
+  revealStackSecret: (id: string, name: string, opts: GetOptions = {}) =>
+    api.get<RevealedValue>(`/api/stacks/${id}/secrets/${name}/reveal`, opts),
   createStack: (body: StackRequest) => api.post<Stack>('/api/stacks', body),
   updateStack: (id: string, body: StackRequest) => api.put<Stack>(`/api/stacks/${id}`, body),
   setAutoDeploy: (id: string, body: AutoDeployRequest) =>
@@ -1655,68 +1690,73 @@ export const daffa = {
     api.post<LatestHintResponse>('/api/compose/latest-hint', body),
   rewriteComposeImages: (body: RewriteRequest) =>
     api.post<RewriteResponse>('/api/compose/rewrite', body),
-  webhooks: () => api.get<Webhook[]>('/api/webhooks'),
+  webhooks: (opts: GetOptions = {}) => api.get<Webhook[]>('/api/webhooks', opts),
   createWebhook: (body: WebhookRequest) => api.post<WebhookWithSecret>('/api/webhooks', body),
   updateWebhook: (id: string, body: WebhookRequest) => api.put<Webhook>(`/api/webhooks/${id}`, body),
   rotateWebhook: (id: string) => api.post<WebhookWithSecret>(`/api/webhooks/${id}/rotate`),
   deleteWebhook: (id: string) => api.del<StatusResponse>(`/api/webhooks/${id}`),
-  volumeSources: () => api.get<VolumeSource[]>('/api/volume-sources'),
+  volumeSources: (opts: GetOptions = {}) => api.get<VolumeSource[]>('/api/volume-sources', opts),
   createVolumeSource: (body: VolumeSourceRequest) =>
     api.post<VolumeSourceSaved>('/api/volume-sources', body),
-  volumeSource: (id: string) => api.get<VolumeSource>(`/api/volume-sources/${id}`),
+  volumeSource: (id: string, opts: GetOptions = {}) =>
+    api.get<VolumeSource>(`/api/volume-sources/${id}`, opts),
   updateVolumeSource: (id: string, body: VolumeSourceRequest) =>
     api.put<VolumeSourceSaved>(`/api/volume-sources/${id}`, body),
   deleteVolumeSource: (id: string) => api.del<StatusResponse>(`/api/volume-sources/${id}`),
   syncVolumeSource: (id: string) => api.post<VolumeSource>(`/api/volume-sources/${id}/sync`),
-  deployment: (id: string) => api.get<Deployment>(`/api/deployments/${id}`),
+  deployment: (id: string, opts: GetOptions = {}) =>
+    api.get<Deployment>(`/api/deployments/${id}`, opts),
   cancelDeployment: (id: string) => api.post<StatusResponse>(`/api/deployments/${id}/cancel`),
   redeploy: (id: string) => api.post<DeployStarted>(`/api/deployments/${id}/redeploy`),
-  backups: () => api.get<BackupJob[]>('/api/backups'),
-  backupRuns: (id: string) => api.get<BackupRun[]>(`/api/backups/${id}/runs`),
-  snapshots: (id: string) => api.get<Snapshot[]>(`/api/backups/${id}/snapshots`),
+  backups: (opts: GetOptions = {}) => api.get<BackupJob[]>('/api/backups', opts),
+  backupRuns: (id: string, opts: GetOptions = {}) =>
+    api.get<BackupRun[]>(`/api/backups/${id}/runs`, opts),
+  snapshots: (id: string, opts: GetOptions = {}) =>
+    api.get<Snapshot[]>(`/api/backups/${id}/snapshots`, opts),
   createBackup: (body: JobRequest) => api.post<Record<string, string>>('/api/backups', body),
   deleteBackup: (id: string) => api.del<Record<string, string>>(`/api/backups/${id}`),
   setBackupSchedule: (id: string, body: ScheduleRequest) =>
     api.put<StatusResponse>(`/api/backups/${id}/schedule`, body),
   toggleBackup: (id: string) => api.post<Record<string, boolean>>(`/api/backups/${id}/toggle`),
   runBackup: (id: string) => api.post<StatusResponse>(`/api/backups/${id}/run`),
-  storage: () => api.get<StorageTarget[]>('/api/storage'),
+  storage: (opts: GetOptions = {}) => api.get<StorageTarget[]>('/api/storage', opts),
   createStorage: (body: StorageRequest) => api.post<Record<string, string>>('/api/storage', body),
   updateStorage: (id: string, body: StorageRequest) =>
     api.put<Record<string, string>>(`/api/storage/${id}`, body),
   deleteStorage: (id: string) => api.del<Record<string, string>>(`/api/storage/${id}`),
-  registries: () => api.get<RegistryItem[]>('/api/registries'),
+  registries: (opts: GetOptions = {}) => api.get<RegistryItem[]>('/api/registries', opts),
   createRegistry: (body: RegistryRequest) =>
     api.post<RegistryCreateResponse>('/api/registries', body),
   deleteRegistry: (id: string) => api.del<Record<string, string>>(`/api/registries/${id}`),
-  gitCredentials: () => api.get<GitCredential[]>('/api/gitcreds'),
+  gitCredentials: (opts: GetOptions = {}) => api.get<GitCredential[]>('/api/gitcreds', opts),
   createGitCredential: (body: GitCredRequest) =>
     api.post<Record<string, string>>('/api/gitcreds', body),
   testGitCredential: (id: string, body: GitTestRequest) =>
     api.post<GitTestResponse>(`/api/gitcreds/${id}/test`, body),
   deleteGitCredential: (id: string) => api.del<Record<string, string>>(`/api/gitcreds/${id}`),
-  sshKeys: () => api.get<SSHKey[]>('/api/ssh-keys'),
+  sshKeys: (opts: GetOptions = {}) => api.get<SSHKey[]>('/api/ssh-keys', opts),
   createSSHKey: (body: SSHKeyRequest) => api.post<CreatedSSHKey>('/api/ssh-keys', body),
   deleteSSHKey: (id: string) => api.del<Record<string, string>>(`/api/ssh-keys/${id}`),
-  cas: () => api.get<CertAuthority[]>('/api/certs/cas'),
+  cas: (opts: GetOptions = {}) => api.get<CertAuthority[]>('/api/certs/cas', opts),
   createCA: (body: CaRequest) => api.post<CertAuthority>('/api/certs/cas', body),
   updateCA: (id: string, body: CaUpdateRequest) =>
     api.put<CertAuthority>(`/api/certs/cas/${id}`, body),
   rotateCA: (id: string, body: CaRotateRequest) =>
     api.post<CertAuthority>(`/api/certs/cas/${id}/rotate`, body),
   deleteCA: (id: string) => api.del<Record<string, string>>(`/api/certs/cas/${id}`),
-  certs: () => api.get<Certificate[]>('/api/certs'),
+  certs: (opts: GetOptions = {}) => api.get<Certificate[]>('/api/certs', opts),
   createCert: (body: CertRequest) => api.post<Certificate>('/api/certs', body),
   updateCert: (id: string, body: CertRequest) => api.put<Certificate>(`/api/certs/${id}`, body),
   deleteCert: (id: string) => api.del<Record<string, string>>(`/api/certs/${id}`),
-  certDeliveries: () => api.get<CertDelivery[]>('/api/certs/deliveries'),
+  certDeliveries: (opts: GetOptions = {}) => api.get<CertDelivery[]>('/api/certs/deliveries', opts),
   createCertDelivery: (body: CertDeliveryRequest) =>
     api.post<CertDelivery>('/api/certs/deliveries', body),
   updateCertDelivery: (id: string, body: CertDeliveryRequest) =>
     api.put<CertDelivery>(`/api/certs/deliveries/${id}`, body),
   syncCertDelivery: (id: string) => api.post<CertDelivery>(`/api/certs/deliveries/${id}/sync`),
   deleteCertDelivery: (id: string) => api.del<Record<string, string>>(`/api/certs/deliveries/${id}`),
-  fleetDeliveries: () => api.get<FleetDelivery[]>('/api/certs/fleet-deliveries'),
+  fleetDeliveries: (opts: GetOptions = {}) =>
+    api.get<FleetDelivery[]>('/api/certs/fleet-deliveries', opts),
   createFleetDelivery: (body: FleetDeliveryRequest) =>
     api.post<FleetDelivery>('/api/certs/fleet-deliveries', body),
   updateFleetDelivery: (id: string, body: FleetDeliveryRequest) =>
@@ -1725,10 +1765,10 @@ export const daffa = {
     api.post<FleetDelivery>(`/api/certs/fleet-deliveries/${id}/sync`),
   deleteFleetDelivery: (id: string) =>
     api.del<Record<string, string>>(`/api/certs/fleet-deliveries/${id}`),
-  encryptionKeys: () => api.get<EncryptionKey[]>('/api/keys'),
+  encryptionKeys: (opts: GetOptions = {}) => api.get<EncryptionKey[]>('/api/keys', opts),
   createKey: (body: KeyRequest) => api.post<CreatedKey>('/api/keys', body),
   deleteKey: (id: string) => api.del<Record<string, string>>(`/api/keys/${id}`),
-  keyrings: () => api.get<Keyring[]>('/api/keyrings'),
+  keyrings: (opts: GetOptions = {}) => api.get<Keyring[]>('/api/keyrings', opts),
   createKeyring: (body: KeyringRequest) => api.post<Keyring>('/api/keyrings', body),
   updateKeyring: (id: string, body: KeyringUpdateRequest) =>
     api.put<Keyring>(`/api/keyrings/${id}`, body),
@@ -1736,67 +1776,77 @@ export const daffa = {
   retireKeyringVersion: (id: string, vid: string) =>
     api.post<Keyring>(`/api/keyrings/${id}/versions/${vid}/retire`),
   deleteKeyring: (id: string) => api.del<Record<string, string>>(`/api/keyrings/${id}`),
-  keyringDeliveries: () => api.get<KeyringDelivery[]>('/api/keyrings/deliveries'),
+  keyringDeliveries: (opts: GetOptions = {}) =>
+    api.get<KeyringDelivery[]>('/api/keyrings/deliveries', opts),
   createKeyringDelivery: (body: KeyringDeliveryRequest) =>
     api.post<KeyringDelivery>('/api/keyrings/deliveries', body),
   syncKeyringDelivery: (id: string) =>
     api.post<KeyringDelivery>(`/api/keyrings/deliveries/${id}/sync`),
   deleteKeyringDelivery: (id: string) =>
     api.del<Record<string, string>>(`/api/keyrings/deliveries/${id}`),
-  users: () => api.get<User[]>('/api/users'),
+  users: (opts: GetOptions = {}) => api.get<User[]>('/api/users', opts),
   createUser: (body: CreateUserRequest) => api.post<User>('/api/users', body),
   updateUser: (id: string, body: UpdateUserRequest) => api.patch<User>(`/api/users/${id}`, body),
   deleteUser: (id: string) => api.del<StatusResponse>(`/api/users/${id}`),
   createBotToken: (id: string, body: CreateTokenRequest) =>
     api.post<CreatedAPIToken>(`/api/users/${id}/tokens`, body),
-  roles: () => api.get<Role[]>('/api/roles'),
+  roles: (opts: GetOptions = {}) => api.get<Role[]>('/api/roles', opts),
   createRole: (body: RoleRequest) => api.post<Role>('/api/roles', body),
   updateRole: (id: string, body: RoleRequest) => api.put<Role>(`/api/roles/${id}`, body),
   deleteRole: (id: string) => api.del<StatusResponse>(`/api/roles/${id}`),
-  monitors: () => api.get<Monitor[]>('/api/monitors'),
-  alerts: () => api.get<Alert[]>('/api/monitors/alerts'),
+  monitors: (opts: GetOptions = {}) => api.get<Monitor[]>('/api/monitors', opts),
+  alerts: (opts: GetOptions<{ limit?: number }> = {}) =>
+    api.get<Alert[]>(`/api/monitors/alerts${qs(opts.query)}`, opts),
   createMonitor: (body: MonitorRequest) => api.post<Monitor>('/api/monitors', body),
   updateMonitor: (id: string, body: MonitorRequest) => api.put<Monitor>(`/api/monitors/${id}`, body),
   deleteMonitor: (id: string) => api.del<void>(`/api/monitors/${id}`),
-  monitorConfig: () => api.get<MonitorConfig>('/api/settings/monitoring'),
+  monitorConfig: (opts: GetOptions = {}) => api.get<MonitorConfig>('/api/settings/monitoring', opts),
   saveMonitorConfig: (body: MonitorSettingsRequest) =>
     api.put<MonitorSettings>('/api/settings/monitoring', body),
-  globalLogConfig: () => api.get<LogConfig | null>('/api/settings/logging'),
+  globalLogConfig: (opts: GetOptions = {}) =>
+    api.get<LogConfig | null>('/api/settings/logging', opts),
   saveGlobalLogConfig: (body: LogConfigRequest) => api.put<LogConfig>('/api/settings/logging', body),
   clearGlobalLogConfig: () => api.del<void>('/api/settings/logging'),
-  globalCleanup: () => api.get<CleanupPolicy | null>('/api/settings/cleanup'),
+  globalCleanup: (opts: GetOptions = {}) =>
+    api.get<CleanupPolicy | null>('/api/settings/cleanup', opts),
   saveGlobalCleanup: (body: CleanupPolicyRequest) =>
     api.put<CleanupPolicy>('/api/settings/cleanup', body),
   clearGlobalCleanup: () => api.del<void>('/api/settings/cleanup'),
-  providers: () => api.get<Provider[]>('/api/settings/oidc'),
+  providers: (opts: GetOptions = {}) => api.get<Provider[]>('/api/settings/oidc', opts),
   createProvider: (body: ProviderRequest) => api.post<Provider>('/api/settings/oidc', body),
   updateProvider: (id: string, body: ProviderRequest) =>
     api.put<Provider>(`/api/settings/oidc/${id}`, body),
   deleteProvider: (id: string) => api.del<StatusResponse>(`/api/settings/oidc/${id}`),
   testProvider: (id: string) => api.post<TestResult>(`/api/settings/oidc/${id}/test`),
-  mappings: (id: string) => api.get<RoleMapping[]>(`/api/settings/oidc/${id}/mappings`),
+  mappings: (id: string, opts: GetOptions = {}) =>
+    api.get<RoleMapping[]>(`/api/settings/oidc/${id}/mappings`, opts),
   createMapping: (id: string, body: MappingRequest) =>
     api.post<RoleMapping>(`/api/settings/oidc/${id}/mappings`, body),
   deleteMapping: (id: string, mapping: string) =>
     api.del<StatusResponse>(`/api/settings/oidc/${id}/mappings/${mapping}`),
-  smtp: () => api.get<SMTPSettings>('/api/settings/smtp'),
+  smtp: (opts: GetOptions = {}) => api.get<SMTPSettings>('/api/settings/smtp', opts),
   saveSmtp: (body: SmtpRequest) => api.put<SMTPSettings>('/api/settings/smtp', body),
   testSmtp: () => api.post<TestResult>('/api/settings/smtp/test'),
-  notifyEvents: () => api.get<NotifyEvent[]>('/api/notifications/events'),
-  previewNotification: (event: string) =>
-    api.get<NotifyPreviewResponse>(`/api/notifications/preview/${event}`),
-  failedNotifications: () => api.get<FailedNotification[]>('/api/notifications/failed'),
-  notifyRules: () => api.get<NotifyRule[]>('/api/notifications/rules'),
+  notifyEvents: (opts: GetOptions = {}) => api.get<NotifyEvent[]>('/api/notifications/events', opts),
+  previewNotification: (event: string, opts: GetOptions = {}) =>
+    api.get<NotifyPreviewResponse>(`/api/notifications/preview/${event}`, opts),
+  failedNotifications: (opts: GetOptions = {}) =>
+    api.get<FailedNotification[]>('/api/notifications/failed', opts),
+  notifyRules: (opts: GetOptions = {}) => api.get<NotifyRule[]>('/api/notifications/rules', opts),
   createNotifyRule: (body: RuleRequest) => api.post<NotifyRule>('/api/notifications/rules', body),
   deleteNotifyRule: (id: string) => api.del<StatusResponse>(`/api/notifications/rules/${id}`),
-  notifyChannels: () => api.get<NotifyChannel[]>('/api/notifications/channels'),
+  notifyChannels: (opts: GetOptions = {}) =>
+    api.get<NotifyChannel[]>('/api/notifications/channels', opts),
   createNotifyChannel: (body: ChannelRequest) =>
     api.post<NotifyChannel>('/api/notifications/channels', body),
   testNotifyChannel: (id: string) => api.post<TestResult>(`/api/notifications/channels/${id}/test`),
   deleteNotifyChannel: (id: string) => api.del<StatusResponse>(`/api/notifications/channels/${id}`),
-  audit: () => api.get<AuditEntry[]>('/api/audit'),
+  audit: (opts: GetOptions<{ limit?: number }> = {}) =>
+    api.get<AuditEntry[]>(`/api/audit${qs(opts.query)}`, opts),
   planManifest: (body: ManifestRequest) => api.post<ManifestReport>('/api/manifest/plan', body),
   applyManifest: (body: ManifestRequest) => api.post<ManifestReport>('/api/manifest/apply', body),
-  listManifestApplies: () => api.get<ManifestApplyView[]>('/api/manifest/applies'),
-  getManifestApply: (id: string) => api.get<ManifestApplyView>(`/api/manifest/applies/${id}`),
+  listManifestApplies: (opts: GetOptions = {}) =>
+    api.get<ManifestApplyView[]>('/api/manifest/applies', opts),
+  getManifestApply: (id: string, opts: GetOptions = {}) =>
+    api.get<ManifestApplyView>(`/api/manifest/applies/${id}`, opts),
 } as const

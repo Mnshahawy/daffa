@@ -197,7 +197,14 @@ func (c *Collector) collectNode(ctx context.Context, envID string, node *dockerx
 	ctx, cancel := context.WithTimeout(ctx, nodeSampleTimeout)
 	defer cancel()
 
-	out := c.collectContainers(ctx, envID, node, at, interval, alive)
+	out, listed := c.collectContainers(ctx, envID, node, at, interval, alive)
+	if !listed {
+		// The daemon could not even list its containers. The host probe CREATES a container, and
+		// on a stalling daemon that create can succeed while the start and the cleanup fail,
+		// leaving one more container behind every round — added load on the daemon least able to
+		// carry it. Skip the machine sample this round; the next round tries again.
+		return out
+	}
 
 	// The machine itself — recorded even when the node runs no containers, which is the whole
 	// difference from before: a bare host still gets CPU/memory history, and the Cluster page shows
@@ -209,14 +216,15 @@ func (c *Collector) collectNode(ctx context.Context, envID string, node *dockerx
 }
 
 // collectContainers samples every container on the node — the original per-container path.
-func (c *Collector) collectContainers(ctx context.Context, envID string, node *dockerx.Node, at time.Time, interval time.Duration, alive map[string]types.Container) []store.Sample {
+// listed reports whether the daemon answered the listing at all.
+func (c *Collector) collectContainers(ctx context.Context, envID string, node *dockerx.Node, at time.Time, interval time.Duration, alive map[string]types.Container) (_ []store.Sample, listed bool) {
 	list, err := node.Client.ContainerList(ctx, container.ListOptions{})
 	if err != nil {
 		c.log.Debug("monitor: listing containers", "env", envID, "err", err)
-		return nil
+		return nil, false
 	}
 	if len(list) == 0 {
-		return nil
+		return nil, true
 	}
 
 	ids := make([]string, 0, len(list))
@@ -230,7 +238,7 @@ func (c *Collector) collectContainers(ctx context.Context, envID string, node *d
 	raws, err := node.SampleAll(ctx, ids)
 	if err != nil {
 		c.log.Debug("monitor: sampling", "env", envID, "err", err)
-		return nil
+		return nil, true
 	}
 
 	out := make([]store.Sample, 0, len(raws))
@@ -267,7 +275,7 @@ func (c *Collector) collectContainers(ctx context.Context, envID string, node *d
 		out = append(out, s)
 	}
 
-	return out
+	return out, true
 }
 
 // hostSample reads the machine's CPU% and memory through the host-stats probe and turns it into a

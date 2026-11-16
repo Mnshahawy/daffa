@@ -34,6 +34,11 @@ type Container struct {
 	// know the answer in order to ask it.
 	Node   string `json:"node,omitempty"`
 	NodeID string `json:"node_id,omitempty"`
+
+	// Set only when this node's daemon did not answer and the row comes from its last good
+	// listing, taken at this time (RFC3339). A list that is old must say so: shown as current, it
+	// would be trusted and wrong.
+	SnapshotAt string `json:"snapshot_at,omitempty"`
 }
 
 type Port struct {
@@ -69,7 +74,23 @@ func serviceLabel(labels map[string]string) string {
 	return labels[labelSwarmService]
 }
 
+// ListContainers lists the node's containers. Concurrent callers share one daemon listing (see
+// listing.go), and the result always comes from a listing that started after the call did.
 func (e *Node) ListContainers(ctx context.Context, all bool) ([]Container, error) {
+	list, err := e.lister.get(ctx, all, e.listContainersNow)
+	if err != nil && ctx.Err() != nil {
+		return nil, fmt.Errorf("dockerx: listing containers on %s: %w", e.Name, ctx.Err())
+	}
+	return list, err
+}
+
+// LastContainers returns the node's last good listing and when it was taken, if one is recent
+// enough to show in place of a daemon that is not answering.
+func (e *Node) LastContainers(all bool) ([]Container, time.Time, bool) {
+	return e.lister.snapshot(all)
+}
+
+func (e *Node) listContainersNow(ctx context.Context, all bool) ([]Container, error) {
 	list, err := e.Client.ContainerList(ctx, container.ListOptions{All: all})
 	if err != nil {
 		return nil, fmt.Errorf("dockerx: listing containers on %s: %w", e.Name, err)
@@ -238,16 +259,40 @@ func (e *Node) StreamLogs(ctx context.Context, id string, tail string, follow bo
 	return stderr.flush()
 }
 
+// relayedEvents is what Events forwards, by object type: the actions that change what a list of
+// that type shows. It is an ALLOW-list on purpose. Most of a busy daemon's container events are
+// health checks (exec_create, exec_start, exec_die for every check of every container: about a
+// dozen a second on a host with forty checked containers), and none of them changes a list. Each
+// one relayed is a list refetch in every open tab. A deny-list would also let through whatever
+// event type Docker adds next.
+//
+// health_status stays: the list shows a container's health. Docker matches it by prefix, so the
+// filter catches "health_status: healthy" and the rest.
+var relayedEvents = map[string][]string{
+	"container": {"create", "start", "die", "destroy", "rename", "pause", "unpause", "update", "health_status"},
+	"image":     {"pull", "delete", "tag", "untag", "import", "load", "prune"},
+	"volume":    {"create", "destroy", "prune"},
+	"network":   {"create", "destroy", "remove", "prune"},
+}
+
+// eventFilters builds the daemon-side filter, so dockerd never sends what would be dropped here.
+// Docker ANDs different filter keys and ORs values within one, so the union of the actions works:
+// no action wanted for one type is noise for another.
+func eventFilters() filters.Args {
+	f := filters.NewArgs()
+	for typ, actions := range relayedEvents {
+		f.Add("type", typ)
+		for _, a := range actions {
+			f.Add("event", a)
+		}
+	}
+	return f
+}
+
 // Events follows the daemon's event stream. The UI subscribes once per environment
 // and invalidates its queries on what arrives, instead of polling lists.
-func (e *Node) Events(ctx context.Context, emit func(action, actorID, actorName string) error) error {
-	f := filters.NewArgs()
-	f.Add("type", "container")
-	f.Add("type", "image")
-	f.Add("type", "volume")
-	f.Add("type", "network")
-
-	msgs, errs := e.Client.Events(ctx, DockerEventOptions(f))
+func (e *Node) Events(ctx context.Context, emit func(typ, action, actorID, actorName string) error) error {
+	msgs, errs := e.Client.Events(ctx, DockerEventOptions(eventFilters()))
 	for {
 		select {
 		case <-ctx.Done():
@@ -259,7 +304,7 @@ func (e *Node) Events(ctx context.Context, emit func(action, actorID, actorName 
 			return fmt.Errorf("dockerx: event stream on %s: %w", e.Name, err)
 		case m := <-msgs:
 			name := m.Actor.Attributes["name"]
-			if err := emit(string(m.Action), m.Actor.ID, name); err != nil {
+			if err := emit(string(m.Type), string(m.Action), m.Actor.ID, name); err != nil {
 				return err
 			}
 		}

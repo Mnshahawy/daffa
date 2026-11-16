@@ -12,6 +12,7 @@ export interface LogLine {
 }
 
 export interface DockerEvent {
+  type: 'container' | 'image' | 'volume' | 'network'
   action: string
   id: string
   name: string

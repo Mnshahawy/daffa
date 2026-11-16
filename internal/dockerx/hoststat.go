@@ -7,8 +7,11 @@ import (
 	"io"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/pkg/stdcopy"
@@ -91,11 +94,30 @@ func (e *Node) runProbe(ctx context.Context, name string, cfg *container.Config,
 		return "", err
 	}
 
+	e.probes.sweepIfDue(ctx, e)
+
+	// Labelled, so a probe that outlives its run can be found and swept. Without the label a
+	// leaked probe is just an anonymous container in Created state, and nothing can tell it apart
+	// from anyone else's.
+	if cfg.Labels == nil {
+		cfg.Labels = map[string]string{}
+	}
+	cfg.Labels[LabelProbe] = name
+
 	created, err := e.Client.ContainerCreate(ctx, cfg, host, nil, nil, "")
 	if err != nil {
 		return "", fmt.Errorf("dockerx: creating %s probe: %w", name, err)
 	}
-	defer e.Client.ContainerRemove(context.WithoutCancel(ctx), created.ID, container.RemoveOptions{Force: true})
+	defer func() {
+		// WithoutCancel so a probe that timed out is still removed, but with its OWN deadline:
+		// WithoutCancel also drops the caller's, and on a stalled daemon an unbounded remove
+		// would hold up the caller (the metrics collector) for as long as the daemon stays stuck.
+		rmCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), probeRemoveTimeout)
+		defer cancel()
+		if err := e.Client.ContainerRemove(rmCtx, created.ID, container.RemoveOptions{Force: true}); err != nil {
+			e.probes.markLeaked()
+		}
+	}()
 
 	if err := e.Client.ContainerStart(ctx, created.ID, container.StartOptions{}); err != nil {
 		return "", fmt.Errorf("dockerx: starting %s probe: %w", name, err)
@@ -124,6 +146,64 @@ func (e *Node) runProbe(ctx context.Context, name string, cfg *container.Config,
 		return "", fmt.Errorf("dockerx: demuxing %s probe: %w", name, err)
 	}
 	return buf.String(), nil
+}
+
+// LabelProbe marks a host-probe container; its value is the probe's name (host-stats, host-disk).
+const LabelProbe = "daffa.probe"
+
+const (
+	probeRemoveTimeout = 10 * time.Second
+	// A probe older than this is not running, it is leaked: the probe itself is a `cat` or a `df`.
+	// The margin keeps a sweep from removing a probe another caller has just started.
+	probeStaleAfter = 2 * time.Minute
+	// Even with no failure seen, sweep now and then: a leak can predate this process.
+	probeSweepEvery = 10 * time.Minute
+)
+
+// probeSweeper removes probe containers a failed run left behind. When the daemon stalls, the
+// create can succeed while the start and the deferred remove both fail, and the probe sits in
+// Created state for good, one more each round. The sweep runs on the next probe after such a
+// failure, on the first probe after start-up, and every probeSweepEvery otherwise. It is not run
+// every round: listing containers is the expensive call on a struggling daemon.
+type probeSweeper struct {
+	mu     sync.Mutex
+	last   time.Time
+	leaked bool
+}
+
+func (p *probeSweeper) markLeaked() {
+	p.mu.Lock()
+	p.leaked = true
+	p.mu.Unlock()
+}
+
+func (p *probeSweeper) sweepIfDue(ctx context.Context, e *Node) {
+	p.mu.Lock()
+	due := p.leaked || p.last.IsZero() || time.Since(p.last) > probeSweepEvery
+	if due {
+		p.last, p.leaked = time.Now(), false
+	}
+	p.mu.Unlock()
+	if !due {
+		return
+	}
+
+	f := filters.NewArgs()
+	f.Add("label", LabelProbe)
+	list, err := e.Client.ContainerList(ctx, container.ListOptions{All: true, Filters: f})
+	if err != nil {
+		p.markLeaked() // try again next time
+		return
+	}
+	cutoff := time.Now().Add(-probeStaleAfter).Unix()
+	for _, c := range list {
+		if c.Created > cutoff {
+			continue
+		}
+		if err := e.Client.ContainerRemove(ctx, c.ID, container.RemoveOptions{Force: true}); err != nil {
+			p.markLeaked()
+		}
+	}
 }
 
 // ensureImage pulls the probe image if the host does not have it. A host that has never deployed

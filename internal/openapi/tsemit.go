@@ -117,8 +117,28 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   throw new ApiError(res.status, code, message)
 }
 
+// What every generated GET takes last. ` + "`signal`" + ` is how TanStack Query cancels a request it
+// has superseded. Ignored, the browser stops waiting but the request runs on, and so does
+// whatever it costs the server: a list refetched on every Docker event once stacked up a dozen
+// concurrent container listings a second against one daemon. A method passed bare as a queryFn
+// (` + "`queryFn: daffa.stacks`" + `) receives TanStack's context here, which carries the signal.
+export interface GetOptions<Q = never> {
+  signal?: AbortSignal
+  query?: Q
+}
+
+// The query string for a generated GET; undefined values are left out.
+function qs(query?: object): string {
+  if (!query) return ''
+  const p = new URLSearchParams()
+  for (const [k, v] of Object.entries(query)) if (v !== undefined) p.set(k, String(v))
+  const s = p.toString()
+  return s ? ` + "`?${s}`" + ` : ''
+}
+
 export const api = {
-  get: <T>(path: string) => request<T>(path),
+  get: <T>(path: string, opts: { signal?: AbortSignal } = {}) =>
+    request<T>(path, { signal: opts.signal }),
   post: <T>(path: string, body?: unknown) =>
     request<T>(path, { method: 'POST', body: body ? JSON.stringify(body) : undefined }),
   put: <T = { status: string }>(path: string, body?: unknown) =>
@@ -220,12 +240,31 @@ func tsType(s *Schema) string {
 	return "unknown"
 }
 
+// tsParamType is a query parameter's TypeScript type: its enum when it has one.
+func tsParamType(p Param) string {
+	if len(p.Enum) > 0 {
+		vals := make([]string, len(p.Enum))
+		for i, v := range p.Enum {
+			vals[i] = "'" + v + "'"
+		}
+		return strings.Join(vals, " | ")
+	}
+	switch p.Type {
+	case "integer":
+		return "number"
+	case "boolean":
+		return "boolean"
+	}
+	return "string"
+}
+
 var pathParamRe = regexp.MustCompile(`\{([a-zA-Z0-9_]+)\}`)
 
 // tsMethod renders one daffa client method. The shape is deliberately rigid — name from
 // `ts:`, path params as args in pattern order, then the body — because rigidity is what
-// makes a migrated method byte-compatible with the handwritten one it replaces. Anything
-// needing more (query params, splat args, streams) stays in api-manual.ts by design.
+// makes a migrated method byte-compatible with the handwritten one it replaces. GETs also take
+// a trailing GetOptions (abort signal, declared query parameters). Anything needing more (splat
+// args, streams) stays in api-manual.ts by design.
 func tsMethod(op *Op) (string, error) {
 	params := pathParamRe.FindAllStringSubmatch(op.Path, -1)
 
@@ -268,9 +307,31 @@ func tsMethod(op *Op) (string, error) {
 		return "", fmt.Errorf("openapi: %s: no client verb for %s", op.Pattern, op.Method)
 	}
 
+	// GETs take GetOptions last: the abort signal always, and the query parameters when the route
+	// declares any. Optional and trailing, so every existing call site stays valid.
+	if verb == "get" {
+		opts := "GetOptions"
+		if len(op.QueryParams) > 0 {
+			fields := make([]string, len(op.QueryParams))
+			for i, p := range op.QueryParams {
+				fields[i] = p.Name + "?: " + tsParamType(p)
+			}
+			opts = "GetOptions<{ " + strings.Join(fields, "; ") + " }>"
+			if len(params) > 0 {
+				path = strings.TrimSuffix(path, "`") + "${qs(opts.query)}`"
+			} else {
+				path = "`" + op.Path + "${qs(opts.query)}`"
+			}
+		}
+		args = append(args, "opts: "+opts+" = {}")
+	}
+
 	call := fmt.Sprintf("api.%s<%s>(%s", verb, respType, path)
 	if op.Req != nil {
 		call += ", body"
+	}
+	if verb == "get" {
+		call += ", opts"
 	}
 	call += ")"
 

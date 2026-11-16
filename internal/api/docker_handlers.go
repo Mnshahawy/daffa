@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -326,7 +327,24 @@ func (s *Server) handleListContainers(w http.ResponseWriter, r *http.Request) {
 	all := r.URL.Query().Get("all") != "false" // default: show stopped containers too
 	list, err := fanOutErr(r.Context(), env,
 		func(ctx context.Context, n *dockerx.Node) ([]dockerx.Container, error) {
-			return n.ListContainers(ctx, all)
+			list, err := n.ListContainers(ctx, all)
+			if err == nil || r.Context().Err() != nil {
+				return list, err
+			}
+			// The daemon did not answer. Its last good listing, marked as a snapshot, beats a 502:
+			// the page keeps showing what was there instead of an error the UI would retry, which
+			// is one more listing against a daemon that is already not coping.
+			snap, at, ok := n.LastContainers(all)
+			if !ok {
+				return nil, err
+			}
+			slog.Warn("containers: daemon did not answer, serving its last listing",
+				"node", n.Name, "taken", at, "err", err)
+			stamp := at.UTC().Format(time.RFC3339)
+			for i := range snap {
+				snap[i].SnapshotAt = stamp
+			}
+			return snap, nil
 		},
 		func(c *dockerx.Container, n *dockerx.Node) { c.Node, c.NodeID = n.Name, n.ID })
 	if err != nil {
@@ -428,6 +446,7 @@ func (s *Server) handleContainerLogs(w http.ResponseWriter, r *http.Request) {
 
 // dockerEvent is one daemon event, reduced to what query invalidation needs.
 type dockerEvent struct {
+	Type   string `json:"type"` // container | image | volume | network
 	Action string `json:"action"`
 	ID     string `json:"id"`
 	Name   string `json:"name"`
@@ -448,8 +467,8 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	err = node.Events(ctx, func(action, actorID, actorName string) error {
-		return sse.Send("docker", dockerEvent{Action: action, ID: actorID, Name: actorName})
+	err = node.Events(ctx, func(typ, action, actorID, actorName string) error {
+		return sse.Send("docker", dockerEvent{Type: typ, Action: action, ID: actorID, Name: actorName})
 	})
 	if err != nil && ctx.Err() == nil {
 		_ = sse.Send("error", map[string]string{"message": err.Error()})

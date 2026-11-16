@@ -50,6 +50,10 @@ type Node struct {
 	SwarmNodeID string
 	SwarmRole   string // none | worker | manager
 	Leader      bool
+
+	// Per-daemon coordination. Nodes are only ever handled by pointer; these must not be copied.
+	lister containerLister // one container listing at a time; see listing.go
+	probes probeSweeper    // leaked host-probe cleanup; see hoststat.go
 }
 
 // Manager reports whether this daemon will answer cluster-wide questions — which is the only

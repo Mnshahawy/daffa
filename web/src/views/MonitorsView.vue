@@ -101,7 +101,8 @@ const { data: stacks } = useQuery({ queryKey: ['stacks'], queryFn: daffa.stacks 
 // single host to enumerate) and the operator simply types the name there.
 const { data: containers } = useQuery({
   queryKey: ['monitor-containers', () => draft.value.env_id],
-  queryFn: () => daffa.containers(draft.value.env_id),
+  queryFn: ({ signal }) =>
+    daffa.containers(draft.value.env_id, { signal, query: { all: true } }),
   enabled: computed(() => !!draft.value.env_id && session.can(Cap.ContainersView, draft.value.env_id)),
 })
 

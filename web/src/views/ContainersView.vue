@@ -17,10 +17,41 @@ const session = useSession()
 const qc = useQueryClient()
 const filter = ref('')
 
+// Running containers by default. A swarm host keeps every task that ever exited, often many
+// times more stopped containers than running ones, and listing one costs the daemon as much as
+// listing a running one. They are a click away, and the choice is remembered per browser.
+const STOPPED_KEY = 'daffa.containers.showStopped'
+const showStopped = ref(readFlag(STOPPED_KEY))
+watch(showStopped, (v) => writeFlag(STOPPED_KEY, v))
+
+function readFlag(key: string): boolean {
+  try {
+    return localStorage.getItem(key) === '1'
+  } catch {
+    return false
+  }
+}
+function writeFlag(key: string, v: boolean) {
+  try {
+    localStorage.setItem(key, v ? '1' : '0')
+  } catch {
+    // Private window or blocked storage: the toggle still works, it just is not remembered.
+  }
+}
+
 const { data: containers, isLoading } = useQuery({
-  queryKey: ['containers', () => session.envId],
-  queryFn: () => daffa.containers(session.envId),
+  queryKey: ['containers', () => session.envId, () => (showStopped.value ? 'all' : 'running')],
+  // The signal matters: a refetch that supersedes this one cancels it, and the server stops
+  // waiting on the daemon for it instead of leaving one more listing in flight.
+  queryFn: ({ signal }) =>
+    daffa.containers(session.envId, { signal, query: { all: showStopped.value } }),
   enabled: computed(() => !!session.envId),
+})
+
+// When a node's daemon did not answer, its rows are its last good listing. Say so, and when.
+const snapshotAt = computed(() => {
+  const stamps = (containers.value ?? []).map((c) => c.snapshot_at).filter((s): s is string => !!s)
+  return stamps.length ? stamps.sort()[0] : undefined
 })
 
 // Stats for the RUNNING containers only, as a periodic snapshot rather than N held-open
@@ -43,19 +74,46 @@ const statsById = computed(() => new Map((stats.value ?? []).map((s) => [s.id, s
 
 // Docker tells us what changed; we invalidate rather than poll. A list that refreshes on a
 // timer is either stale or wasteful, and usually both.
+//
+// But not once per event. A deploy produces dozens of container events a second, and each one
+// used to be a full refetch. Events are coalesced: the first schedules one refresh a moment
+// later, and everything arriving before it fires folds into that refresh. Not a debounce that
+// restarts its timer on every event: during a long deploy the events never pause, and the list
+// would never refresh at all. Only container events count; an image pull or a new network does
+// not change this list.
+const REFRESH_DELAY = 1500
 let stop: (() => void) | undefined
+let pending: ReturnType<typeof setTimeout> | undefined
+
+function refreshSoon() {
+  if (pending) return
+  pending = setTimeout(() => {
+    pending = undefined
+    void qc.invalidateQueries({ queryKey: ['containers'] })
+  }, REFRESH_DELAY)
+}
+
+function teardown() {
+  stop?.()
+  stop = undefined
+  clearTimeout(pending)
+  pending = undefined
+}
+
 watch(
   () => session.envId,
   (env) => {
-    stop?.()
+    teardown()
     if (!env) return
     stop = streamEvents(env, {
-      onMessage: () => qc.invalidateQueries({ queryKey: ['containers'] }),
+      onMessage: (e) => {
+        if (e.type === 'container') refreshSoon()
+      },
     })
   },
   { immediate: true },
 )
-onUnmounted(() => stop?.())
+onUnmounted(teardown)
 
 // Group by compose project, so a stack reads as a stack rather than as scattered containers.
 const groups = computed(() => {
@@ -130,6 +188,15 @@ function ports(c: Container): string {
       "
     >
       <template #actions>
+        <label class="muted flex shrink-0 items-center gap-2 text-sm" for="containers-show-stopped">
+          <input
+            id="containers-show-stopped"
+            v-model="showStopped"
+            type="checkbox"
+            class="accent-[var(--color-accent-500)]"
+          />
+          Show stopped
+        </label>
         <SearchInput
           v-model="filter"
           placeholder="Name, image, or project…"
@@ -140,11 +207,21 @@ function ports(c: Container): string {
 
     <p v-if="isLoading" class="muted text-sm">Loading containers…</p>
 
+    <!-- Not an error toast: the list below is still the best answer there is, it is just old. -->
+    <p v-if="snapshotAt" class="muted mb-4 text-sm">
+      The Docker daemon is not answering. Some rows are from its last listing, taken at
+      {{ new Date(snapshotAt).toLocaleTimeString() }}.
+    </p>
+
     <EmptyState
       v-else-if="!containers?.length"
       icon="box"
       title="Nothing is running on this cluster"
-      body="Containers show up here the moment they exist, whether Daffa deployed them or not. Deploy a stack, or start something on the host directly."
+      :body="
+        showStopped
+          ? 'Containers show up here the moment they exist, whether Daffa deployed them or not. Deploy a stack, or start something on the host directly.'
+          : 'Nothing is running. Tick Show stopped to see containers that have exited, or deploy a stack.'
+      "
     />
 
     <!-- A filter that matches nothing rendered a blank page, which reads as a broken list rather

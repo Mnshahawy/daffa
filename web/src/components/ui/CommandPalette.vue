@@ -41,8 +41,8 @@ const { data: stacks } = useQuery({
 })
 
 const { data: containers } = useQuery({
-  queryKey: ['containers', () => session.envId],
-  queryFn: () => daffa.containers(session.envId),
+  queryKey: ['containers', () => session.envId, 'all'],
+  queryFn: ({ signal }) => daffa.containers(session.envId, { signal, query: { all: true } }),
   enabled: computed(() => open.value && !!session.envId),
 })
 

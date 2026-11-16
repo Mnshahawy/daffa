@@ -462,7 +462,9 @@ func (s *Server) apiRoutes() []route {
 
 		// ── containers ─────────────────────────────────────────────────────────────
 		// Fans out across every node of a swarm; each row carries the node it lives on,
-		// because a container id is unique per DAEMON, not per cluster.
+		// because a container id is unique per DAEMON, not per cluster. Concurrent requests
+		// share one daemon listing per node. When a node's daemon does not answer, its rows
+		// are its last good listing (up to five minutes old), each carrying snapshot_at.
 		//oapi:summary List containers across every node of the cluster
 		//oapi:query all boolean include stopped containers (default true; pass false for running only)
 		{pattern: "GET /api/clusters/{cluster}/containers", cap: caps.ContainersView, scope: scopeEnv, h: s.handleListContainers,
@@ -497,7 +499,9 @@ func (s *Server) apiRoutes() []route {
 		{pattern: "GET /api/clusters/{cluster}/stats", cap: caps.ContainersView, scope: scopeEnv, h: s.handleStatsSnapshot,
 			resp: []dockerx.Stats(nil)},
 		// SSE. Relays the daemon's container/image/volume/network events as `docker`
-		// events, so the UI invalidates exactly what changed instead of polling.
+		// events, so the UI invalidates exactly what changed instead of polling. Only the
+		// actions that change a list are relayed: no exec_* (health checks), attach, resize
+		// or top. Each event carries its type.
 		//oapi:summary Stream the Docker daemon's events as server-sent events
 		//oapi:query node string the target node id; required only when the cluster has more than one
 		//oapi:produces text/event-stream

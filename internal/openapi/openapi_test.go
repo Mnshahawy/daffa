@@ -313,7 +313,7 @@ func TestBuildClientMethods(t *testing.T) {
 
 	for _, want := range []string{
 		"export const daffa = {\n  ...manualDaffa,",
-		"things: () => api.get<FixtureNested[]>('/api/things'),",
+		"things: (opts: GetOptions = {}) => api.get<FixtureNested[]>('/api/things', opts),",
 		"saveThing: (id: string, body: FixtureNestedRequest) =>\n    api.put<FixtureNested>(`/api/things/${id}`, body),",
 		"deleteThing: (id: string) => api.del<void>(`/api/things/${id}`),",
 		"export interface FixtureNestedRequest {",
@@ -322,6 +322,29 @@ func TestBuildClientMethods(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("client is missing %q", want)
 		}
+	}
+}
+
+// A GET that declares query parameters takes them typed, inside the same trailing options that
+// carry the abort signal, and builds the query string from them.
+func TestBuildClientQueryParams(t *testing.T) {
+	out, err := BuildClient([]Op{{
+		Method: "GET", Path: "/api/x/{id}/items", Pattern: "GET /api/x/{id}/items",
+		OperationID: "items", TSName: "items",
+		Resp: &Schema{Type: "string"}, RespDeclared: true, Status: 200,
+		QueryParams: []Param{
+			{Name: "all", Type: "boolean"},
+			{Name: "limit", Type: "integer"},
+			{Name: "kind", Type: "string", Enum: []string{"a", "b"}},
+		},
+	}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "items: (id: string, opts: GetOptions<{ all?: boolean; limit?: number; kind?: 'a' | 'b' }> = {}) =>\n" +
+		"    api.get<string>(`/api/x/${id}/items${qs(opts.query)}`, opts),"
+	if !strings.Contains(out, want) {
+		t.Errorf("client is missing\n%s\n\ngot:\n%s", want, out[strings.Index(out, "export const daffa"):])
 	}
 }
 
